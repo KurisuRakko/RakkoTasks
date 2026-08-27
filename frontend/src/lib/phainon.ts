@@ -142,15 +142,28 @@ export async function logout(): Promise<void> {
   clearTokens();
 }
 
-/** 获取当前用户；未登录（401）返回 null */
+/** 获取当前用户；access 过期时先 refresh 一次（复用单飞锁）再重放；仍失败返回 null */
 export async function getMe(): Promise<PhainonMe | null> {
   const access = readToken(ACCESS_TOKEN_KEY);
   if (!access) return null;
   try {
-    const res = await fetch(`${AUTH_BASE}/me`, {
+    let res = await fetch(`${AUTH_BASE}/me`, {
       headers: { Authorization: `Bearer ${access}` },
     });
-    if (res.status === 401) return null;
+    if (res.status === 401) {
+      // access 生命周期短，过期后先尝试用 refresh token 换新（轮转、单飞）
+      try {
+        await refresh();
+      } catch {
+        clearTokens();
+        return null;
+      }
+      const access2 = readToken(ACCESS_TOKEN_KEY);
+      if (!access2) return null;
+      res = await fetch(`${AUTH_BASE}/me`, {
+        headers: { Authorization: `Bearer ${access2}` },
+      });
+    }
     if (!res.ok) return null;
     return (await res.json()) as PhainonMe;
   } catch {

@@ -142,3 +142,59 @@ describe('authedFetch', () => {
     expect(refreshCalls).toBe(1);
   });
 });
+
+describe('getMe', () => {
+  it('过期 access + 有效 refresh 时触发一次 refresh 并最终返回用户对象', async () => {
+    localStorage.setItem('phainon.access', 'at-expired');
+    localStorage.setItem('phainon.refresh', 'rt-valid');
+
+    let refreshCalls = 0;
+    let meCalls = 0;
+    const fetchMock = vi.fn(async (url: string | URL, init?: RequestInit) => {
+      const u = String(url);
+      if (u.includes('/refresh')) {
+        refreshCalls += 1;
+        return json({ access_token: 'at-new', refresh_token: 'rt-new' });
+      }
+      if (u.endsWith('/auth/priestess/oidc/me')) {
+        meCalls += 1;
+        const auth = (init?.headers as Record<string, string> | undefined)?.Authorization;
+        if (auth === 'Bearer at-expired') return json({ error: 'unauthorized' }, 401);
+        return json({ app_id: 'rakkotasks', user: { sub: 'u-1', name: '测试用户' } }, 200);
+      }
+      return json({}, 404);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const me = await phainon.getMe();
+
+    expect(me).toEqual({ app_id: 'rakkotasks', user: { sub: 'u-1', name: '测试用户' } });
+    expect(refreshCalls).toBe(1);
+    expect(meCalls).toBe(2);
+    // refresh 轮转的新 token 已落 localStorage
+    expect(localStorage.getItem('phainon.access')).toBe('at-new');
+    expect(localStorage.getItem('phainon.refresh')).toBe('rt-new');
+  });
+
+  it('重放仍 401（refresh 无效）时返回 null', async () => {
+    localStorage.setItem('phainon.access', 'at-expired');
+    localStorage.setItem('phainon.refresh', 'rt-dead');
+
+    const fetchMock = vi.fn(async (url: string | URL) => {
+      const u = String(url);
+      if (u.includes('/refresh')) {
+        return json({ error: 'invalid_grant' }, 401);
+      }
+      if (u.endsWith('/auth/priestess/oidc/me')) {
+        return json({ error: 'unauthorized' }, 401);
+      }
+      return json({}, 404);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const me = await phainon.getMe();
+
+    expect(me).toBeNull();
+    expect(localStorage.getItem('phainon.access')).toBeNull();
+  });
+});
