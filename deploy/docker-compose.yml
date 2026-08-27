@@ -1,0 +1,48 @@
+# RakkoTasks 生产部署（单机，Debian 12 + Docker Compose 插件）。
+# 用法（仓库根）：docker compose -f deploy/docker-compose.yml up -d --build
+# 配置来源：仓库根 .env（cp deploy/.env.example .env）。
+name: rakkotasks
+
+services:
+  # FastAPI：REST API + 托管前端 SPA；仅绑定本机回环，公网走 cloudflared 隧道
+  web:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: rakkotasks:latest
+    restart: unless-stopped
+    env_file:
+      # 根目录 .env（gitignore，新克隆仓库里不存在）；required:false 让
+      # config/up 在未创建 .env 时也能通过，缺失时用镜像内置默认值
+      - path: ../.env
+        required: false
+    environment:
+      - DATABASE_PATH=/data/rakkotasks.db
+    volumes:
+      - ../data:/data
+    ports:
+      - "127.0.0.1:8000:8000"
+
+  # 定时同步 worker：与 web 同镜像，仅命令不同
+  worker:
+    image: rakkotasks:latest
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    restart: unless-stopped
+    command: ["python", "-m", "app.worker"]
+    env_file:
+      - path: ../.env
+        required: false
+    environment:
+      - DATABASE_PATH=/data/rakkotasks.db
+    volumes:
+      - ../data:/data
+
+  # Cloudflare Tunnel：凭 TUNNEL_TOKEN 建隧道，Public Hostname 指向 http://web:8000
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run --token ${TUNNEL_TOKEN}
+    depends_on:
+      - web
