@@ -2,9 +2,10 @@
 // 契约见 docs/DESIGN.md 第 6 节。
 
 import { authedFetch } from './phainon';
+import { API_BASE_URL } from './env';
 import type { Category, Email, Item, ItemStatus, SearchResponse, StatusResponse } from '../types';
 
-const API_BASE = `${import.meta.env.VITE_API_BASE_URL}/api`;
+const API_BASE = `${API_BASE_URL}/api`;
 
 /** GET /api/items?status=&category= */
 export async function fetchItems(params: {
