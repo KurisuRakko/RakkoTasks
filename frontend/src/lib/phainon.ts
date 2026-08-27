@@ -3,8 +3,9 @@
 // refresh token 轮转一次性，必须单飞：同一时刻只允许一个 refresh 在途。
 
 import type { PhainonMe } from '../types';
+import { PHAINON_API_BASE, PHAINON_APP_ID } from './env';
 
-const AUTH_BASE = `${import.meta.env.VITE_PHAINON_API_BASE}/auth/priestess/oidc`;
+const AUTH_BASE = `${PHAINON_API_BASE}/auth/priestess/oidc`;
 
 export const ACCESS_TOKEN_KEY = 'phainon.access';
 export const REFRESH_TOKEN_KEY = 'phainon.refresh';
@@ -26,7 +27,7 @@ function writeTokens(pair: TokenPair): void {
 /** 跳转到 Phainon 登录页（当前地址作为回跳目标） */
 export function startLogin(returnTo: string = location.href): void {
   const params = new URLSearchParams({
-    app_id: import.meta.env.VITE_PHAINON_APP_ID,
+    app_id: PHAINON_APP_ID,
     return_to: returnTo,
   });
   location.assign(`${AUTH_BASE}/login?${params.toString()}`);
