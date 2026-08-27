@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- 圆角方形底色 + 居中字母 R（purpose any + maskable 共用） -->
+  <rect width="512" height="512" rx="112" fill="#1976d2"/>
+  <text x="50%" y="52%" dominant-baseline="central" text-anchor="middle"
+        font-family="system-ui, -apple-system, 'Segoe UI', sans-serif"
+        font-size="300" font-weight="700" fill="#ffffff">R</text>
+</svg>
