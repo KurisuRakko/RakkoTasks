@@ -19,6 +19,7 @@
 - Cloudflare 账号，且域名 **rakko.cn** 已托管在 Cloudflare（NS 指向 Cloudflare）。
 - 一个可用的 LLM API Key（默认 DeepSeek，见第 4 节）。
 - 服务器能访问：`api.rakko.cn`（Phainon 鉴权）、LLM API、四个邮箱的 IMAP 端点。
+- 构建走 BuildKit（Docker 23+ 默认启用），deploy/Dockerfile.dockerignore 负责裁剪构建上下文（排除 data/、.env、node_modules 等）。
 
 ## 2. Phainon 应用注册
 
