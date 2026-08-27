@@ -13,6 +13,8 @@ from app.config import Settings, get_settings
 # (token_sha256, ok, expires_at) 进程内缓存，仅进程存活期内有效
 _cache: dict[str, tuple[bool, float]] = {}
 CACHE_TTL = 60.0
+# 缓存条数上限：防未鉴权请求用随机 token 撑爆进程内存
+_CACHE_MAX = 1024
 
 _bearer = HTTPBearer(auto_error=False)
 
@@ -43,6 +45,20 @@ def _check_token(token: str, settings: Settings) -> bool:
         return False
 
 
+def _trim_cache(now: float) -> None:
+    """写入新条目前的容量控制：先清全部过期条目；仍达上限则整体清空。
+
+    单用户场景下清空只是丢缓存、下次多打一次 introspection，可接受。
+    """
+    if len(_cache) < _CACHE_MAX:
+        return
+    expired = [k for k, (_ok, exp) in _cache.items() if exp <= now]
+    for k in expired:
+        del _cache[k]
+    if len(_cache) >= _CACHE_MAX:
+        _cache.clear()
+
+
 def verify_token(token: str, settings: Settings | None = None) -> bool:
     """带 60s 进程内缓存的校验。"""
     settings = settings or get_settings()
@@ -52,6 +68,7 @@ def verify_token(token: str, settings: Settings | None = None) -> bool:
     if cached and cached[1] > now:
         return cached[0]
     ok = _check_token(token, settings)
+    _trim_cache(now)
     _cache[digest] = (ok, now + CACHE_TTL)
     return ok
 

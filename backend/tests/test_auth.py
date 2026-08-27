@@ -3,6 +3,7 @@ import httpx
 import respx
 from fastapi.testclient import TestClient
 
+from app import auth
 from app.api import create_app
 from app.config import Settings
 
@@ -91,3 +92,16 @@ def test_cache_hits_within_60s(session_factory):
         assert client.get("/api/status", headers=headers).status_code == 200
         assert client.get("/api/status", headers=headers).status_code == 200
         assert route.call_count == 1
+
+
+def test_cache_bounded_by_max(session_factory):
+    """写入超过上限的不同 token 后，缓存长度不超过 _CACHE_MAX。"""
+    with respx.mock:
+        respx.get("https://api.rakko.cn/auth/priestess/oidc/me").mock(
+            return_value=httpx.Response(401, json={"error": "bad token"})
+        )
+        s = _settings()
+        # 全部走 miss + 写入路径（每个 token 都失败，且都是新 digest）
+        for i in range(auth._CACHE_MAX + 128):
+            assert auth.verify_token(f"sprayed-token-{i}", s) is False
+        assert len(auth._cache) <= auth._CACHE_MAX
