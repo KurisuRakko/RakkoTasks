@@ -1,0 +1,240 @@
+"""AI 搜索：agentic 循环（≤15 轮） + search_emails / read_emails 两个工具。"""
+from __future__ import annotations
+
+import json
+import re
+from datetime import date, datetime, timedelta
+from typing import Any
+
+import nh3
+from sqlalchemy import or_, select, text
+from sqlalchemy.orm import Session
+
+from app.config import Settings, get_settings
+from app.models import Account, Email
+
+MAX_TOOL_ROUNDS = 15
+SEARCH_LIMIT_MAX = 50
+READ_LIMIT_MAX = 20
+
+TOOLS: list[dict] = [
+    {
+        "type": "function",
+        "function": {
+            "name": "search_emails",
+            "description": "全文检索邮件（跨全部历史，不限时间范围）。keywords 按空格分词后 OR 匹配；"
+            "sender/date_from/date_to/account 为可选的附加过滤条件。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "keywords": {"type": "string", "description": "检索关键词，可多个，用空格分隔"},
+                    "sender": {"type": "string", "description": "发件人包含匹配"},
+                    "date_from": {"type": "string", "description": "起始日期 YYYY-MM-DD"},
+                    "date_to": {"type": "string", "description": "结束日期 YYYY-MM-DD"},
+                    "account": {"type": "string", "description": "账户显示名（可选）"},
+                    "limit": {"type": "integer", "description": "返回条数上限，不超过 50"},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_emails",
+            "description": "按 id 读取邮件全文（单次最多 20 封），返回主题/发件人/日期/正文。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "ids": {"type": "array", "items": {"type": "integer"}, "description": "邮件 id 列表"},
+                },
+                "required": ["ids"],
+            },
+        },
+    },
+]
+
+_FTS_SPECIALS = set('":^(){}[]-~*+')
+
+
+def _fts_escape_token(token: str) -> str:
+    """FTS5 特殊字符加双引号转义（短语），内部双引号双写。"""
+    if any(c in token for c in _FTS_SPECIALS):
+        return '"' + token.replace('"', '""') + '"'
+    return token
+
+
+def fts_query(keywords: str) -> str:
+    """keywords 空格分词后 OR 连接；普通词加 * 前缀通配（unicode61 下 CJK 整词前缀命中）。"""
+    tokens = [t for t in keywords.split() if t.strip()]
+    if not tokens:
+        return ""
+    parts = []
+    for t in tokens:
+        if any(c in t for c in _FTS_SPECIALS):
+            parts.append('"' + t.replace('"', '""') + '"')
+        else:
+            parts.append(t + "*")
+    return " OR ".join(parts)
+
+
+def _fts_match_ids(db: Session, query: str) -> list[int]:
+    """对 emails_fts 虚表执行 MATCH，返回命中的邮件 id（rowid）。"""
+    rows = db.execute(text("SELECT rowid FROM emails_fts WHERE emails_fts MATCH :q").bindparams(q=query)).fetchall()
+    return [r[0] for r in rows]
+
+
+def _html_to_text(html: str) -> str:
+    """HTML → 纯文本：nh3 clean 后去标签。"""
+    clean = nh3.clean(html, tags=set())  # 只剥标签，不消毒链接
+    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", clean)).strip()
+
+
+def _tool_search_emails(db: Session, args: dict[str, Any], settings: Settings) -> list[dict]:
+    """search_emails 工具实现：FTS5 MATCH，无 keywords 时退化为条件过滤。"""
+    limit = min(int(args.get("limit") or 10), SEARCH_LIMIT_MAX)
+    stmt = select(Email.id, Email.subject, Email.sender, Email.sent_at).join(Account).order_by(Email.sent_at.desc())
+
+    keywords = (args.get("keywords") or "").strip()
+    if keywords:
+        query = fts_query(keywords)
+        rowids = _fts_match_ids(db, query)
+        if not rowids:
+            return []
+        stmt = stmt.where(Email.id.in_(rowids))
+    sender = (args.get("sender") or "").strip()
+    if sender:
+        stmt = stmt.where(Email.sender.like(f"%{sender}%"))
+    date_from = (args.get("date_from") or "").strip()
+    if date_from:
+        stmt = stmt.where(Email.sent_at >= datetime.fromisoformat(date_from))
+    date_to = (args.get("date_to") or "").strip()
+    if date_to:
+        stmt = stmt.where(Email.sent_at < datetime.fromisoformat(date_to) + timedelta(days=1))
+    account = (args.get("account") or "").strip()
+    if account:
+        stmt = stmt.where(Account.name == account)
+
+    rows = db.execute(stmt.limit(limit)).all()
+    return [
+        {"id": r.id, "subject": r.subject, "sender": r.sender, "sent_at": r.sent_at.isoformat() if r.sent_at else None}
+        for r in rows
+    ]
+
+
+def _tool_read_emails(db: Session, args: dict[str, Any]) -> list[dict]:
+    """read_emails 工具实现：≤20 封，正文 text 优先，无则 html 剥标签。"""
+    ids = [int(i) for i in (args.get("ids") or [])][:READ_LIMIT_MAX]
+    if not ids:
+        return []
+    rows = db.execute(select(Email).where(Email.id.in_(ids))).scalars().all()
+    out = []
+    for e in rows:
+        body = e.text_body or (_html_to_text(e.html_body) if e.html_body else "")
+        out.append(
+            {
+                "id": e.id,
+                "subject": e.subject,
+                "sender": e.sender,
+                "sent_at": e.sent_at.isoformat() if e.sent_at else None,
+                "text": body[:6000],
+            }
+        )
+    return out
+
+
+def _dispatch_tool(db: Session, name: str, args: dict[str, Any], settings: Settings) -> dict:
+    if name == "search_emails":
+        return {"ok": True, "emails": _tool_search_emails(db, args, settings)}
+    if name == "read_emails":
+        return {"ok": True, "emails": _tool_read_emails(db, args)}
+    return {"ok": False, "error": f"未知工具 {name}"}
+
+
+def _build_index(db: Session, settings: Settings) -> str:
+    """最近 SEARCH_INDEX_DAYS 天全部邮件的紧凑索引，无条数上限。"""
+    since = datetime.now() - timedelta(days=settings.search_index_days)
+    stmt = select(Email).where(or_(Email.sent_at.is_(None), Email.sent_at >= since)).order_by(Email.sent_at.desc())
+    rows = db.execute(stmt).scalars().all()
+    lines = []
+    for e in rows:
+        d = e.sent_at.date().isoformat() if e.sent_at else "未知"
+        lines.append(f"{e.id}|{d}|{e.sender}|{e.subject}")
+    if not lines:
+        return "（无邮件）"
+    return "\n".join(lines)
+
+
+def run_search(question: str, db: Session, llm: Any) -> dict:
+    """agentic 搜索循环：返回 {"answer_md": ..., "citations": [{email_id, subject, sent_at}]}。
+
+    llm 需提供 chat_completion(messages, tools=None, json_mode=False) -> dict（openai message 风格）。
+    """
+    settings: Settings = get_settings()
+    account_names = [a.name for a in db.execute(select(Account)).scalars()]
+    system = (
+        f"你是 RakkoTasks 的邮件问答助手。今天是 {date.today().isoformat()}。"
+        f"可用账户：{'、'.join(account_names) or '无'}。"
+        "回答基于下方邮件索引与工具检索结果，一律使用中文。"
+        "若引用邮件，必须使用其 id。最终只输出 JSON："
+        '{"answer_md": "Markdown 格式的回答", "citations": [邮件id, ...]}，citations 只放实际引用到的邮件 id。'
+    )
+    user = f"问题：{question}\n\n最近邮件索引（id|日期|发件人|主题）：\n{_build_index(db, settings)}"
+
+    messages: list[dict] = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
+    ]
+
+    for _round in range(MAX_TOOL_ROUNDS):
+        msg = llm.chat_completion(messages, tools=TOOLS)
+        if msg.get("tool_calls"):
+            messages.append({"role": "assistant", "content": msg.get("content") or "", "tool_calls": msg["tool_calls"]})
+            for tc in msg["tool_calls"]:
+                try:
+                    args = json.loads(tc["function"]["arguments"] or "{}")
+                except json.JSONDecodeError:
+                    args = {}
+                result = _dispatch_tool(db, tc["function"]["name"], args, settings)
+                messages.append(
+                    {"role": "tool", "tool_call_id": tc["id"], "content": json.dumps(result, ensure_ascii=False)}
+                )
+            continue
+        # 无工具调用：尝试解析最终 JSON
+        content = msg.get("content") or ""
+        try:
+            data = json.loads(content)
+        except json.JSONDecodeError:
+            # 一次显式 json_object 重试
+            messages.append({"role": "assistant", "content": content})
+            messages.append(
+                {"role": "user", "content": '你上一次的输出不是合法 JSON。请只输出 {"answer_md": "...", "citations": [...]}。'}
+            )
+            msg = llm.chat_completion(messages, tools=TOOLS, json_mode=True)
+            try:
+                data = json.loads(msg.get("content") or "")
+            except json.JSONDecodeError:
+                raise RuntimeError("搜索最终输出非法 JSON")
+        return _finalize(db, data)
+    raise RuntimeError("搜索循环超过 15 轮")
+
+
+def _finalize(db: Session, data: dict) -> dict:
+    answer = str(data.get("answer_md") or "")
+    ids = [int(i) for i in (data.get("citations") or [])]
+    citations: list[dict] = []
+    if ids:
+        rows = db.execute(select(Email).where(Email.id.in_(ids))).scalars().all()
+        found = {e.id: e for e in rows}
+        for cid in ids:
+            e = found.get(cid)
+            if e is None:
+                continue  # 过滤不存在的 id
+            citations.append(
+                {
+                    "email_id": e.id,
+                    "subject": e.subject,
+                    "sent_at": e.sent_at.isoformat() if e.sent_at else None,
+                }
+            )
+    return {"answer_md": answer, "citations": citations}

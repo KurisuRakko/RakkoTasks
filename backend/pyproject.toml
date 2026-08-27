@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rakkotasks-backend"
+version = "0.1.0"
+description = "RakkoTasks backend: email-driven personal to-do system"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "sqlalchemy>=2.0",
+    "pydantic-settings",
+    "msal",
+    "nh3",
+    "openai>=1.40",
+    "httpx",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "respx",
+]
+
+[tool.setuptools]
+packages = ["app", "app.imap"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
