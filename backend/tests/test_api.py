@@ -168,3 +168,30 @@ def test_status_endpoint(session_factory, monkeypatch):
          "status": "ok", "last_sync_at": None, "last_error": None}
     ]
     assert data["pending_llm"] == 1  # 一封 llm_state=pending
+
+
+def test_frontend_dist_static_serving(session_factory, tmp_path):
+    """settings.frontend_dist 指定 dist 目录：静态文件直出 + SPA fallback + API 不受影响。"""
+    dist = tmp_path / "dist"
+    (dist / "assets").mkdir(parents=True)
+    (dist / "index.html").write_text("<html>app</html>", encoding="utf-8")
+    (dist / "assets" / "x.js").write_text("console.log(1)", encoding="utf-8")
+
+    settings = Settings(database_path=":memory:", allowed_subs="user-1", frontend_dist=str(dist))
+    app = create_app(settings=settings, session_factory=session_factory)
+    client = TestClient(app)
+
+    # 静态文件直出
+    resp = client.get("/assets/x.js")
+    assert resp.status_code == 200
+    assert resp.text == "console.log(1)"
+
+    # 不存在路径 SPA fallback 到 index.html
+    resp = client.get("/任意/路径")
+    assert resp.status_code == 200
+    assert resp.text == "<html>app</html>"
+
+    # API 路由优先，不受 fallback 影响
+    resp = client.get("/api/health")
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "ok"}

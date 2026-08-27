@@ -9,7 +9,6 @@ from pathlib import Path
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.engine import Engine
@@ -202,10 +201,14 @@ def create_app(
             "pending_llm": pending_llm,
         }
 
-    # 静态托管：frontend/dist 存在才挂，SPA fallback 到 index.html
-    frontend_dist = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+    # 静态托管：settings.frontend_dist 非空时用它，否则回退启发式路径；目录存在才挂 SPA fallback
+    dist_str = settings.frontend_dist
+    frontend_dist = (
+        Path(dist_str)
+        if dist_str
+        else Path(__file__).resolve().parent.parent / "frontend" / "dist"
+    )
     if frontend_dist.is_dir():
-        app.mount("/static", StaticFiles(directory=frontend_dist), name="static")
 
         @app.get("/{path:path}")
         def spa_fallback(path: str):  # noqa: ANN201

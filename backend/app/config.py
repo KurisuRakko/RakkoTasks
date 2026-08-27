@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     frontend_origin: str = "https://tasks.rakko.cn"
     allowed_subs: str = ""  # 逗号分隔的 user.sub 白名单
 
+    # 前端静态目录：非空时直接使用，空则回退 backend/frontend/dist 启发式路径
+    frontend_dist: str = ""
+
     # Microsoft OAuth 默认客户端
     ms_default_client_id: str = "d3590ed6-52b3-4102-aeff-aad2292ab01c"
 
