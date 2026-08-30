@@ -23,10 +23,10 @@ import Typography from '@mui/material/Typography';
 import TextField from '@mui/material/TextField';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import { useTheme } from '@mui/material/styles';
-import ReactMarkdown from 'react-markdown';
 import { search } from '../lib/api';
 import type { SearchCitation, SearchResponse } from '../types';
 import EmailViewer from '../components/EmailViewer';
+import SafeMarkdown from '../components/SafeMarkdown';
 import type { TransitionProps } from '@mui/material/transitions';
 
 // 模块级缓存：路由切换不丢，浏览器刷新才丢
@@ -95,7 +95,7 @@ export default function SearchPage() {
         {result && (
           <Box sx={{ mt: 2 }}>
             <Box sx={{ typography: 'body1' }}>
-              <ReactMarkdown>{result.answer_md}</ReactMarkdown>
+              <SafeMarkdown>{result.answer_md}</SafeMarkdown>
             </Box>
             {result.citations.length > 0 && (
               <>
