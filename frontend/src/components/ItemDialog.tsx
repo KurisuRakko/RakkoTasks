@@ -1,6 +1,8 @@
-// 条目详情全屏 Dialog：元信息 + AI 详情（懒生成）+ 「显示原邮件」展开 EmailViewer。
+// 条目详情 Dialog：元信息 + AI 详情（懒生成）+ 「显示原邮件」展开 EmailViewer。
+// 移动端全屏、桌面端限宽（md），带向上滑入过渡。
 
-import { useEffect, useState } from 'react';
+import type { ReactElement } from 'react';
+import { forwardRef, useEffect, useState } from 'react';
 import AppBar from '@mui/material/AppBar';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
@@ -9,9 +11,12 @@ import Dialog from '@mui/material/Dialog';
 import Divider from '@mui/material/Divider';
 import IconButton from '@mui/material/IconButton';
 import Skeleton from '@mui/material/Skeleton';
+import Slide from '@mui/material/Slide';
 import Stack from '@mui/material/Stack';
 import Toolbar from '@mui/material/Toolbar';
 import Typography from '@mui/material/Typography';
+import useMediaQuery from '@mui/material/useMediaQuery';
+import { useTheme } from '@mui/material/styles';
 import CloseIcon from '@mui/icons-material/Close';
 import EmailIcon from '@mui/icons-material/Email';
 import ReactMarkdown from 'react-markdown';
@@ -19,11 +24,17 @@ import { fetchEmail, fetchItemDetail, fetchStatus } from '../lib/api';
 import { formatDueDate } from '../lib/grouping';
 import type { AccountInfo, Email, Item } from '../types';
 import EmailViewer from './EmailViewer';
+import type { TransitionProps } from '@mui/material/transitions';
 
 interface Props {
   item: Item;
   onClose: () => void;
 }
+
+// 模块级 Slide 过渡组件：避免在渲染函数体内内联定义导致 Dialog 每次渲染重挂载
+const SlideUp = forwardRef<HTMLDivElement, TransitionProps & { children: ReactElement }>(
+  (props, ref) => <Slide direction="up" ref={ref} {...props} />,
+);
 
 export default function ItemDialog({ item, onClose }: Props) {
   const [detail, setDetail] = useState<string | null>(item.detail_md);
@@ -32,6 +43,10 @@ export default function ItemDialog({ item, onClose }: Props) {
   const [email, setEmail] = useState<Email | null>(null);
   const [accounts, setAccounts] = useState<AccountInfo[]>([]);
   const [showEmail, setShowEmail] = useState(false);
+
+  const theme = useTheme();
+  // 移动端全屏、桌面端限宽对话框
+  const fullScreen = useMediaQuery(theme.breakpoints.down('md'));
 
   // 详情为 null 时懒生成；同时预取邮件元信息（来源账户名映射用）
   useEffect(() => {
@@ -73,7 +88,14 @@ export default function ItemDialog({ item, onClose }: Props) {
     : undefined;
 
   return (
-    <Dialog fullScreen open onClose={onClose}>
+    <Dialog
+      fullScreen={fullScreen}
+      maxWidth="md"
+      fullWidth
+      TransitionComponent={SlideUp}
+      open
+      onClose={onClose}
+    >
       <AppBar position="static" elevation={0}>
         <Toolbar>
           <IconButton edge="start" color="inherit" onClick={onClose} aria-label="关闭">

@@ -1,37 +1,40 @@
-// 状态页：各邮箱账户健康卡片（同步状态 / 上次同步相对时间 / 错误）+ LLM 待处理计数。
+// 设置页：账户状态 / 外观 / 账户 / 关于 四个纵向分区（原 StatusPage 逻辑迁入账户状态区）。
 
 import { useCallback, useEffect, useState } from 'react';
 import Alert from '@mui/material/Alert';
-import AppBar from '@mui/material/AppBar';
 import Avatar from '@mui/material/Avatar';
 import Box from '@mui/material/Box';
+import Button from '@mui/material/Button';
 import Card from '@mui/material/Card';
 import CardContent from '@mui/material/CardContent';
 import Chip from '@mui/material/Chip';
 import CircularProgress from '@mui/material/CircularProgress';
+import Divider from '@mui/material/Divider';
 import IconButton from '@mui/material/IconButton';
+import List from '@mui/material/List';
+import ListItem from '@mui/material/ListItem';
+import ListItemText from '@mui/material/ListItemText';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import Stack from '@mui/material/Stack';
-import Toolbar from '@mui/material/Toolbar';
+import ToggleButton from '@mui/material/ToggleButton';
+import ToggleButtonGroup from '@mui/material/ToggleButtonGroup';
 import Typography from '@mui/material/Typography';
 import { fetchStatus } from '../lib/api';
+import { API_BASE_URL, PHAINON_API_BASE } from '../lib/env';
+import { enterSx, usePrefersReducedMotion } from '../lib/motion';
+import { logout, startLogin } from '../lib/phainon';
+import { useSession } from '../lib/session';
+import { useThemeMode } from '../lib/theme-mode';
+import { timeAgo } from '../lib/time';
 import type { StatusResponse } from '../types';
 
-/** 相对时间：刚刚 / N 分钟前 / N 小时前 / N 天前 */
-function timeAgo(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
-  const minutes = Math.floor(diff / 60_000);
-  if (minutes < 1) return '刚刚';
-  if (minutes < 60) return `${minutes} 分钟前`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours} 小时前`;
-  return `${Math.floor(hours / 24)} 天前`;
-}
-
-export default function StatusPage() {
+export default function SettingsPage() {
   const [status, setStatus] = useState<StatusResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const { mode, setMode } = useThemeMode();
+  const me = useSession();
+  const reduced = usePrefersReducedMotion();
 
   const load = useCallback(() => {
     let alive = true;
@@ -54,19 +57,25 @@ export default function StatusPage() {
 
   useEffect(() => load(), [load]);
 
+  const displayName = me ? (me.user.name ?? me.user.email ?? me.user.sub) : '未知用户';
+
+  const handleLogout = async () => {
+    await logout();
+    startLogin();
+  };
+
   return (
     <Box>
-      <AppBar position="static" elevation={0}>
-        <Toolbar>
-          <Typography variant="h6" sx={{ flexGrow: 1 }} noWrap>
-            状态
+      {/* 账户状态：原 StatusPage 全部展示逻辑，key 用后端补回的 a.id */}
+      <Box sx={{ px: 2, pt: 2 }}>
+        <Stack direction="row" alignItems="center" sx={{ mb: 1 }}>
+          <Typography variant="overline" sx={{ flexGrow: 1 }}>
+            账户状态
           </Typography>
-          <IconButton color="inherit" onClick={load} aria-label="刷新" disabled={loading}>
-            <RefreshIcon />
+          <IconButton size="small" aria-label="刷新" onClick={load} disabled={loading}>
+            <RefreshIcon fontSize="small" />
           </IconButton>
-        </Toolbar>
-      </AppBar>
-      <Box sx={{ px: 2, py: 2 }}>
+        </Stack>
         {loading && !status ? (
           <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}>
             <CircularProgress />
@@ -78,8 +87,8 @@ export default function StatusPage() {
             <Alert severity="info" icon={false} sx={{ py: 0.5 }}>
               LLM 待处理邮件：{status.pending_llm} 封
             </Alert>
-            {status.accounts.map((a) => (
-              <Card key={a.id} variant="outlined">
+            {status.accounts.map((a, index) => (
+              <Card key={a.id} variant="outlined" sx={enterSx(index, reduced)}>
                 <CardContent>
                   <Stack direction="row" spacing={1.5} alignItems="center">
                     <Avatar>{a.kind === 'gmail' ? 'G' : 'O'}</Avatar>
@@ -116,6 +125,57 @@ export default function StatusPage() {
             ))}
           </Stack>
         ) : null}
+      </Box>
+
+      <Divider sx={{ my: 2 }} />
+
+      {/* 外观：深浅色三态，读写 useThemeMode */}
+      <Box sx={{ px: 2 }}>
+        <Typography variant="overline">外观</Typography>
+        <ToggleButtonGroup
+          exclusive
+          fullWidth
+          size="small"
+          value={mode}
+          onChange={(_e, v) => {
+            if (v === 'system' || v === 'light' || v === 'dark') setMode(v);
+          }}
+        >
+          <ToggleButton value="system">跟随系统</ToggleButton>
+          <ToggleButton value="light">浅色</ToggleButton>
+          <ToggleButton value="dark">深色</ToggleButton>
+        </ToggleButtonGroup>
+      </Box>
+
+      <Divider sx={{ my: 2 }} />
+
+      {/* 账户：显示登录者 + 退出登录（回到登录流程） */}
+      <Box sx={{ px: 2 }}>
+        <Typography variant="overline">账户</Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+          {displayName}
+        </Typography>
+        <Button variant="outlined" color="error" onClick={handleLogout}>
+          退出登录
+        </Button>
+      </Box>
+
+      <Divider sx={{ my: 2 }} />
+
+      {/* 关于：构建注入的版本号与后端地址 */}
+      <Box sx={{ px: 2, pb: 2 }}>
+        <Typography variant="overline">关于</Typography>
+        <List dense>
+          <ListItem>
+            <ListItemText primary="版本" secondary={__APP_VERSION__} />
+          </ListItem>
+          <ListItem>
+            <ListItemText primary="后端地址" secondary={API_BASE_URL || '同源'} />
+          </ListItem>
+          <ListItem>
+            <ListItemText primary="鉴权服务" secondary={PHAINON_API_BASE} />
+          </ListItem>
+        </List>
       </Box>
     </Box>
   );

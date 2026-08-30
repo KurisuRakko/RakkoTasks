@@ -189,6 +189,7 @@ def create_app(
         return {
             "accounts": [
                 {
+                    "id": a.id,
                     "name": a.name,
                     "kind": a.kind,
                     "email": a.email,

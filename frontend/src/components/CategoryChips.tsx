@@ -16,7 +16,14 @@ export default function CategoryChips({ value, onChange }: Props) {
     <Stack
       direction="row"
       spacing={1}
-      sx={{ px: 2, py: 1, overflowX: 'auto', scrollbarWidth: 'none' }}
+      sx={{
+        px: 2,
+        py: 1,
+        overflowX: 'auto',
+        scrollbarWidth: 'none',
+        // 桌面宽屏换行左对齐，不横向拉伸
+        flexWrap: { md: 'wrap' },
+      }}
     >
       <Chip
         label="全部"

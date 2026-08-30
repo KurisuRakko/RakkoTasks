@@ -13,7 +13,8 @@
     "noUnusedParameters": true,
     "verbatimModuleSyntax": true,
     "isolatedModules": true,
-    "moduleDetection": "force"
+    "moduleDetection": "force",
+    "resolveJsonModule": true
   },
   "include": ["vite.config.ts"]
 }

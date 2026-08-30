@@ -157,16 +157,19 @@ def test_email_endpoint_sanitized_html(session_factory, monkeypatch):
 
 
 def test_status_endpoint(session_factory, monkeypatch):
-    _acc, _em, _item_id, _pending_id = _seed(session_factory)
+    acc_id, _em, _item_id, _pending_id = _seed(session_factory)
     client = _client(session_factory, monkeypatch)
 
     resp = client.get("/api/status")
     assert resp.status_code == 200
     data = resp.json()
     assert data["accounts"] == [
-        {"name": "学校邮箱", "kind": "microsoft", "email": "a@example.com",
+        {"id": acc_id, "name": "学校邮箱", "kind": "microsoft", "email": "a@example.com",
          "status": "ok", "last_sync_at": None, "last_error": None}
     ]
+    # 每个账户都带整型 id，且与库中账户 id 一致
+    assert all(isinstance(a["id"], int) for a in data["accounts"])
+    assert [a["id"] for a in data["accounts"]] == [acc_id]
     assert data["pending_llm"] == 1  # 一封 llm_state=pending
 
 

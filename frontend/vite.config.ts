@@ -1,6 +1,9 @@
 import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
+import pkg from './package.json' with { type: 'json' };
+
+// 版本号注入：构建时把 package.json 的 version 定义为 __APP_VERSION__（对 vitest 同样生效）
 
 export default defineConfig({
   plugins: [
@@ -23,6 +26,9 @@ export default defineConfig({
       },
     }),
   ],
+  define: {
+    __APP_VERSION__: JSON.stringify(pkg.version),
+  },
   test: {
     environment: 'jsdom',
     setupFiles: ['./tests/setup.ts'],
