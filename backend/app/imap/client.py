@@ -88,19 +88,19 @@ def build_search_criteria(last_uid: int, backfill_days: int) -> str:
 
 
 def connect_account(account, settings: Settings | None = None):
-    """连接并登录账户，返回 (ImapClient, access_token)；微软失败时抛异常由调用方标记。
+    """连接并登录账户，返回 (ImapClient, access_token)；失败时抛异常由调用方标记。
 
-    Gmail 凭据来自 env GMAIL_APP_PASSWORD；微软走 msal 静默取 token。
+    Gmail 凭据来自账户的 app_password（CLI 录入）；微软走 msal 静默取 token。
     """
     from app.imap import mstoken  # 延迟导入避免循环依赖
 
     settings = settings or get_settings()
     if account.kind == "gmail":
-        if not settings.gmail_app_password:
-            raise RuntimeError("未配置 GMAIL_APP_PASSWORD")
+        if not account.app_password:
+            raise RuntimeError("该 Gmail 账户未设置应用专用密码，请用 accounts set-password 录入")
         conn = imaplib.IMAP4_SSL(GMAIL_IMAP_HOST, IMAP_PORT)
         client = ImapClient(conn)
-        client.login_gmail(account.email, settings.gmail_app_password)
+        client.login_gmail(account.email, account.app_password)
         return client, None
     if account.kind == "microsoft":
         token = mstoken.acquire_token_silent(account, settings)

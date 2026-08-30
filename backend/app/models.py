@@ -1,4 +1,4 @@
-"""SQLAlchemy 2.0 声明式模型：accounts / emails / items（见 DESIGN.md 第 5 节）。"""
+"""SQLAlchemy 2.0 声明式模型：users / accounts / emails / items（见 DESIGN.md 第 5 节）。"""
 from __future__ import annotations
 
 from datetime import date, datetime
@@ -11,15 +11,34 @@ class Base(DeclarativeBase):
     pass
 
 
+class User(Base):
+    __tablename__ = "users"
+
+    sub: Mapped[str] = mapped_column(Text, primary_key=True)  # Phainon user.sub
+    email: Mapped[str | None] = mapped_column(Text)
+    name: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.now, server_default=func.now(), nullable=False
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.now, server_default=func.now(), nullable=False
+    )
+
+    accounts: Mapped[list["Account"]] = relationship(back_populates="user")
+
+
 class Account(Base):
     __tablename__ = "accounts"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_sub: Mapped[str] = mapped_column(ForeignKey("users.sub"), nullable=False, index=True)  # 归属用户
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     kind: Mapped[str] = mapped_column(String(16), nullable=False)  # gmail | microsoft
     email: Mapped[str] = mapped_column(String(256), nullable=False)
     ms_client_id: Mapped[str | None] = mapped_column(String(64))
+    app_password: Mapped[str | None] = mapped_column(Text)  # Gmail 应用专用密码，明文，仅服务端 IMAP 使用
     token_cache: Mapped[str | None] = mapped_column(Text)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)  # 软删除：0 停用但保留邮件/任务
     # IMAP 增量游标
     uidvalidity: Mapped[int | None] = mapped_column(Integer)
     last_uid: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
@@ -27,6 +46,7 @@ class Account(Base):
     last_error: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(16), default="pending", nullable=False)  # ok|error|pending
 
+    user: Mapped[User] = relationship(back_populates="accounts")
     emails: Mapped[list["Email"]] = relationship(back_populates="account")
 
 

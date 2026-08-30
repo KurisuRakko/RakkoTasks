@@ -3,7 +3,7 @@ from email.message import EmailMessage
 
 from sqlalchemy import select
 
-from app.models import Account, Email, Item
+from app.models import Account, Email, Item, User
 from app.sync import run_once
 
 
@@ -57,7 +57,9 @@ def _run(session_factory, imap: FakeImap, llm: FakeLLM):
 
 def _seed_account(sf) -> None:
     with sf() as s:
-        s.add(Account(name="测试邮箱", kind="gmail", email="t@example.com", status="pending"))
+        s.add(User(sub="user-1"))
+        s.commit()
+        s.add(Account(user_sub="user-1", name="测试邮箱", kind="gmail", email="t@example.com", status="pending"))
         s.commit()
 
 

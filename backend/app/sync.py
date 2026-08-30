@@ -132,7 +132,8 @@ def run_once(
             llm = None  # 未配置 LLM：跳过分类阶段
     summary: dict[str, Any] = {"accounts": {}, "pending_llm": 0}
     with session_factory() as session:
-        accounts = session.execute(select(Account)).scalars().all()
+        # 只同步启用中的账户；enabled=0（软删除）的账户跳过，其邮件与任务保留
+        accounts = session.execute(select(Account).where(Account.enabled.is_(True))).scalars().all()
         for account in accounts:
             imap = None
             try:

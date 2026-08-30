@@ -1,11 +1,11 @@
-"""REST API 测试：TestClient + 依赖覆盖跳过鉴权。"""
+"""REST API 测试：TestClient + 依赖覆盖指定当前用户。"""
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app.api import create_app
-from app.auth import require_auth
+from app.auth import CurrentUser, require_auth
 from app.config import Settings
-from app.models import Account, Email, Item
+from app.models import Account, Email, Item, User
 
 
 class FakeDetailLLM:
@@ -18,12 +18,14 @@ class FakeDetailLLM:
 
 
 def _settings() -> Settings:
-    return Settings(database_path=":memory:", allowed_subs="user-1", llm_base_url="http://x", llm_api_key="k")
+    return Settings(database_path=":memory:", llm_base_url="http://x", llm_api_key="k")
 
 
 def _seed(session_factory) -> tuple[int, int, int, int]:
     with session_factory() as s:
-        acc = Account(name="学校邮箱", kind="microsoft", email="a@example.com", status="ok")
+        s.add(User(sub="user-1", email="a@example.com", name="甲"))
+        s.commit()
+        acc = Account(user_sub="user-1", name="学校邮箱", kind="microsoft", email="a@example.com", status="ok")
         s.add(acc)
         s.commit()
         em = Email(
@@ -56,7 +58,7 @@ def _seed(session_factory) -> tuple[int, int, int, int]:
 
 def _client(session_factory, monkeypatch):
     app = create_app(settings=_settings(), session_factory=session_factory)
-    app.dependency_overrides[require_auth] = lambda: None
+    app.dependency_overrides[require_auth] = lambda: CurrentUser(sub="user-1", email="a@example.com", name="甲")
     return TestClient(app)
 
 
@@ -165,7 +167,7 @@ def test_status_endpoint(session_factory, monkeypatch):
     data = resp.json()
     assert data["accounts"] == [
         {"id": acc_id, "name": "学校邮箱", "kind": "microsoft", "email": "a@example.com",
-         "status": "ok", "last_sync_at": None, "last_error": None}
+         "status": "ok", "enabled": True, "last_sync_at": None, "last_error": None}
     ]
     # 每个账户都带整型 id，且与库中账户 id 一致
     assert all(isinstance(a["id"], int) for a in data["accounts"])
@@ -180,7 +182,7 @@ def test_frontend_dist_static_serving(session_factory, tmp_path):
     (dist / "index.html").write_text("<html>app</html>", encoding="utf-8")
     (dist / "assets" / "x.js").write_text("console.log(1)", encoding="utf-8")
 
-    settings = Settings(database_path=":memory:", allowed_subs="user-1", frontend_dist=str(dist))
+    settings = Settings(database_path=":memory:", frontend_dist=str(dist))
     app = create_app(settings=settings, session_factory=session_factory)
     client = TestClient(app)
 
