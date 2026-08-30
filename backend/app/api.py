@@ -14,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.auth import require_auth
+from app.auth import CurrentUser, require_auth
 from app.config import Settings, get_settings
 from app.db import init_db, make_engine, make_session_factory
 from app.models import Account, Email, Item
@@ -40,6 +40,28 @@ def _get_db(request: Request) -> Iterator[Session]:
         raise
     finally:
         session.close()
+
+
+def _owned_account_ids(db: Session, user_sub: str) -> list[int]:
+    """该用户拥有的账户 id 列表（归属推导链：Account.user_sub）。"""
+    return list(db.execute(select(Account.id).where(Account.user_sub == user_sub)).scalars().all())
+
+
+def _owned_item(db: Session, item_id: int, user_sub: str) -> Item | None:
+    """按归属链 Item→Email→Account 取属于该用户的条目；不属于返回 None（对外按 404 处理）。"""
+    return db.execute(
+        select(Item)
+        .join(Item.email)
+        .join(Email.account)
+        .where(Item.id == item_id, Account.user_sub == user_sub)
+    ).scalars().first()
+
+
+def _owned_email(db: Session, email_id: int, user_sub: str) -> Email | None:
+    """按归属链 Email→Account 取属于该用户的邮件；不属于返回 None（对外按 404 处理）。"""
+    return db.execute(
+        select(Email).join(Email.account).where(Email.id == email_id, Account.user_sub == user_sub)
+    ).scalars().first()
 
 
 def create_app(
@@ -77,13 +99,19 @@ def create_app(
     def health() -> dict:
         return {"status": "ok"}
 
-    @app.get("/api/items", dependencies=[Depends(require_auth)])
+    @app.get("/api/items")
     def list_items(
+        user: CurrentUser = Depends(require_auth),
         db: Session = Depends(_get_db),
         status: str = Query(default="open"),
         category: str | None = Query(default=None),
     ) -> dict:
-        stmt = select(Item).where(Item.status == status)
+        stmt = (
+            select(Item)
+            .join(Item.email)
+            .join(Email.account)
+            .where(Account.user_sub == user.sub, Item.status == status)
+        )
         if category:
             stmt = stmt.where(Item.category == category)
         items = (
@@ -93,11 +121,13 @@ def create_app(
         )
         return {"items": [_item_dict(i) for i in items]}
 
-    @app.patch("/api/items/{item_id}", dependencies=[Depends(require_auth)])
-    def patch_item(item_id: int, body: ItemPatch, db: Session = Depends(_get_db)) -> dict:
+    @app.patch("/api/items/{item_id}")
+    def patch_item(
+        item_id: int, body: ItemPatch, user: CurrentUser = Depends(require_auth), db: Session = Depends(_get_db)
+    ) -> dict:
         if body.status not in ("done", "open"):
             raise HTTPException(status_code=400, detail={"code": "bad_status"})
-        item = db.get(Item, item_id)
+        item = _owned_item(db, item_id, user.sub)
         if item is None:
             raise HTTPException(status_code=404, detail={"code": "not_found"})
         item.status = body.status
@@ -105,16 +135,18 @@ def create_app(
         db.commit()
         return _item_dict(item)
 
-    @app.get("/api/items/{item_id}", dependencies=[Depends(require_auth)])
-    def get_item(item_id: int, db: Session = Depends(_get_db)) -> dict:
-        item = db.get(Item, item_id)
+    @app.get("/api/items/{item_id}")
+    def get_item(item_id: int, user: CurrentUser = Depends(require_auth), db: Session = Depends(_get_db)) -> dict:
+        item = _owned_item(db, item_id, user.sub)
         if item is None:
             raise HTTPException(status_code=404, detail={"code": "not_found"})
         return _item_dict(item)
 
-    @app.post("/api/items/{item_id}/detail", dependencies=[Depends(require_auth)])
-    def generate_item_detail(item_id: int, db: Session = Depends(_get_db)) -> dict:
-        item = db.get(Item, item_id)
+    @app.post("/api/items/{item_id}/detail")
+    def generate_item_detail(
+        item_id: int, user: CurrentUser = Depends(require_auth), db: Session = Depends(_get_db)
+    ) -> dict:
+        item = _owned_item(db, item_id, user.sub)
         if item is None:
             raise HTTPException(status_code=404, detail={"code": "not_found"})
         if item.detail_md is None:
@@ -138,13 +170,14 @@ def create_app(
             db.commit()
         return {"id": item.id, "detail_md": item.detail_md}
 
-    @app.get("/api/emails/{email_id}", dependencies=[Depends(require_auth)])
+    @app.get("/api/emails/{email_id}")
     def get_email(
         email_id: int,
         remote_images: int = Query(default=0),
+        user: CurrentUser = Depends(require_auth),
         db: Session = Depends(_get_db),
     ) -> dict:
-        email = db.get(Email, email_id)
+        email = _owned_email(db, email_id, user.sub)
         if email is None:
             raise HTTPException(status_code=404, detail={"code": "not_found"})
         html = None
@@ -171,21 +204,30 @@ def create_app(
             "html": html,
         }
 
-    @app.post("/api/search", dependencies=[Depends(require_auth)])
-    def search(request: SearchRequest, db: Session = Depends(_get_db)) -> dict:
+    @app.post("/api/search")
+    def search(
+        request: SearchRequest, user: CurrentUser = Depends(require_auth), db: Session = Depends(_get_db)
+    ) -> dict:
         if not request.question.strip():
             raise HTTPException(status_code=400, detail={"code": "empty_question"})
         from app.llm import get_llm  # 延迟导入，便于测试 monkeypatch
 
         try:
-            return run_search(request.question, db, get_llm(settings))
+            return run_search(request.question, db, get_llm(settings), user.sub)
         except Exception as exc:
             raise HTTPException(status_code=502, detail={"code": "search_error", "message": str(exc)})
 
-    @app.get("/api/status", dependencies=[Depends(require_auth)])
-    def status_endpoint(db: Session = Depends(_get_db)) -> dict:
-        accounts = db.execute(select(Account)).scalars().all()
-        pending_llm = len(db.execute(select(Email).where(Email.llm_state == "pending")).scalars().all())
+    @app.get("/api/status")
+    def status_endpoint(
+        user: CurrentUser = Depends(require_auth), db: Session = Depends(_get_db)
+    ) -> dict:
+        owned = _owned_account_ids(db, user.sub)
+        accounts = db.execute(select(Account).where(Account.id.in_(owned)).order_by(Account.id)).scalars().all()
+        pending_llm = len(
+            db.execute(
+                select(Email).where(Email.llm_state == "pending", Email.account_id.in_(owned))
+            ).scalars().all()
+        )
         return {
             "accounts": [
                 {
@@ -194,6 +236,7 @@ def create_app(
                     "kind": a.kind,
                     "email": a.email,
                     "status": a.status,
+                    "enabled": bool(a.enabled),
                     "last_sync_at": a.last_sync_at.isoformat() if a.last_sync_at else None,
                     "last_error": a.last_error,
                 }

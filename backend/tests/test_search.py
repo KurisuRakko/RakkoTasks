@@ -4,7 +4,7 @@ from datetime import datetime
 
 from sqlalchemy import select, text
 
-from app.models import Account, Email
+from app.models import Account, Email, User
 from app.search import fts_query, run_search
 
 
@@ -41,7 +41,9 @@ class FakeSearchLLM:
 
 def _seed(session_factory) -> tuple[int, int]:
     with session_factory() as s:
-        acc = Account(name="学校邮箱", kind="microsoft", email="a@example.com", status="ok")
+        s.add(User(sub="user-1"))
+        s.commit()
+        acc = Account(user_sub="user-1", name="学校邮箱", kind="microsoft", email="a@example.com", status="ok")
         s.add(acc)
         s.commit()
         e1 = Email(
@@ -61,7 +63,7 @@ def test_agentic_loop_and_citations(session_factory):
     e1_id, e2_id = _seed(session_factory)
     with session_factory() as s:
         llm = FakeSearchLLM(target_id=e1_id)
-        result = run_search("发票在哪里？", s, llm)
+        result = run_search("发票在哪里？", s, llm, "user-1")
 
     assert result["answer_md"] == "**找到了**：发票已开具"
     # 富化：join emails 补 subject/sent_at；9999 不存在被过滤
@@ -108,6 +110,6 @@ def test_read_emails_falls_back_to_html_text(session_factory):
     e1_id, e2_id = _seed(session_factory)
     with session_factory() as s:
         llm = FakeSearchLLM(target_id=e2_id)
-        result = run_search("会议内容", s, llm)
+        result = run_search("会议内容", s, llm, "user-1")
     # FakeSearchLLM 第二轮 read_emails 读 e2（html 正文），断言没炸且能完成
     assert result["citations"][0]["email_id"] == e2_id
