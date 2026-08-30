@@ -1,5 +1,5 @@
-// RouteTransition 测试：包裹元素必须横向裁剪（overflow-x 不为 visible），
-// 否则入场位移 translateX(±24px) 会撑出横向滚动区（移动端实测的「页面变宽再缩回」）。
+// RouteTransition 测试：裁剪样式必须加在带动画元素的**外层**（overflow 只裁后代不裁自身，
+// 加在自身则 translateX 溢出仍会撑出横向滚动区——移动端实测的「页面变宽再缩回」）。
 // jsdom 不解析 @supports，因此取到的是 hidden 兜底值；clip 由真实浏览器验证。
 
 import { afterEach, describe, expect, it } from 'vitest';
@@ -12,7 +12,7 @@ afterEach(() => {
 });
 
 describe('RouteTransition', () => {
-  it('包裹元素的 overflow-x 不为 visible（位移期间不撑出横向滚动区）', () => {
+  it('裁剪元素与动画元素分离：外层 overflow-x 不为 visible，且是内层动画元素的祖先', () => {
     const { container } = render(
       <MemoryRouter initialEntries={['/']}>
         <Routes>
@@ -27,7 +27,12 @@ describe('RouteTransition', () => {
         </Routes>
       </MemoryRouter>,
     );
-    const box = container.firstElementChild as HTMLElement;
-    expect(getComputedStyle(box).overflowX).not.toBe('visible');
+    // 两层 Box：外层裁剪盒（不带 key）、内层动画盒（带 key）
+    const clipEl = container.firstElementChild as HTMLElement;
+    const animatedEl = clipEl.firstElementChild as HTMLElement;
+    expect(getComputedStyle(clipEl).overflowX).not.toBe('visible');
+    // 关键：裁剪必须作用在动画元素的祖先上（退回「加在自身」写法时此断言失败）
+    expect(clipEl.contains(animatedEl)).toBe(true);
+    expect(clipEl).not.toBe(animatedEl);
   });
 });
