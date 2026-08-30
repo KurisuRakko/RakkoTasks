@@ -27,10 +27,11 @@
    - `app_id`：`rakkotasks`
    - `allowed_origins`：`https://tasks.rakko.cn`
    - `allowed_return_urls`：`https://tasks.rakko.cn/`
-2. 保存后，把前端地址 `https://tasks.rakko.cn` 登录一次（隧道建好后），
-   到 Phainon 管理端的会话/用户列表里读取你的 `sub`，填入 `.env` 的 `ALLOWED_SUBS`
-   （多个用户用英文逗号分隔）。
-   > `ALLOWED_SUBS` 为空时所有人都会被 401 拒绝——这是刻意行为，先填好再对外。
+2. 保存后即可使用：能登进 Phainon 的账号即可访问本站，首次登录时后端自动创建
+   用户记录，无需任何白名单配置。
+   > **风险提示**：若 Phainon（Priestess）允许自助注册，则任何注册者都能进来使用
+   > 本站（新用户没有任何邮箱账户，看到的是空列表）。需要收紧时应在 Priestess
+   > 侧控制账号发放，本站不做审批。
 
 ## 3. Cloudflare Tunnel
 
@@ -55,8 +56,6 @@ vim .env
 | 变量 | 取值方法 |
 |---|---|
 | `LLM_API_KEY` | DeepSeek 开放平台创建 API Key |
-| `GMAIL_APP_PASSWORD` | 见第 6 节「Gmail」 |
-| `ALLOWED_SUBS` | 见第 2 节 |
 | `TUNNEL_TOKEN` | 见第 3 节 |
 
 其余项保留默认值即可（默认值与 `backend/app/config.py` 一致）。
@@ -86,54 +85,71 @@ docker compose -f deploy/docker-compose.yml ps
 
 ## 6. 首次邮箱接入（关键）
 
-四个账户：UNSW、个人 Outlook、公司 Outlook、Gmail。账户元数据存数据库，
-凭据类配置走 env（Gmail）或 OAuth token（Microsoft，存数据库）。
+四个账户：UNSW、个人 Outlook、公司 Outlook、Gmail。账户元数据与凭据全部存数据库，
+**不再有 `GMAIL_APP_PASSWORD` 这类凭据 env**：Gmail 应用专用密码在 CLI 交互式录入
+（getpass，不回显、不会进 shell history），微软 token 走设备码授权后存库。
+每个账户都归属某个已登录过的用户（`--user <sub|邮箱>`）。
 
-### Gmail（应用专用密码）
+> **先决条件**：使用者本人必须先登录一次网页（隧道建好后访问
+> `https://tasks.rakko.cn` 完成 Phainon 登录），否则服务器上还没有他的用户记录，
+> 后续 CLI 无从归属。
 
-1. Google 账号 → 安全性 → 开启**两步验证**。
-2. 安全性 → 应用专用密码 → 生成 16 位密码，填入 `.env` 的 `GMAIL_APP_PASSWORD`。
-3. 保存后**重启 web/worker 让新 env 生效**（`docker compose ... restart web worker`）。
-4. 添加账户：
+1. 在服务器上查到该用户的 sub / 邮箱（新用户登录后即可看到）：
 
    ```bash
    docker compose -f deploy/docker-compose.yml run --rm web \
-     python -m app.cli accounts add --kind gmail --name Gmail --email you@gmail.com
+     python -m app.cli users list
    ```
 
-### 三个 Outlook（OAuth2 device code）
+2. **Gmail（应用专用密码）**。先在 Google 账号里生成密码：
+   账号 → 安全性 → 开启**两步验证**；安全性 → 应用专用密码 → 生成 16 位密码。
+   然后添加账户，**按提示输入该密码**：
 
-逐个添加（把邮箱换成自己的）：
+   ```bash
+   docker compose -f deploy/docker-compose.yml run --rm web \
+     python -m app.cli accounts add --user <sub或邮箱> --kind gmail \
+       --name Gmail --email you@gmail.com
+   ```
 
-```bash
-docker compose -f deploy/docker-compose.yml run --rm web \
-  python -m app.cli accounts add --kind microsoft --name UNSW --email your@unsw.edu.au
-docker compose -f deploy/docker-compose.yml run --rm web \
-  python -m app.cli accounts add --kind microsoft --name 个人Outlook --email you@outlook.com
-docker compose -f deploy/docker-compose.yml run --rm web \
-  python -m app.cli accounts add --kind microsoft --name 公司Outlook --email you@company.com
-```
+   > 应用专用密码是**交互式输入**：命令会等待你键入，输入时不回显、不会进
+   > shell history。这类交互式命令必须用 `run --rm`（带 TTY），**不能用
+   > `exec -T`**（无 TTY 时交互输入无法工作）。
 
-每个账户随后执行 `connect`，终端会打印 **device code 授权 URL 与代码**，
-在任意浏览器打开并完成登录/MFA 后，token 自动保存回数据库：
+3. **三个 Outlook（OAuth2 device code）**。逐个添加（把邮箱换成自己的），
+   每个账户都要带上 `--user`：
 
-```bash
-docker compose -f deploy/docker-compose.yml run --rm web \
-  python -m app.cli accounts connect your@unsw.edu.au
-docker compose -f deploy/docker-compose.yml run --rm web \
-  python -m app.cli accounts connect you@outlook.com
-docker compose -f deploy/docker-compose.yml run --rm web \
-  python -m app.cli accounts connect you@company.com
-```
+   ```bash
+   docker compose -f deploy/docker-compose.yml run --rm web \
+     python -m app.cli accounts add --user <sub或邮箱> --kind microsoft \
+       --name UNSW --email your@unsw.edu.au
+   docker compose -f deploy/docker-compose.yml run --rm web \
+     python -m app.cli accounts add --user <sub或邮箱> --kind microsoft \
+       --name 个人Outlook --email you@outlook.com
+   docker compose -f deploy/docker-compose.yml run --rm web \
+     python -m app.cli accounts add --user <sub或邮箱> --kind microsoft \
+       --name 公司Outlook --email you@company.com
+   ```
 
-> 若某个账户需使用自己的 Azure 应用注册（默认用微软官方公共客户端
-> `d3590ed6-...`），`add` 时追加 `--client-id <你的client_id>`。
+   每个账户随后执行 `connect`，终端会打印 **device code 授权 URL 与代码**，
+   在任意浏览器打开并完成登录/MFA 后，token 自动保存回数据库：
+
+   ```bash
+   docker compose -f deploy/docker-compose.yml run --rm web \
+     python -m app.cli accounts connect --user <sub或邮箱> your@unsw.edu.au
+   docker compose -f deploy/docker-compose.yml run --rm web \
+     python -m app.cli accounts connect --user <sub或邮箱> you@outlook.com
+   docker compose -f deploy/docker-compose.yml run --rm web \
+     python -m app.cli accounts connect --user <sub或邮箱> you@company.com
+   ```
+
+   > 若某个账户需使用自己的 Azure 应用注册（默认用微软官方公共客户端
+   > `d3590ed6-...`），`add` 时追加 `--client-id <你的client_id>`。
 
 ### 核对
 
 ```bash
 docker compose -f deploy/docker-compose.yml run --rm web \
-  python -m app.cli accounts list
+  python -m app.cli accounts list --user <sub或邮箱>
 ```
 
 `status` 应为 `ok`。添加/授权完成后重启 worker 让下一轮同步立即开始：
@@ -155,7 +171,8 @@ curl http://127.0.0.1:8000/api/health
 # 3) 页面「状态」页查看四账户健康、上次同步时间、LLM 待处理数
 ```
 
-登录后 `ALLOWED_SUBS` 若还没填，会被 401 拒绝：按第 2 节取 sub 填入 `.env` 并重启 web。
+登录即用：首次登录会自动创建用户记录（页面显示空账户列表属正常，账户由管理员
+按第 6 节用 CLI 添加）。
 
 ## 8. 日常运维
 
@@ -168,6 +185,8 @@ docker compose -f deploy/docker-compose.yml logs -f --tail=100 cloudflared
 # 升级：拉取新代码后重建（数据库在 volume 里，不受影响）
 git pull
 docker compose -f deploy/docker-compose.yml up -d --build
+# 注意：本次多用户改造变更了数据库 schema 且无迁移脚本，从旧版本升级需删除
+# data/rakkotasks.db 后重建数据库，并重新接入邮箱账户（旧数据不保留）。
 
 # 备份：整个 data/ 目录（含 SQLite WAL 文件）。最稳妥先停服务再拷：
 docker compose -f deploy/docker-compose.yml stop
@@ -176,8 +195,14 @@ docker compose -f deploy/docker-compose.yml start
 # 在线备份可用 sqlite3 data/rakkotasks.db ".backup '/backup/rakkotasks.db'"
 
 # 令牌掉线：状态页显示账户 error 时，重跑该账户的 connect 即可
+# （--user 可填 sub 或邮箱）
 docker compose -f deploy/docker-compose.yml run --rm web \
-  python -m app.cli accounts connect <email>
+  python -m app.cli accounts connect --user <sub或邮箱> <email>
+
+# 停用某个邮箱账户：accounts remove 是软删除——停用并清除凭据、不再同步，
+# 但保留已抓取的邮件与已生成的任务（状态页该账户显示「已停用」）
+docker compose -f deploy/docker-compose.yml run --rm web \
+  python -m app.cli accounts remove --user <sub或邮箱> <email>
 ```
 
 故障排查要点：

@@ -53,6 +53,8 @@ export interface AccountInfo {
   kind: AccountKind;
   email: string;
   status: AccountStatusValue;
+  /** false 表示已被 CLI 停用，不再同步 */
+  enabled: boolean;
   last_sync_at: string | null;
   last_error: string | null;
 }

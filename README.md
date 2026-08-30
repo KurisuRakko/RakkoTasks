@@ -13,9 +13,12 @@
 三行式指引（前置条件、Phainon 应用注册、Cloudflare Tunnel 等完整步骤见
 [deploy/README.md](deploy/README.md)）：
 
-1. 填配置：`cp deploy/.env.example .env`，填写 `LLM_API_KEY`、`GMAIL_APP_PASSWORD`、
-   `ALLOWED_SUBS`、`TUNNEL_TOKEN` 等项。
+1. 填配置：`cp deploy/.env.example .env`，填写 `LLM_API_KEY`、`TUNNEL_TOKEN` 等项。
 2. 启动：`docker compose -f deploy/docker-compose.yml up -d --build`
    （web + worker + cloudflared 三个服务，公网经隧道走 HTTPS）。
-3. 首次接入邮箱：`docker compose -f deploy/docker-compose.yml run --rm web python -m app.cli accounts add --kind gmail --name Gmail --email you@gmail.com`
-   添加 Gmail；三个 Outlook 账户再分别执行 `accounts connect <email>` 完成设备码授权。
+3. 首次接入邮箱：先在网页上登录一次（后端自动建用户记录），再用
+   `docker compose -f deploy/docker-compose.yml run --rm web python -m app.cli users list`
+   查到自己的 sub，然后 `python -m app.cli accounts add --user <sub> --kind gmail --name Gmail --email you@gmail.com`
+   添加 Gmail（按提示交互式输入应用专用密码）；三个 Outlook 账户再分别执行
+   `accounts connect --user <sub> <email>` 完成设备码授权。完整步骤见
+   [deploy/README.md](deploy/README.md) 第 6 节。

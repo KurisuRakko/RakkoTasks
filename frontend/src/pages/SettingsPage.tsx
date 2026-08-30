@@ -84,45 +84,61 @@ export default function SettingsPage() {
           <Alert severity="error">{error}</Alert>
         ) : status ? (
           <Stack spacing={1.5}>
-            <Alert severity="info" icon={false} sx={{ py: 0.5 }}>
-              LLM 待处理邮件：{status.pending_llm} 封
-            </Alert>
-            {status.accounts.map((a, index) => (
-              <Card key={a.id} variant="outlined" sx={enterSx(index, reduced)}>
-                <CardContent>
-                  <Stack direction="row" spacing={1.5} alignItems="center">
-                    <Avatar>{a.kind === 'gmail' ? 'G' : 'O'}</Avatar>
-                    <Box sx={{ flexGrow: 1, minWidth: 0 }}>
-                      <Typography variant="subtitle1" noWrap>
-                        {a.name}
-                      </Typography>
-                      <Typography variant="body2" color="text.secondary" noWrap>
-                        {a.email}
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        上次同步：
-                        {a.last_sync_at ? timeAgo(a.last_sync_at) : '从未'}
-                      </Typography>
-                    </Box>
-                    <Chip
-                      label={a.status === 'ok' ? '正常' : a.status === 'error' ? '异常' : '同步中'}
-                      size="small"
-                      color={a.status === 'ok' ? 'success' : a.status === 'error' ? 'error' : 'warning'}
-                      variant="outlined"
-                    />
-                  </Stack>
-                  {a.status === 'error' && a.last_error && (
-                    <Typography
-                      variant="body2"
-                      color="error"
-                      sx={{ mt: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                    >
-                      {a.last_error}
-                    </Typography>
-                  )}
-                </CardContent>
-              </Card>
-            ))}
+            {status.accounts.length === 0 ? (
+              <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', py: 2 }}>
+                还没有配置邮箱账户。请联系管理员在服务器上用命令行添加。
+              </Typography>
+            ) : (
+              <>
+                <Alert severity="info" icon={false} sx={{ py: 0.5 }}>
+                  LLM 待处理邮件：{status.pending_llm} 封
+                </Alert>
+                {status.accounts.map((a, index) => (
+                  <Card
+                    key={a.id}
+                    variant="outlined"
+                    sx={{ ...enterSx(index, reduced), opacity: a.enabled === false ? 0.6 : 1 }}
+                  >
+                    <CardContent>
+                      <Stack direction="row" spacing={1.5} alignItems="center">
+                        <Avatar>{a.kind === 'gmail' ? 'G' : 'O'}</Avatar>
+                        <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+                          <Typography variant="subtitle1" noWrap>
+                            {a.name}
+                          </Typography>
+                          <Typography variant="body2" color="text.secondary" noWrap>
+                            {a.email}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            上次同步：
+                            {a.last_sync_at ? timeAgo(a.last_sync_at) : '从未'}
+                          </Typography>
+                        </Box>
+                        {a.enabled === false ? (
+                          <Chip label="已停用" size="small" color="default" variant="outlined" />
+                        ) : (
+                          <Chip
+                            label={a.status === 'ok' ? '正常' : a.status === 'error' ? '异常' : '同步中'}
+                            size="small"
+                            color={a.status === 'ok' ? 'success' : a.status === 'error' ? 'error' : 'warning'}
+                            variant="outlined"
+                          />
+                        )}
+                      </Stack>
+                      {a.status === 'error' && a.last_error && (
+                        <Typography
+                          variant="body2"
+                          color="error"
+                          sx={{ mt: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                        >
+                          {a.last_error}
+                        </Typography>
+                      )}
+                    </CardContent>
+                  </Card>
+                ))}
+              </>
+            )}
           </Stack>
         ) : null}
       </Box>
