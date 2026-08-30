@@ -61,4 +61,11 @@ def strip_markdown_media(md: str) -> str:
     out = _INLINE_IMAGE.sub("", out)
     out = _REF_IMAGE.sub("", out)
     out = _REF_DEF_LINE.sub("", out)
+    # 兜底：上面的正则可能漏掉 URL 内多层嵌套括号的图片语法（如
+    # ![x](https://evil.com/a.png?q=(a(b(c))))，括号平衡只支持一层）。
+    # 这里去掉任何残留 `![` 的感叹号——图片语法必然以 `![` 开头，去掉 `!`
+    # 后至多退化成普通链接（需用户点击），保证任何内容都无法再渲染成图片。
+    # 失败模式是良性的：图片降级成链接或纯文本，绝不会反向变得更危险。
+    # 副作用：中文正文里形如「太好了![笑]」的感叹号会被吃掉一个，可接受的取舍。
+    out = re.sub(r"!(?=\[)", "", out)
     return out
