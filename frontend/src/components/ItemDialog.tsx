@@ -19,11 +19,11 @@ import useMediaQuery from '@mui/material/useMediaQuery';
 import { useTheme } from '@mui/material/styles';
 import CloseIcon from '@mui/icons-material/Close';
 import EmailIcon from '@mui/icons-material/Email';
-import ReactMarkdown from 'react-markdown';
 import { fetchEmail, fetchItemDetail, fetchStatus } from '../lib/api';
 import { formatDueDate } from '../lib/grouping';
 import type { AccountInfo, Email, Item } from '../types';
 import EmailViewer from './EmailViewer';
+import SafeMarkdown from './SafeMarkdown';
 import type { TransitionProps } from '@mui/material/transitions';
 
 interface Props {
@@ -150,7 +150,7 @@ export default function ItemDialog({ item, onClose }: Props) {
           </Stack>
         ) : detail ? (
           <Box sx={{ typography: 'body2' }}>
-            <ReactMarkdown>{detail}</ReactMarkdown>
+            <SafeMarkdown>{detail}</SafeMarkdown>
           </Box>
         ) : (
           <Typography variant="body2" color="text.secondary">

