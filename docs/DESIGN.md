@@ -32,7 +32,7 @@ docs/       本文档等
 | UNSW 学校邮箱 | IMAP `outlook.office365.com:993` | OAuth2 device code + XOAUTH2 |
 | 个人 Outlook | 同上 | 同上（微软已关闭个人账户密码式 IMAP） |
 | 公司 Outlook | 同上 | 同上 |
-| Gmail | IMAP `imap.gmail.com:993` | 应用专用密码（env） |
+| Gmail | IMAP `imap.gmail.com:993` | 应用专用密码（存库，CLI 交互式录入） |
 
 - Microsoft OAuth：msal `PublicClientApplication`，authority `https://login.microsoftonline.com/common`，
   scope `https://outlook.office365.com/IMAP.AccessAsUser.All`（msal 自动附带 offline_access）。
@@ -40,7 +40,9 @@ docs/       本文档等
   UNSW 官方文档认可）。msal 的 SerializableTokenCache 按账户序列化存入 DB。
 - 首次登录：CLI 触发 device code flow，终端打印 URL + 代码，人工在任意浏览器完成 MFA。
 - refresh token 失效：账户状态置 error，页面状态区显示，等待人工重跑 CLI。不做主动通知。
-- 账户由 CLI 管理：`add` / `connect` / `list`。凭据类 env：`GMAIL_APP_PASSWORD`。
+- 账户由 CLI 管理：`add` / `connect` / `list` / `remove`，每个账户归属某个用户
+  （`--user <sub|邮箱>`）。Gmail 应用专用密码在 CLI 交互式录入（getpass，不回显、
+  不进 shell history），明文存库、永不经 API 返回；不再走环境变量。
 
 ## 3. 同步策略
 
@@ -91,8 +93,11 @@ env：`LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL`（DeepSeek 官方 API，opena
 ## 5. 数据模型（SQLite，WAL）
 
 ```
-accounts(id, name, kind gmail|microsoft, email, ms_client_id, token_cache,
-         uidvalidity, last_uid, last_sync_at, last_error, status ok|error|pending)
+users(sub, email, name, created_at, last_seen_at)
+accounts(id, user_sub→users, name, kind gmail|microsoft, email, ms_client_id,
+         app_password, enabled, token_cache, uidvalidity, last_uid,
+         last_sync_at, last_error, status ok|error|pending)
+         user_sub 建索引（按用户过滤/级联）
 emails(id, account_id→accounts, message_id, subject, sender, recipients, sent_at,
        text_body, html_body, attachments_json, fetched_at,
        filtered bool, filter_reason, llm_state pending|done|error)
@@ -100,6 +105,13 @@ emails(id, account_id→accounts, message_id, subject, sender, recipients, sent_
 items(id, email_id→emails UNIQUE, title, summary, category, due_date date|null,
       actionable bool, status open|done, detail_md|null, created_at, done_at|null)
 ```
+
+- `users`：登录 Phainon 的用户，首次访问自动创建（准入见第 6 节）。
+- `accounts.app_password`：Gmail 应用专用密码，明文存库，任何 API 都不会返回它。
+- `accounts.enabled`：软删除标记，CLI `accounts remove` 置 false（停用并清除凭据、
+  不再同步），已抓取的邮件与已生成的任务保留。
+- 多用户隔离：emails/items 的归属通过 `emails.account_id → accounts.user_sub` 推导，
+  所有查询都以当前登录者 sub 过滤。
 
 ## 6. REST API（/api/*，除 /api/health 外全部 Bearer 鉴权）
 
@@ -111,12 +123,17 @@ GET  /api/items/{id}                含 detail_md（可能为 null）
 POST /api/items/{id}/detail         生成并缓存详情，返回 detail_md
 GET  /api/emails/{id}               元数据 + text_body + sanitized_html
 POST /api/search                    {"question"} → {"answer_md", "citations":[{email_id, subject, sent_at}]}
-GET  /api/status                    各账户健康 + 上次同步时间 + LLM 待处理数
+GET  /api/status                    各账户健康（含 enabled 停用标记）+ 上次同步时间 + LLM 待处理数
 ```
+
+- **多用户隔离**：所有端点只返回当前登录者自己的邮箱账户、邮件与任务；访问他人
+  资源的越权请求一律返回 404 而非 403，不暴露资源 id 是否存在。
+- `/api/status` 的账户对象新增 `enabled: boolean`（CLI 停用后为 false，账户仍返回）；
+  任何 API 响应都不含 `app_password` / `token_cache`。
 
 鉴权中间件：取 Bearer → `GET {PHAINON_API_BASE}/auth/priestess/oidc/me`
 （转发同一 Bearer，附 `Origin: {FRONTEND_ORIGIN}`）→ 200 且 `app_id == PHAINON_APP_ID`
-且 `user.sub ∈ ALLOWED_SUBS`（env 逗号分隔）才放行；对 token 哈希做 60s 内存缓存；否则 401。
+即放行（无白名单）；首次访问自动创建用户记录；对 token 哈希做 60s 内存缓存；否则 401。
 
 ## 7. 原邮件展示（安全红线）
 
@@ -148,9 +165,11 @@ GET  /api/status                    各账户健康 + 上次同步时间 + LLM �
   FastAPI StaticFiles 托管（SPA fallback 到 index.html）。
 - compose 服务：`web`（uvicorn :8000）、`worker`（`python -m app.worker`，同镜像）、
   `cloudflared`（`TUNNEL_TOKEN` env；DNS 与隧道由使用者后配）。`./data` 挂载给 web 与 worker。
-- 全部配置走 env，提供 `.env.example`。
+- 全部配置走 env，提供 `.env.example`。邮箱凭据与用户白名单不再走 env：
+  `GMAIL_APP_PASSWORD` / `ALLOWED_SUBS` 已删除，Gmail 应用专用密码由 CLI
+  交互式录入存库，任何用户都可直接使用（无白名单）。
 
 ## 10. 非目标（v1 明确不做）
 
 英文界面；手动添加/编辑任务；发件人静音规则；勾选回写邮箱已读；除 INBOX 外的文件夹；
-附件下载；多用户；推送通知。
+附件下载；推送通知；网页端管理邮箱账户（只走 CLI）；用户审批流程。
