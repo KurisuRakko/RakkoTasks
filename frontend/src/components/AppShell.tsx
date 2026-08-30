@@ -72,12 +72,15 @@ export default function AppShell() {
         </List>
         <Box sx={{ flexGrow: 1 }} />
         <Divider />
-        <ListItemButton selected={navIndex === -1} onClick={() => navigate('/settings')}>
-          <ListItemIcon>
-            <SettingsIcon />
-          </ListItemIcon>
-          <ListItemText primary="设置" />
-        </ListItemButton>
+        {/* List 包裹：ListItemButton 根样式带 flex-grow:1，直接作为 Drawer 子元素会被撑满主轴 */}
+        <List disablePadding>
+          <ListItemButton selected={navIndex === -1} onClick={() => navigate('/settings')}>
+            <ListItemIcon>
+              <SettingsIcon />
+            </ListItemIcon>
+            <ListItemText primary="设置" />
+          </ListItemButton>
+        </List>
       </Drawer>
 
       <Box

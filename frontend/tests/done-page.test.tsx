@@ -64,6 +64,21 @@ describe('DonePage', () => {
     expect(url).toBe('/api/items?status=done');
   });
 
+  it('列表渲染后每条目的复选框默认勾选（checked 为 true）', async () => {
+    const fetchMock = vi.fn(async (_url: string | URL, _init?: RequestInit) =>
+      json({ items: ITEMS }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<DonePage />);
+    await screen.findByText('任务一');
+
+    const boxes = screen.getAllByRole('checkbox') as HTMLInputElement[];
+    expect(boxes).toHaveLength(2);
+    expect(boxes[0].checked).toBe(true);
+    expect(boxes[1].checked).toBe(true);
+  });
+
   it('点击第一条 checkbox 后发 PATCH /api/items/1，body {"status":"open"}', async () => {
     const fetchMock = vi.fn(async (url: string | URL, init?: RequestInit) => {
       const u = String(url);

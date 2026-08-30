@@ -99,7 +99,7 @@ export default function DonePage() {
                 <ListItemButton onClick={() => setEditing(item)}>
                   <Checkbox
                     edge="start"
-                    checked={leaving}
+                    checked={!leaving}
                     tabIndex={-1}
                     disableRipple
                     onClick={(e) => {
