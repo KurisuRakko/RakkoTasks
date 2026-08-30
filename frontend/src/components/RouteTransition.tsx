@@ -38,18 +38,19 @@ export default function RouteTransition({ children }: { children: ReactNode }) {
     : { ...FROM_LEFT_KEYFRAMES, animation: 'rtk-route-left 240ms ease-out both' };
 
   return (
+    // 外层裁剪盒：overflow 只裁后代不裁自身，而 transform 作用在内层动画盒上，
+    // 故裁剪必须放在外层（否则 translateX 溢出仍会撑出横向滚动区）。
+    // clip 不创建滚动容器、不改变 overflow-y 计算值，hidden 作老浏览器兜底；
+    // 无条件生效（reduced-motion 下同样裁剪），AppBar/底栏在此元素之外不受影响。
     <Box
-      key={location.pathname}
       sx={{
-        // 横向裁剪：入场位移（translateX ±24px）期间防止元素右溢出撑出横向滚动区。
-        // clip 不创建滚动容器、不改变 overflow-y 计算值，hidden 作老浏览器兜底；
-        // 无条件生效（reduced-motion 下同样裁剪），AppBar/底栏在此元素之外不受影响。
         overflowX: 'hidden',
         '@supports (overflow: clip)': { overflowX: 'clip' },
-        ...sx,
       }}
     >
-      {children}
+      <Box key={location.pathname} sx={sx}>
+        {children}
+      </Box>
     </Box>
   );
 }
