@@ -97,7 +97,10 @@ export default function SettingsPage() {
                   <Card
                     key={a.id}
                     variant="outlined"
-                    sx={{ ...enterSx(index, reduced), opacity: a.enabled === false ? 0.6 : 1 }}
+                    // 变暗用 filter 而非 opacity：入场动画 animation-fill-mode: both
+                    // 会把关键帧终态 opacity: 1 保持在元素上（动画值优先级高于普通声明），
+                    // 静态 opacity 会被压掉；filter 与动画互不干扰，动画期间/结束后都有效。
+                    sx={{ ...enterSx(index, reduced), filter: a.enabled === false ? 'opacity(0.6)' : 'none' }}
                   >
                     <CardContent>
                       <Stack direction="row" spacing={1.5} alignItems="center">
