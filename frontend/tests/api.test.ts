@@ -66,23 +66,45 @@ describe('search', () => {
 });
 
 describe('fetchItems', () => {
-  it('GET /api/items?status=open&category=工作', async () => {
-    const fetchMock = vi.fn(async (_url: string | URL, _init?: RequestInit) => json([]));
+  it('GET /api/items?status=open&category=工作，解析 {"items":[...]} 信封返回数组本身', async () => {
+    const item = {
+      id: 1,
+      email_id: 2,
+      title: '写周报',
+      summary: null,
+      category: '工作',
+      due_date: null,
+      actionable: true,
+      status: 'open',
+      detail_md: null,
+      created_at: '2026-08-01T00:00:00Z',
+      done_at: null,
+    };
+    const fetchMock = vi.fn(async (_url: string | URL, _init?: RequestInit) =>
+      json({ items: [item] }),
+    );
     vi.stubGlobal('fetch', fetchMock);
 
-    await api.fetchItems({ status: 'open', category: '工作' });
+    const result = await api.fetchItems({ status: 'open', category: '工作' });
 
     const [url] = fetchMock.mock.calls[0] as [string];
     expect(url).toBe('/api/items?status=open&category=%E5%B7%A5%E4%BD%9C');
+    // 信封解包：返回的是数组本身，可直接迭代
+    expect(Array.isArray(result)).toBe(true);
+    expect(result).toHaveLength(1);
+    expect(result[0].title).toBe('写周报');
   });
 
-  it('无筛选时不带查询参数', async () => {
-    const fetchMock = vi.fn(async (_url: string | URL, _init?: RequestInit) => json([]));
+  it('空信封时返回空数组', async () => {
+    const fetchMock = vi.fn(async (_url: string | URL, _init?: RequestInit) =>
+      json({ items: [] }),
+    );
     vi.stubGlobal('fetch', fetchMock);
 
-    await api.fetchItems();
+    const result = await api.fetchItems();
 
     const [url] = fetchMock.mock.calls[0] as [string];
     expect(url).toBe('/api/items');
+    expect(result).toEqual([]);
   });
 });

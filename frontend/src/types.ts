@@ -3,6 +3,11 @@
 /** 条目状态 */
 export type ItemStatus = 'open' | 'done';
 
+/** GET /api/items 返回体（信封） */
+export interface ItemsResponse {
+  items: Item[];
+}
+
 /** 条目分类（LLM 四分类 + 兜底） */
 export type Category = '学业' | '工作' | '个人' | '账单' | '其他';
 

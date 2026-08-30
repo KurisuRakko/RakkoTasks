@@ -3,11 +3,19 @@
 
 import { authedFetch } from './phainon';
 import { API_BASE_URL } from './env';
-import type { Category, Email, Item, ItemStatus, SearchResponse, StatusResponse } from '../types';
+import type {
+  Category,
+  Email,
+  Item,
+  ItemsResponse,
+  ItemStatus,
+  SearchResponse,
+  StatusResponse,
+} from '../types';
 
 const API_BASE = `${API_BASE_URL}/api`;
 
-/** GET /api/items?status=&category= */
+/** GET /api/items?status=&category=；响应为 {"items": [...]} 信封，返回其中的数组 */
 export async function fetchItems(params: {
   status?: ItemStatus;
   category?: Category;
@@ -18,7 +26,8 @@ export async function fetchItems(params: {
   const suffix = qs.size > 0 ? `?${qs.toString()}` : '';
   const res = await authedFetch(`${API_BASE}/items${suffix}`);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return (await res.json()) as Item[];
+  const data = (await res.json()) as ItemsResponse;
+  return data.items;
 }
 
 /** GET /api/items/{id} */
