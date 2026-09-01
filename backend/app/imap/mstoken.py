@@ -45,13 +45,40 @@ def initiate_device_flow(account, settings: Settings | None = None) -> dict:
     }
 
 
+class DeviceFlowError(RuntimeError):
+    """设备码授权失败。kind 取值：expired / declined / admin_required / other。"""
+
+    def __init__(self, kind: str, detail: str) -> None:
+        super().__init__(detail)
+        self.kind = kind
+        self.detail = detail
+
+
+def _classify_device_error(result: dict) -> DeviceFlowError:
+    """按 msal 返回的 AADSTS 码把失败归类，供 CLI 输出针对性的人话提示。
+
+    超时/拒绝是预期结果而非崩溃；detail 保留原始 error_description 供排查。
+    """
+    error = result.get("error") or ""
+    desc = result.get("error_description") or ""
+    if "AADSTS70016" in desc or error in ("expired_token", "authorization_pending"):
+        kind = "expired"  # 用户没在 15 分钟有效期内输入代码
+    elif "AADSTS65004" in desc or error == "authorization_declined":
+        kind = "declined"  # 用户在授权页点了拒绝
+    elif "AADSTS65001" in desc or "AADSTS90094" in desc:
+        kind = "admin_required"  # 租户要求管理员同意
+    else:
+        kind = "other"
+    return DeviceFlowError(kind, desc)
+
+
 def wait_for_device_completion(account, flow: dict, settings: Settings | None = None) -> dict:
     """阻塞轮询直至用户完成授权；成功后将 token cache 落库。返回 token 结果 dict。"""
     settings = settings or get_settings()
     app = _app(account, settings)
     result = app.acquire_token_by_device_flow(flow)
     if "access_token" not in result:
-        raise RuntimeError(f"设备码授权失败: {result.get('error_description') or result}")
+        raise _classify_device_error(result)
     _save_cache(account, app)
     return result
 

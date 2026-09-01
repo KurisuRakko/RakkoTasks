@@ -120,6 +120,12 @@ def _cmd_accounts_set_password(args: argparse.Namespace, settings: Settings) -> 
         print(f"已更新密码：{account.email}")
 
 
+def _print_connect_retry(sub: str, email: str) -> None:
+    """打印可复制的重试命令；sub/email 填本次实际传入的账户参数。"""
+    print("重新运行即可获取新代码：")
+    print(f"  python -m app.cli accounts connect --user {sub} {email}")
+
+
 def _cmd_accounts_connect(args: argparse.Namespace, settings: Settings) -> None:
     from app.imap import mstoken
 
@@ -147,9 +153,27 @@ def _cmd_accounts_connect(args: argparse.Namespace, settings: Settings) -> None:
         if account.kind != "microsoft":
             print(f"错误：账户 {args.email} 类型为 {account.kind}，仅 microsoft 需要 connect", file=sys.stderr)
             sys.exit(2)
-        flow = mstoken.initiate_device_flow(account, settings)
-        print(flow["message"])
-        result = mstoken.wait_for_device_completion(account, flow["_flow"], settings)
+        try:
+            flow = mstoken.initiate_device_flow(account, settings)
+            print(flow["message"])
+            result = mstoken.wait_for_device_completion(account, flow["_flow"], settings)
+        except mstoken.DeviceFlowError as exc:
+            # 超时/拒绝是预期结果，按类别给提示与可复制的重试命令，不冒 traceback
+            sub = args.user or account.user_sub
+            if exc.kind == "expired":
+                print("授权超时：设备码已过期（有效期 15 分钟），没有收到授权。")
+                _print_connect_retry(sub, args.email)
+            elif exc.kind == "declined":
+                _print_connect_retry(sub, args.email)
+                print("授权被拒绝：你在微软页面上点了拒绝。如需继续，请重新运行上面的命令并选择同意。")
+            elif exc.kind == "admin_required":
+                print(
+                    "该租户要求管理员同意此应用。可改用你自己的 Azure 应用注册："
+                    f"accounts add 时追加 --client-id <你的client_id>。原始信息：{exc.detail}"
+                )
+            else:
+                print(f"设备码授权失败：{exc.detail}")
+            sys.exit(1)
         account.status = "ok"
         account.last_error = None
         session.commit()
