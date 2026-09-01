@@ -1,4 +1,4 @@
-"""账户与用户 CLI：python -m app.cli accounts add/connect/auth-url/auth-code/list/set-password/remove、users list。
+"""账户与用户 CLI：python -m app.cli accounts add/connect/auth-url/auth-code/list/set-password/remove、users list、reclassify。
 
 账户管理只走命令行；Gmail 应用专用密码仅经 getpass 交互录入，绝不进命令行参数或日志。
 """
@@ -319,6 +319,64 @@ def _cmd_accounts_remove(args: argparse.Namespace, settings: Settings) -> None:
         )
 
 
+def _cmd_reclassify(args: argparse.Namespace, settings: Settings) -> None:
+    """重分类：删除目标邮件的任务并重置 LLM 状态，让 worker 下轮用新规则重跑。
+
+    必须先删 item 再重置状态：items.email_id 有 UNIQUE 约束，item 不删的话，
+    下轮 sync 重分类时插入同 email_id 的新 item 会撞唯一约束。
+    """
+    engine = make_engine(settings.database_path)
+    init_db(engine)
+    with make_session_factory(engine)() as session:
+        user = _resolve_user(session, args.user)
+        account_stmt = select(Account.id).where(Account.user_sub == user.sub)
+        if args.account:
+            account = session.execute(
+                select(Account).where(Account.user_sub == user.sub, Account.email == args.account)
+            ).scalars().first()
+            if account is None:
+                print(f"错误：未找到账户 {args.account}（用户 {user.sub}）", file=sys.stderr)
+                sys.exit(2)
+            account_stmt = account_stmt.where(Account.id == account.id)
+        account_ids = session.execute(account_stmt).scalars().all()
+        if not account_ids:
+            print(f"用户 {user.sub} 没有账户，无需重分类", file=sys.stderr)
+            sys.exit(1)
+        n_emails = session.execute(
+            select(func.count(Email.id)).where(Email.account_id.in_(account_ids))
+        ).scalar() or 0
+        n_items = session.execute(
+            select(func.count(Item.id))
+            .join(Email, Item.email_id == Email.id)
+            .where(Email.account_id.in_(account_ids))
+        ).scalar() or 0
+        print(f"将重分类 {n_emails} 封邮件、删除 {n_items} 条任务（邮件本体保留）")
+        if not args.yes:
+            print("确认请输入 yes：", end="", flush=True)
+            if sys.stdin.readline().strip() != "yes":
+                print("已取消，未做任何修改", file=sys.stderr)
+                sys.exit(1)
+        items = session.execute(
+            select(Item)
+            .join(Email, Item.email_id == Email.id)
+            .where(Email.account_id.in_(account_ids))
+        ).scalars().all()
+        for item in items:
+            session.delete(item)
+        for email in session.execute(
+            select(Email).where(Email.account_id.in_(account_ids))
+        ).scalars().all():
+            email.llm_state = "pending"
+            email.filtered = False
+            email.filter_reason = None
+        session.commit()
+        print(
+            f"已完成：{n_emails} 封邮件已重置为待分类，共删除 {n_items} 条任务。"
+            "worker 将在下一轮同步时按新规则重新分类；"
+            "如需立即触发，可在部署目录运行 docker compose -f deploy/docker-compose.yml restart worker"
+        )
+
+
 def main() -> None:
     from app.imap import mstoken  # 保持 msal 懒加载：其它子命令不依赖它
 
@@ -384,6 +442,14 @@ def main() -> None:
     users_sub = users.add_subparsers(dest="action", required=True)
     users_list = users_sub.add_parser("list", help="列出用户")
     users_list.set_defaults(handler=_cmd_users_list)
+
+    reclassify = sub.add_parser(
+        "reclassify", help="重分类：删除该用户（或指定账户）邮件的任务并重置 LLM 状态，worker 下轮按最新规则重跑"
+    )
+    reclassify.add_argument("--user", required=True, help="用户 sub 或邮箱")
+    reclassify.add_argument("--account", default=None, help="只重分类该邮箱账户；缺省为该用户全部账户")
+    reclassify.add_argument("--yes", action="store_true", help="跳过确认（非交互调用）")
+    reclassify.set_defaults(handler=_cmd_reclassify)
 
     args = parser.parse_args()
     args.handler(args, settings)

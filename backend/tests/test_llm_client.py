@@ -63,6 +63,14 @@ CLASSIFY_OK = (
 )
 
 
+def test_classify_system_contains_new_filter_rules():
+    """CLASSIFY_SYSTEM 必须包含新过滤标准的关键要素，防止被改回旧版两条规则。"""
+    from app.llm import CLASSIFY_SYSTEM
+
+    for keyword in ("图书馆", "复习课", "回执", "非可选"):
+        assert keyword in CLASSIFY_SYSTEM
+
+
 def test_chat_completion_normalizes_tool_calls():
     """SDK 风格响应（带 tool_calls）→ 纯 dict，每个 tool_call 都必须含 type=="function"。"""
     client, completions = _make_client([
