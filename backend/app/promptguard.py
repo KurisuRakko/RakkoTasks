@@ -32,13 +32,18 @@ _DANGEROUS_HTML = re.compile(
 _IMG_TAG = re.compile(r"</?img\b[^>]*>", re.IGNORECASE)
 
 
+def strip_sentinels(text: str) -> str:
+    """删除文本中出现的哨兵串本身，防止不可信内容伪造哨兵边界。"""
+    return (text or "").replace(UNTRUSTED_BEGIN, "").replace(UNTRUSTED_END, "")
+
+
 def wrap_untrusted(text: str) -> str:
     """把不可信文本包进结构哨兵。
 
     包之前先删除文本中出现的哨兵串本身——否则攻击者可以在正文里写下
     <<<UNTRUSTED_EMAIL_END>>> 提前闭合数据块，把后续内容冒充成新的指令。
     """
-    cleaned = (text or "").replace(UNTRUSTED_BEGIN, "").replace(UNTRUSTED_END, "")
+    cleaned = strip_sentinels(text)
     return f"{UNTRUSTED_BEGIN}\n{cleaned}\n{UNTRUSTED_END}"
 
 
