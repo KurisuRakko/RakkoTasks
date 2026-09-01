@@ -36,8 +36,12 @@ docs/       本文档等
 
 - Microsoft OAuth：msal `PublicClientApplication`，authority `https://login.microsoftonline.com/common`，
   scope `https://outlook.office.com/IMAP.AccessAsUser.All`（OAuth 资源域名是 outlook.office.com，与 IMAP 主机名 outlook.office365.com 不同；msal 自动附带 offline_access）。
-  client_id 每账户可配，默认 `d3590ed6-52b3-4102-aeff-aad2292ab01c`（微软 Office 官方公共客户端，
-  UNSW 官方文档认可）。msal 的 SerializableTokenCache 按账户序列化存入 DB。
+  client_id 每账户可配，默认 `9e5f94bc-e8a4-4e73-b8be-63364c29d753`（Mozilla
+  Thunderbird 注册的公共客户端，第三方应用，可用于 IMAP）。不要改回 Microsoft Office
+  的 `d3590ed6-52b3-4102-aeff-aad2292ab01c`：那是第一方应用，访问第一方资源
+  Exchange Online 必须经预授权，会报 `AADSTS65002`，拿不到 IMAP token。UNSW 官方
+  文档里用到 d3590ed6 的是 Evolution 一节，配的是 EWS 而非 IMAP；其 Thunderbird
+  一节用的正是它内置的客户端 ID。msal 的 SerializableTokenCache 按账户序列化存入 DB。
 - 首次登录：CLI 触发 device code flow，终端打印 URL + 代码，人工在任意浏览器完成 MFA。
 - refresh token 失效：账户状态置 error，页面状态区显示，等待人工重跑 CLI。不做主动通知。
 - 账户由 CLI 管理：`add` / `connect` / `list` / `remove`，每个账户归属某个用户

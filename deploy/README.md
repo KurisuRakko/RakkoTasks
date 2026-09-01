@@ -142,8 +142,12 @@ docker compose -f deploy/docker-compose.yml ps
      python -m app.cli accounts connect --user <sub或邮箱> you@company.com
    ```
 
-   > 若某个账户需使用自己的 Azure 应用注册（默认用微软官方公共客户端
-   > `d3590ed6-...`），`add` 时追加 `--client-id <你的client_id>`。
+   > 默认 client_id 已是 Thunderbird 公共客户端（第三方应用，可用于 IMAP，无需
+   > 任何配置）。若某个账户需使用自己的 Azure 应用注册（不要用微软 Office 的
+   > `d3590ed6-...`，那是第一方应用，会 AADSTS65002），需在 Entra 里把应用配置为
+   > 「公共客户端」并授予 `IMAP.AccessAsUser.All` 委托权限，`add` 时追加
+   > `--client-id <你的client_id>`。学校租户通常不允许学生自行注册应用，直接用
+   > 默认值即可。
 
    > **若设备码被租户条件访问策略拒绝**：部分教育租户（如 UNSW）登录后会报
    > 「登录已成功，但是不符合访问此资源的条件……身份验证流」，这是管理员按

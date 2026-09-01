@@ -31,8 +31,12 @@ class Settings(BaseSettings):
     # 前端静态目录：非空时直接使用，空则回退 backend/frontend/dist 启发式路径
     frontend_dist: str = ""
 
-    # Microsoft OAuth 默认客户端
-    ms_default_client_id: str = "d3590ed6-52b3-4102-aeff-aad2292ab01c"
+    # Microsoft OAuth 默认客户端：Mozilla Thunderbird 注册的公共客户端
+    # （第三方应用，可用于 IMAP）。不要改成 d3590ed6-52b3-4102-aeff-aad2292ab01c
+    # （Microsoft Office）——那是第一方应用，访问 Exchange Online 需要预授权，
+    # 会报 AADSTS65002，拿不到 IMAP token。如需换成自己在 Azure 注册的应用，
+    # 用 accounts add --client-id 按账户覆盖。
+    ms_default_client_id: str = "9e5f94bc-e8a4-4e73-b8be-63364c29d753"
 
 
 @lru_cache
