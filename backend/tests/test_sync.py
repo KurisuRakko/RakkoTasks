@@ -1,6 +1,8 @@
 """单轮同步测试：FakeImap / FakeLLM 注入，不触网。"""
+import logging
 from email.message import EmailMessage
 
+import pytest
 from sqlalchemy import select
 
 from app.models import Account, Email, Item, User
@@ -40,14 +42,25 @@ class FakeImap:
         self.logged_out = True
 
 
+class WorkerKilled(BaseException):
+    """模拟 worker 进程崩溃：BaseException 不被 except Exception 捕获，能穿透到调用方。"""
+
+
 class FakeLLM:
-    def __init__(self, results=None, raise_invalid: bool = False):
+    def __init__(self, results=None, raise_invalid=False, fail_subjects=(), crash_subjects=()):
         self.results = list(results or [])
         self.raise_invalid = raise_invalid
+        self.fail_subjects = set(fail_subjects)  # 命中的 subject 抛 ValueError（单封失败）
+        self.crash_subjects = set(crash_subjects)  # 命中的 subject 抛 WorkerKilled（模拟崩溃）
 
     def classify_email(self, info: dict) -> dict:
         if self.raise_invalid:
             raise ValueError("LLM 返回非法 JSON")
+        subject = info.get("subject") or ""
+        if subject in self.crash_subjects:
+            raise WorkerKilled("worker 崩溃")
+        if subject in self.fail_subjects:
+            raise ValueError("单封处理失败")
         return self.results.pop(0)
 
 
@@ -220,3 +233,81 @@ def test_account_failure_marks_error(session_factory):
     assert acc.status == "error"
     assert acc.last_error == "连接失败"
     assert len(_emails(session_factory)) == 0
+
+
+def _ok_result(title):
+    """正常分类结果：不过滤、建任务。"""
+    return {
+        "filtered": False,
+        "filter_reason": None,
+        "title": title,
+        "summary": "s",
+        "category": "学业",
+        "due_date": None,
+        "actionable": True,
+    }
+
+
+def test_per_email_commit_survives_crash(session_factory):
+    """第 3 封分类时模拟 worker 崩溃：前 2 封已逐封落盘，不随崩溃回滚。"""
+    _seed_account(session_factory)
+    imap = FakeImap()
+    imap.mails = {
+        1: make_raw(message_id="<m1>", subject="崩溃前1"),
+        2: make_raw(message_id="<m2>", subject="崩溃前2"),
+        3: make_raw(message_id="<m3>", subject="崩溃封"),
+    }
+    llm = FakeLLM(
+        results=[_ok_result("任务1"), _ok_result("任务2"), _ok_result("任务3")],
+        crash_subjects={"崩溃封"},
+    )
+    with pytest.raises(WorkerKilled):
+        _run(session_factory, imap, llm)
+
+    # 用全新 session 验证落盘状态，而非内存态
+    with session_factory() as s:
+        emails = {e.message_id: e for e in s.execute(select(Email)).scalars().all()}
+        items = s.execute(select(Item)).scalars().all()
+    assert emails["<m1>"].llm_state == "done"
+    assert emails["<m2>"].llm_state == "done"
+    assert emails["<m3>"].llm_state == "pending"  # 崩溃点之前未处理
+    assert len(items) == 2  # 前 2 封的 Item 已在库中
+
+
+def test_single_failure_does_not_affect_others(session_factory):
+    """第 2 封分类失败标 error，第 1、3 封仍为 done 且各有 Item。"""
+    _seed_account(session_factory)
+    imap = FakeImap()
+    imap.mails = {
+        1: make_raw(message_id="<m1>", subject="正常1"),
+        2: make_raw(message_id="<m2>", subject="失败封"),
+        3: make_raw(message_id="<m3>", subject="正常3"),
+    }
+    llm = FakeLLM(
+        results=[_ok_result("任务1"), _ok_result("任务2"), _ok_result("任务3")],
+        fail_subjects={"失败封"},
+    )
+    _run(session_factory, imap, llm)
+
+    with session_factory() as s:
+        emails = {e.message_id: e for e in s.execute(select(Email)).scalars().all()}
+        items = s.execute(select(Item)).scalars().all()
+    assert emails["<m1>"].llm_state == "done"
+    assert emails["<m2>"].llm_state == "error"
+    assert "LLM 处理失败" in (emails["<m2>"].filter_reason or "")
+    assert emails["<m3>"].llm_state == "done"
+    assert len(items) == 2
+
+
+def test_progress_logging_every_10_and_no_subject_leak(session_factory, caplog):
+    """处理 25 封至少输出 2 条进度日志，且日志不包含任何邮件主题。"""
+    _seed_account(session_factory)
+    imap = FakeImap()
+    imap.mails = {i: make_raw(message_id=f"<m{i}>", subject=f"机密主题{i}") for i in range(1, 26)}
+    llm = FakeLLM(results=[_ok_result(f"任务{i}") for i in range(1, 26)])
+    with caplog.at_level(logging.INFO, logger="rakkotasks.sync"):
+        _run(session_factory, imap, llm)
+
+    progress = [r.getMessage() for r in caplog.records if r.getMessage().startswith("分类进度")]
+    assert len(progress) >= 2
+    assert all("机密主题" not in (r.getMessage() or "") for r in caplog.records)

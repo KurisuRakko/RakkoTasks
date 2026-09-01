@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime
 from typing import Any, Callable
 
@@ -14,6 +15,9 @@ from app.imap.parser import parse_message
 from app.models import Account, Email, Item
 
 FIXED_CATEGORIES = {"学业", "工作", "个人", "账单", "其他"}
+
+# worker 与 API 触发同步共用：进度日志只含计数，不写邮件内容
+logger = logging.getLogger("rakkotasks.sync")
 
 # imap_factory(account, settings) -> 协议类实例（duck-typing：select_inbox/search_uids/fetch_uid/logout）
 ImapFactory = Callable[[Account, Settings], Any]
@@ -67,9 +71,44 @@ def _sync_account(session: Session, account: Account, imap: Any, settings: Setti
     account.last_uid = max(account.last_uid, max(uids))
 
 
-def _process_pending(session: Session, llm: Any, rows: list[Email]) -> None:
-    """逐封分类待处理邮件（pending 首次 / error 下轮重试）：过滤则标记，否则建 item。"""
-    for email in rows:
+def _commit_email(session: Session, email: Email) -> bool:
+    """提交单封的处理结果；commit 失败（如约束冲突）则回滚并把该封标为 error 后再次提交。
+
+    必须逐封提交：整轮可达数百封，若攒批到最后一次性提交，中途任何
+    崩溃/重启都会把已完成的结果全部回滚，已消耗的 LLM 调用全部白费。
+    commit 失败后事务已失效，必须 rollback 才能继续使用 session；
+    rollback 会同时撤销对 email 的改动，所以要重新标记 error 再提交。
+    二次提交仍失败则放弃该封（库中保持原状态待下轮重试），不让整轮挂掉。
+    """
+    try:
+        session.commit()
+        return True
+    except Exception as exc:
+        session.rollback()
+        email.llm_state = "error"
+        email.filter_reason = f"写入失败: {exc}"
+        try:
+            session.commit()
+            return True
+        except Exception:
+            session.rollback()
+            return False
+
+
+def _process_pending(
+    session: Session, llm: Any, rows: list[Email], logger: logging.Logger | None = None
+) -> None:
+    """逐封分类待处理邮件（pending 首次 / error 下轮重试）：过滤则标记，否则建 item。
+
+    每封处理完立即逐封提交（见 _commit_email）；错误标记同样要落盘，
+    否则下轮会重复调用 LLM 重试同一封。传入 logger 时每处理 10 封输出
+    一条只含计数的进度日志，不输出邮件主题/正文。
+    """
+    total = len(rows)
+    filtered = 0
+    created = 0
+    failed = 0
+    for index, email in enumerate(rows, start=1):
         info = {
             "subject": email.subject,
             "sender": email.sender,
@@ -81,37 +120,52 @@ def _process_pending(session: Session, llm: Any, rows: list[Email]) -> None:
         except Exception as exc:
             email.llm_state = "error"
             email.filter_reason = f"LLM 处理失败: {exc}"
-            continue
-        if result.get("filtered"):
-            email.filtered = True
-            email.filter_reason = result.get("filter_reason") or "被过滤"
+            _commit_email(session, email)
+            failed += 1
         else:
-            category = result.get("category") or "其他"
-            if category not in FIXED_CATEGORIES:
-                category = "其他"  # 分类不在固定集时归“其他”
-            due_date = result.get("due_date")
-            due = None
-            if due_date:
-                try:
-                    due = datetime.strptime(str(due_date), "%Y-%m-%d").date()
-                except ValueError:
-                    due = None  # 非法日期置 null
-            importance = result.get("importance") or "normal"
-            if importance not in ("high", "normal", "low"):
-                importance = "normal"  # 与 _normalize_classify 同款白名单，防 FakeLLM/异常输出
-            session.add(
-                Item(
-                    email_id=email.id,
-                    title=(result.get("title") or "")[:30] or "未命名任务",
-                    summary=result.get("summary") or "",
-                    category=category,
-                    due_date=due,
-                    importance=importance,
-                    actionable=bool(result.get("actionable", True)),
-                    status="open",
+            if result.get("filtered"):
+                email.filtered = True
+                email.filter_reason = result.get("filter_reason") or "被过滤"
+                filtered += 1
+            else:
+                category = result.get("category") or "其他"
+                if category not in FIXED_CATEGORIES:
+                    category = "其他"  # 分类不在固定集时归“其他”
+                due_date = result.get("due_date")
+                due = None
+                if due_date:
+                    try:
+                        due = datetime.strptime(str(due_date), "%Y-%m-%d").date()
+                    except ValueError:
+                        due = None  # 非法日期置 null
+                importance = result.get("importance") or "normal"
+                if importance not in ("high", "normal", "low"):
+                    importance = "normal"  # 与 _normalize_classify 同款白名单，防 FakeLLM/异常输出
+                session.add(
+                    Item(
+                        email_id=email.id,
+                        title=(result.get("title") or "")[:30] or "未命名任务",
+                        summary=result.get("summary") or "",
+                        category=category,
+                        due_date=due,
+                        importance=importance,
+                        actionable=bool(result.get("actionable", True)),
+                        status="open",
+                    )
                 )
+                created += 1
+            email.llm_state = "done"
+            if not _commit_email(session, email):
+                failed += 1  # 提交失败转 error 的封计入失败
+        if logger is not None and index % 10 == 0:
+            logger.info(
+                "分类进度：%d/%d（过滤 %d / 建任务 %d / 失败 %d）",
+                index,
+                total,
+                filtered,
+                created,
+                failed,
             )
-        email.llm_state = "done"
 
 
 def run_once(
@@ -163,7 +217,7 @@ def run_once(
         ).scalars().all()
         summary["pending_llm"] = len([e for e in queue if e.llm_state == "pending"])
         if llm is not None:
-            _process_pending(session, llm, queue)
+            _process_pending(session, llm, queue, logger=logger)
         else:
             for email in queue:
                 if email.llm_state == "pending":
