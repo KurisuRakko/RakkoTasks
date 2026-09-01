@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
@@ -9,7 +10,7 @@ from pathlib import Path
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -19,8 +20,11 @@ from app.config import Settings, get_settings
 from app.db import init_db, make_engine, make_session_factory
 from app.emailtext import email_plain_text
 from app.models import Account, Email, Item
+from app.ratelimit import RateLimiter
 from app.sanitizer import build_email_document
 from app.search import run_search
+
+logger = logging.getLogger("rakkotasks.api")
 
 
 class ItemPatch(BaseModel):
@@ -28,7 +32,7 @@ class ItemPatch(BaseModel):
 
 
 class SearchRequest(BaseModel):
-    question: str
+    question: str = Field(max_length=2000)  # 防超长问题灌进 LLM 上下文烧钱
 
 
 def _get_db(request: Request) -> Iterator[Session]:
@@ -84,6 +88,10 @@ def create_app(
     app.state.settings = settings
     app.state.session_factory = session_factory
 
+    # 每用户限流：保护会产生 LLM 费用的端点（每个 app 实例各一份，测试互不污染）
+    search_limiter = RateLimiter(6, 60.0)
+    detail_limiter = RateLimiter(30, 60.0)
+
     @app.exception_handler(HTTPException)
     async def _http_exception_handler(_request, exc: HTTPException):
         # 401 按任务书返回裸 JSON {"code": "unauthorized"}，其余错误同样只回 detail
@@ -95,6 +103,21 @@ def create_app(
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # 禁止在此加 Content-Security-Policy：原邮件查看用 srcdoc sandbox iframe，
+    # 会继承父页 CSP，加了会打死「显示远程图片」既有功能（X-Frame-Options
+    # 不经 policy container 继承，所以安全）。
+    @app.middleware("http")
+    async def _security_headers(request: Request, call_next):
+        resp = await call_next(request)
+        resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+        resp.headers.setdefault("X-Frame-Options", "DENY")
+        resp.headers.setdefault("Referrer-Policy", "same-origin")
+        resp.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+        if request.url.path.startswith("/api/"):
+            # 邮件内容不允许进任何缓存
+            resp.headers["Cache-Control"] = "no-store"
+        return resp
 
     @app.get("/api/health")
     def health() -> dict:
@@ -151,6 +174,8 @@ def create_app(
         if item is None:
             raise HTTPException(status_code=404, detail={"code": "not_found"})
         if item.detail_md is None:
+            if not detail_limiter.allow(user.sub):
+                raise HTTPException(status_code=429, detail={"code": "rate_limited"})
             email = item.email
             if email is None:
                 raise HTTPException(status_code=404, detail={"code": "no_email"})
@@ -168,7 +193,8 @@ def create_app(
                     }
                 )
             except Exception as exc:
-                raise HTTPException(status_code=502, detail={"code": "llm_error", "message": str(exc)})
+                logger.exception("生成详情失败 item_id=%s", item_id)
+                raise HTTPException(status_code=502, detail={"code": "llm_error"}) from exc
             item.detail_md = detail
             db.commit()
         return {"id": item.id, "detail_md": item.detail_md}
@@ -213,12 +239,15 @@ def create_app(
     ) -> dict:
         if not request.question.strip():
             raise HTTPException(status_code=400, detail={"code": "empty_question"})
+        if not search_limiter.allow(user.sub):
+            raise HTTPException(status_code=429, detail={"code": "rate_limited"})
         from app.llm import get_llm  # 延迟导入，便于测试 monkeypatch
 
         try:
             return run_search(request.question, db, get_llm(settings), user.sub)
         except Exception as exc:
-            raise HTTPException(status_code=502, detail={"code": "search_error", "message": str(exc)})
+            logger.exception("AI 搜索失败")
+            raise HTTPException(status_code=502, detail={"code": "search_error"}) from exc
 
     @app.get("/api/status")
     def status_endpoint(

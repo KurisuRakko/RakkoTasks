@@ -18,6 +18,12 @@ ENV FRONTEND_DIST=/app/frontend-dist \
     DATABASE_PATH=/data/rakkotasks.db \
     PYTHONUNBUFFERED=1
 
+# 以非 root 运行：uid 1000 的 app 用户，数据卷归其所有
+RUN useradd --uid 1000 --create-home app \
+    && mkdir -p /data \
+    && chown app:app /data
+USER app
+
 VOLUME /data
 EXPOSE 8000
 

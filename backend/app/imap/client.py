@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import imaplib
 import re
+import ssl
 from datetime import datetime, timedelta
 
 from app.config import Settings, get_settings
@@ -95,10 +96,14 @@ def connect_account(account, settings: Settings | None = None):
     from app.imap import mstoken  # 延迟导入避免循环依赖
 
     settings = settings or get_settings()
+    # 标准库默认上下文（ssl._create_stdlib_context）不校验证书也不核对主机名，
+    # 中间人可截走 Gmail 应用密码与微软 access token；必须显式传入
+    # create_default_context()（CERT_REQUIRED + check_hostname）。
+    tls_ctx = ssl.create_default_context()
     if account.kind == "gmail":
         if not account.app_password:
             raise RuntimeError("该 Gmail 账户未设置应用专用密码，请用 accounts set-password 录入")
-        conn = imaplib.IMAP4_SSL(GMAIL_IMAP_HOST, IMAP_PORT)
+        conn = imaplib.IMAP4_SSL(GMAIL_IMAP_HOST, IMAP_PORT, ssl_context=tls_ctx)
         client = ImapClient(conn)
         client.login_gmail(account.email, account.app_password)
         return client, None
@@ -106,7 +111,7 @@ def connect_account(account, settings: Settings | None = None):
         token = mstoken.acquire_token_silent(account, settings)
         if not token:
             raise RuntimeError("静默获取 access token 失败，请重跑 accounts connect")
-        conn = imaplib.IMAP4_SSL(MS_IMAP_HOST, IMAP_PORT)
+        conn = imaplib.IMAP4_SSL(MS_IMAP_HOST, IMAP_PORT, ssl_context=tls_ctx)
         client = ImapClient(conn)
         client.login_xoauth2(account.email, token)
         return client, token

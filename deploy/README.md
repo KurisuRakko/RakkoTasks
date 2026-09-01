@@ -239,3 +239,14 @@ docker compose -f deploy/docker-compose.yml run --rm web \
 - `cloudflared` 循环重启：`TUNNEL_TOKEN` 为空，按第 5 节导出后再启动。
 - 手机打不开：确认隧道 Public Hostname 的 Service URL 是 `http://web:8000`，
   并在 Cloudflare 面板确认 DNS CNAME 已生成。
+
+## 9. 容器以非 root 运行
+
+镜像内进程以 **uid 1000**（`app` 用户）运行，不以 root 跑业务进程，降低容器
+逃逸后的影响面；`/data` 数据卷已 chown 给该用户。
+
+- **Linux 宿主机已有旧部署的**：旧镜像以 root 写入过 `data/`，文件属主是 root，
+  升级镜像后新进程（uid 1000）将无法读写，需在升级前执行一次：
+  `sudo chown -R 1000:1000 data/`
+- **macOS Docker Desktop（VirtioFS）**：文件权限映射宽松，通常无需处理；若
+  启动后 web/worker 报权限错误，同样执行上面一条 chown 即可。
