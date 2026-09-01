@@ -71,6 +71,46 @@ def test_classify_system_contains_new_filter_rules():
         assert keyword in CLASSIFY_SYSTEM
 
 
+def _classify_sections():
+    """把 CLASSIFY_SYSTEM 按段落切分为 (保留段, 过滤段, 回执类段)。
+
+    keep：从「必须保留（filtered=false）」到「必须过滤（filtered=true）」之间；
+    filter_all：「必须过滤（filtered=true）」之后；
+    receipt：过滤四类中第 1 类「回执/确认类」到第 2 类「可选活动推广」之间。
+    锚点用带括号的全称标题，避免撞上「判定顺序」行里的简称。
+    """
+    from app.llm import CLASSIFY_SYSTEM
+
+    _, _, keep = CLASSIFY_SYSTEM.partition("必须保留（filtered=false）")
+    keep, _, _ = keep.partition("必须过滤（filtered=true）")
+    _, _, filter_all = CLASSIFY_SYSTEM.partition("必须过滤（filtered=true）")
+    _, _, receipt = filter_all.partition("1. 回执/确认类")
+    receipt, _, _ = receipt.partition("2. 可选活动推广")
+    return keep, filter_all, receipt
+
+
+def test_classify_system_keeps_turnitin_as_submission_voucher():
+    """Turnitin 提交回执是「有后果的事」的凭证，必须出现在保留段、不得出现在过滤段。"""
+    keep, filter_all, _ = _classify_sections()
+
+    # 分辨依据：回执是否构成有后果的事（成绩、金钱、身份/资格、法律责任）的凭证
+    assert "凭证" in keep
+    # Turnitin 必须列在保留段的凭证条目里
+    assert "Turnitin" in keep
+    # 防止把规则改回去：Turnitin 不得出现在过滤段
+    assert "Turnitin" not in filter_all
+    # 防止改回旧版把 Turnitin 与问卷提交成功并列的措辞
+    assert "Turnitin、问卷提交成功" not in keep + filter_all
+
+
+def test_classify_system_still_filters_non_voucher_receipts():
+    """不构成凭证的回执（图书馆座位、问卷提交、验证码）必须仍在过滤清单的回执类里。"""
+    _, _, receipt = _classify_sections()
+
+    for keyword in ("图书馆", "问卷", "验证码"):
+        assert keyword in receipt
+
+
 def test_chat_completion_normalizes_tool_calls():
     """SDK 风格响应（带 tool_calls）→ 纯 dict，每个 tool_call 都必须含 type=="function"。"""
     client, completions = _make_client([
