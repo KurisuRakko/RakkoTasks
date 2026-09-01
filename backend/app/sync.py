@@ -171,6 +171,45 @@ def _process_pending(
             )
 
 
+def _prefill_details(
+    session: Session, llm: Any, items: list[Item], logger: logging.Logger | None = None
+) -> dict:
+    """为 detail_md 为空的条目预生成详情，逐条提交，返回计数汇总。
+
+    详情原本只在用户首次点开时现场生成（api.py），首开要同步等完
+    LLM 推理，体验差；改为分类落库后在 worker 里统一补齐，点开即读缓存。
+    API 的现场生成保留为兜底：本轮尚未补到的条目点开仍可用。
+    单条失败只记日志并跳过，detail_md 保持 NULL 由下轮重试；
+    逐条提交的理由同 _commit_email：中途崩溃不丢已完成的结果。
+    """
+    total = len(items)
+    generated = 0
+    failed = 0
+    for index, item in enumerate(items, start=1):
+        email = item.email
+        try:
+            item.detail_md = llm.generate_detail(
+                {
+                    "subject": email.subject,
+                    "sender": email.sender,
+                    "sent_at": email.sent_at,
+                    # 约四成邮件只有 HTML 正文（text_body 为空），不回退则详情基于空正文生成
+                    "text_body": email_plain_text(email.text_body, email.html_body),
+                }
+            )
+            session.commit()
+            generated += 1
+        except Exception as exc:
+            session.rollback()
+            failed += 1
+            if logger is not None:
+                # 只输出条目 id 与异常，不输出邮件主题/正文
+                logger.warning("详情生成失败（item %d）：%s", item.id, exc)
+        if logger is not None and index % 10 == 0:
+            logger.info("详情进度：%d/%d（生成 %d / 失败 %d）", index, total, generated, failed)
+    return {"total": total, "generated": generated, "failed": failed}
+
+
 def run_once(
     session_factory: sessionmaker[Session],
     imap_factory: ImapFactory | None = None,
@@ -227,4 +266,13 @@ def run_once(
                     email.llm_state = "error"
                     email.filter_reason = "LLM 未配置，下轮重试"
         session.commit()
+        # 详情预生成：分类之后补齐 detail_md 为空的条目（本轮新建 + 历史回填），
+        # 新条目在前——越新越可能被点开
+        if llm is not None:
+            todo = (
+                session.execute(select(Item).where(Item.detail_md.is_(None)).order_by(Item.id.desc()))
+                .scalars()
+                .all()
+            )
+            summary["details"] = _prefill_details(session, llm, todo, logger=logger)
     return summary
