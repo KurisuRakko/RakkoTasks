@@ -35,7 +35,7 @@ docs/       本文档等
 | Gmail | IMAP `imap.gmail.com:993` | 应用专用密码（存库，CLI 交互式录入） |
 
 - Microsoft OAuth：msal `PublicClientApplication`，authority `https://login.microsoftonline.com/common`，
-  scope `https://outlook.office365.com/IMAP.AccessAsUser.All`（msal 自动附带 offline_access）。
+  scope `https://outlook.office.com/IMAP.AccessAsUser.All`（OAuth 资源域名是 outlook.office.com，与 IMAP 主机名 outlook.office365.com 不同；msal 自动附带 offline_access）。
   client_id 每账户可配，默认 `d3590ed6-52b3-4102-aeff-aad2292ab01c`（微软 Office 官方公共客户端，
   UNSW 官方文档认可）。msal 的 SerializableTokenCache 按账户序列化存入 DB。
 - 首次登录：CLI 触发 device code flow，终端打印 URL + 代码，人工在任意浏览器完成 MFA。

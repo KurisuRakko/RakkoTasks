@@ -8,7 +8,9 @@ from msal import PublicClientApplication, SerializableTokenCache
 from app.config import Settings, get_settings
 
 MS_AUTHORITY = "https://login.microsoftonline.com/common"
-MS_SCOPE = ["https://outlook.office365.com/IMAP.AccessAsUser.All"]
+# OAuth 资源域名是 outlook.office.com，与 IMAP 服务器主机名 outlook.office365.com
+# 不是一回事——写成后者会被微软拒为 AADSTS70011 invalid_scope。
+MS_SCOPE = ["https://outlook.office.com/IMAP.AccessAsUser.All"]
 
 
 def _app(account, settings: Settings) -> PublicClientApplication:
