@@ -47,11 +47,14 @@ class WorkerKilled(BaseException):
 
 
 class FakeLLM:
-    def __init__(self, results=None, raise_invalid=False, fail_subjects=(), crash_subjects=()):
+    def __init__(self, results=None, raise_invalid=False, fail_subjects=(), crash_subjects=(),
+                 detail_fail_subjects=(), detail_crash_subjects=()):
         self.results = list(results or [])
         self.raise_invalid = raise_invalid
         self.fail_subjects = set(fail_subjects)  # 命中的 subject 抛 ValueError（单封失败）
         self.crash_subjects = set(crash_subjects)  # 命中的 subject 抛 WorkerKilled（模拟崩溃）
+        self.detail_fail_subjects = set(detail_fail_subjects)  # 详情生成失败（单条）
+        self.detail_crash_subjects = set(detail_crash_subjects)  # 详情生成时崩溃
 
     def classify_email(self, info: dict) -> dict:
         if self.raise_invalid:
@@ -62,6 +65,14 @@ class FakeLLM:
         if subject in self.fail_subjects:
             raise ValueError("单封处理失败")
         return self.results.pop(0)
+
+    def generate_detail(self, info: dict) -> str:
+        subject = info.get("subject") or ""
+        if subject in self.detail_crash_subjects:
+            raise WorkerKilled("worker 崩溃")
+        if subject in self.detail_fail_subjects:
+            raise ValueError("详情生成失败")
+        return f"详情：{subject}"
 
 
 def _run(session_factory, imap: FakeImap, llm: FakeLLM):
@@ -300,7 +311,7 @@ def test_single_failure_does_not_affect_others(session_factory):
 
 
 def test_progress_logging_every_10_and_no_subject_leak(session_factory, caplog):
-    """处理 25 封至少输出 2 条进度日志，且日志不包含任何邮件主题。"""
+    """处理 25 封至少输出 2 条分类进度与 2 条详情进度日志，且日志不包含任何邮件主题。"""
     _seed_account(session_factory)
     imap = FakeImap()
     imap.mails = {i: make_raw(message_id=f"<m{i}>", subject=f"机密主题{i}") for i in range(1, 26)}
@@ -310,4 +321,100 @@ def test_progress_logging_every_10_and_no_subject_leak(session_factory, caplog):
 
     progress = [r.getMessage() for r in caplog.records if r.getMessage().startswith("分类进度")]
     assert len(progress) >= 2
+    detail_progress = [r.getMessage() for r in caplog.records if r.getMessage().startswith("详情进度")]
+    assert len(detail_progress) >= 2
     assert all("机密主题" not in (r.getMessage() or "") for r in caplog.records)
+
+
+def _items(sf):
+    with sf() as s:
+        return s.execute(select(Item)).scalars().all()
+
+
+def test_details_prefilled_after_classify(session_factory):
+    """分类建出的条目在同一轮内预生成详情；被过滤的邮件无条目、不生成。"""
+    _seed_account(session_factory)
+    imap = FakeImap()
+    imap.mails = {1: make_raw(message_id="<a1>", subject="促销"), 2: make_raw(message_id="<a2>", subject="交作业")}
+    llm = FakeLLM(
+        results=[
+            {"filtered": True, "filter_reason": "广告营销", "title": "", "summary": "",
+             "category": "", "due_date": None, "actionable": False},
+            _ok_result("交作业"),
+        ]
+    )
+    summary = _run(session_factory, imap, llm)
+
+    items = _items(session_factory)
+    assert len(items) == 1
+    assert items[0].detail_md == "详情：交作业"
+    assert summary["details"] == {"total": 1, "generated": 1, "failed": 0}
+
+
+def test_detail_backfill_fills_null_and_keeps_cached(session_factory):
+    """历史回填：detail_md 为 NULL 的旧条目补生成，已缓存的不重新生成。"""
+    _seed_account(session_factory)
+    imap = FakeImap()
+    imap.mails = {1: make_raw(message_id="<old1>", subject="旧任务甲"), 2: make_raw(message_id="<old2>", subject="旧任务乙")}
+    _run(session_factory, imap, FakeLLM(results=[_ok_result("甲"), _ok_result("乙")]))
+    with session_factory() as s:
+        # 制造历史状态：甲的详情清空（如预生成上线前建的），乙已有缓存
+        items = {i.email.subject: i for i in s.execute(select(Item)).scalars().all()}
+        items["旧任务甲"].detail_md = None
+        items["旧任务乙"].detail_md = "**旧缓存**"
+        s.commit()
+
+    summary = _run(session_factory, imap, FakeLLM())  # 无新邮件的一轮
+
+    with session_factory() as s:
+        items = {i.email.subject: i for i in s.execute(select(Item)).scalars().all()}
+    assert items["旧任务甲"].detail_md == "详情：旧任务甲"
+    assert items["旧任务乙"].detail_md == "**旧缓存**"
+    assert summary["details"] == {"total": 1, "generated": 1, "failed": 0}
+
+
+def test_detail_failure_skips_and_retries_next_round(session_factory):
+    """单条详情失败不影响其余条目，detail_md 保持 NULL 由下轮重试补齐。"""
+    _seed_account(session_factory)
+    imap = FakeImap()
+    imap.mails = {1: make_raw(message_id="<d1>", subject="失败封"), 2: make_raw(message_id="<d2>", subject="正常封")}
+    llm = FakeLLM(
+        results=[_ok_result("任务1"), _ok_result("任务2")],
+        detail_fail_subjects={"失败封"},
+    )
+    summary = _run(session_factory, imap, llm)
+
+    with session_factory() as s:
+        items = {i.email.subject: i for i in s.execute(select(Item)).scalars().all()}
+    assert items["失败封"].detail_md is None
+    assert items["正常封"].detail_md == "详情：正常封"
+    assert summary["details"] == {"total": 2, "generated": 1, "failed": 1}
+
+    # 下轮失败原因消失：NULL 的条目被重试补齐
+    summary = _run(session_factory, imap, FakeLLM())
+    with session_factory() as s:
+        items = {i.email.subject: i for i in s.execute(select(Item)).scalars().all()}
+    assert items["失败封"].detail_md == "详情：失败封"
+    assert summary["details"] == {"total": 1, "generated": 1, "failed": 0}
+
+
+def test_detail_per_item_commit_survives_crash(session_factory):
+    """详情生成中途崩溃：已生成的详情逐条落盘，不随崩溃回滚。
+
+    预生成按条目新→旧执行：id 较大的「先成功」先生成并提交，
+    随后「崩溃封」触发崩溃，验证已提交的详情保留。
+    """
+    _seed_account(session_factory)
+    imap = FakeImap()
+    imap.mails = {1: make_raw(message_id="<c1>", subject="崩溃封"), 2: make_raw(message_id="<c2>", subject="先成功")}
+    llm = FakeLLM(
+        results=[_ok_result("任务1"), _ok_result("任务2")],
+        detail_crash_subjects={"崩溃封"},
+    )
+    with pytest.raises(WorkerKilled):
+        _run(session_factory, imap, llm)
+
+    with session_factory() as s:
+        items = {i.email.subject: i for i in s.execute(select(Item)).scalars().all()}
+    assert items["先成功"].detail_md == "详情：先成功"  # id 较大，先处理并已落盘
+    assert items["崩溃封"].detail_md is None
