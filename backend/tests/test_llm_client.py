@@ -111,6 +111,27 @@ def test_classify_system_still_filters_non_voucher_receipts():
         assert keyword in receipt
 
 
+def test_classify_system_reply_rule_judged_by_conclusion_not_re_prefix():
+    """论坛/往来回信的过滤收窄：以正文是否有「结论」为判断依据，不以 Re: 前缀为依据。"""
+    from app.llm import CLASSIFY_SYSTEM
+
+    # 判断依据关键词：回信是否含结论性内容
+    assert "结论" in CLASSIFY_SYSTEM
+    # 明确写了不以 Re: 前缀作为判断依据（提示词同时出现 Re: 与「前缀」）
+    assert "Re:" in CLASSIFY_SYSTEM
+    assert "前缀" in CLASSIFY_SYSTEM
+    # 群发回复通知与纯流程性回信仍在过滤清单里
+    assert "群发" in CLASSIFY_SYSTEM
+    assert "已收到" in CLASSIFY_SYSTEM
+
+
+def test_classify_system_still_filters_promotions():
+    """可选活动推广必须仍在过滤段，防止本轮改动把推广类一起放行。"""
+    _, filter_all, _ = _classify_sections()
+
+    assert "活动推广" in filter_all
+
+
 def test_chat_completion_normalizes_tool_calls():
     """SDK 风格响应（带 tool_calls）→ 纯 dict，每个 tool_call 都必须含 type=="function"。"""
     client, completions = _make_client([
