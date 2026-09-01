@@ -1,4 +1,4 @@
-"""LLM 管线（OpenAI-compatible）：classify_email / generate_detail。
+"""LLM 管线（OpenAI-compatible）：classify_email / generate_detail / chat_completion。
 
 真实实现走 openai SDK（base_url=LLM_BASE_URL）；测试注入 FakeLLM（仅需同签名方法）。
 """
@@ -46,11 +46,23 @@ def _email_prompt(email_info: dict) -> str:
 
 
 class LLMClient:
-    """openai SDK 封装：分类 + 详情生成。"""
+    """openai SDK 封装：分类 + 详情生成 + agentic 搜索对话。"""
 
-    def __init__(self, base_url: str, api_key: str, model: str):
+    def __init__(self, base_url: str, api_key: str, model: str, reasoning_effort: str = ""):
         self.model = model
+        self.reasoning_effort = reasoning_effort
         self.client = OpenAI(base_url=base_url, api_key=api_key)
+
+    def _base_kwargs(self) -> dict:
+        """三个调用点共用的请求参数：model + 可选的 reasoning_effort。
+
+        注意：始终不设置 max_tokens——DeepSeek V4 系列是推理模型，会先消耗
+        推理 token，max_tokens 过小会把可见内容全部吃掉导致回答为空。
+        """
+        kw = {"model": self.model}
+        if self.reasoning_effort:
+            kw["reasoning_effort"] = self.reasoning_effort
+        return kw
 
     def classify_email(self, email_info: dict) -> dict:
         """单封邮件 → DESIGN.md 4.1 JSON；非法 JSON 重试 1 次，再失败抛异常。"""
@@ -104,7 +116,7 @@ class LLMClient:
             },
         ]
         resp = self.client.chat.completions.create(
-            model=self.model,
+            **self._base_kwargs(),
             messages=messages,
             temperature=0.3,
         )
@@ -112,12 +124,42 @@ class LLMClient:
 
     def _chat_json(self, messages: list[dict]) -> str:
         resp = self.client.chat.completions.create(
-            model=self.model,
+            **self._base_kwargs(),
             messages=messages,
             response_format={"type": "json_object"},
             temperature=0.2,
         )
         return resp.choices[0].message.content or ""
+
+    def chat_completion(self, messages: list[dict], tools: list[dict] | None = None,
+                        json_mode: bool = False) -> dict:
+        """agentic 搜索对话：一次 create，把 SDK 的 message 对象规范化成纯 dict 返回。
+
+        契约与 search.py 一致；无工具调用时返回的 dict 不带 tool_calls 键
+        （search.py 用 msg.get("tool_calls") 判断）。
+        """
+        kw = self._base_kwargs()
+        kw["messages"] = messages
+        if tools:
+            kw["tools"] = tools
+        if json_mode:
+            kw["response_format"] = {"type": "json_object"}
+        resp = self.client.chat.completions.create(**kw)
+        msg = resp.choices[0].message
+        result: dict = {"role": "assistant", "content": msg.content or ""}
+        if msg.tool_calls:
+            result["tool_calls"] = [
+                {
+                    "id": tc.id,
+                    # type 必须为 "function"：search.py 会把 tool_calls 原样回填进
+                    # 下一轮请求，缺了这个字段 DeepSeek API 直接 400
+                    # （deserialize 报 missing field 'type'）。
+                    "type": "function",
+                    "function": {"name": tc.function.name, "arguments": tc.function.arguments},
+                }
+                for tc in msg.tool_calls
+            ]
+        return result
 
 
 def _normalize_classify(data: dict) -> dict:
@@ -142,4 +184,5 @@ def get_llm(settings: Settings | None = None) -> LLMClient:
     settings = settings or get_settings()
     if not settings.llm_base_url or not settings.llm_api_key:
         raise RuntimeError("未配置 LLM_BASE_URL / LLM_API_KEY")
-    return LLMClient(settings.llm_base_url, settings.llm_api_key, settings.llm_model)
+    return LLMClient(settings.llm_base_url, settings.llm_api_key, settings.llm_model,
+                     reasoning_effort=settings.llm_reasoning_effort)

@@ -54,7 +54,7 @@ docs/       本文档等
 
 ## 4. LLM 管线（OpenAI-compatible）
 
-env：`LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL`（DeepSeek 官方 API，openai SDK 调用）。
+env：`LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` / `LLM_REASONING_EFFORT`（DeepSeek 官方 API，openai SDK 调用）。
 所有面向用户的输出一律中文。
 
 ### 4.1 入库处理（每封新邮件一次调用）

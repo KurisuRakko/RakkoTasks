@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     llm_base_url: str = ""
     llm_api_key: str = ""
     llm_model: str = ""
+    # DeepSeek V4 系列的推理档位（low/high）；留空字符串则不传该参数，
+    # 以兼容不支持它的模型或其它 OpenAI 兼容供应商
+    llm_reasoning_effort: str = "high"   # env: LLM_REASONING_EFFORT
 
     # Phainon 鉴权
     phainon_api_base: str = "https://api.rakko.cn"
