@@ -86,6 +86,8 @@ class Item(Base):
     summary: Mapped[str] = mapped_column(Text, default="", nullable=False)
     category: Mapped[str] = mapped_column(String(16), default="其他", nullable=False)
     due_date: Mapped[date | None] = mapped_column(Date)
+    importance: Mapped[str] = mapped_column(String(8), default="normal", nullable=False)
+    # high | normal | low：与 due_date 无关的重要程度，用于把「重要但没日期」的事顶上来
     actionable: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     status: Mapped[str] = mapped_column(String(16), default="open", nullable=False)  # open|done
     detail_md: Mapped[str | None] = mapped_column(Text)

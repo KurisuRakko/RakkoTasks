@@ -276,6 +276,7 @@ def _item_dict(item: Item) -> dict:
         "summary": item.summary,
         "category": item.category,
         "due_date": item.due_date.isoformat() if item.due_date else None,
+        "importance": item.importance,
         "actionable": item.actionable,
         "status": item.status,
         "detail_md": item.detail_md,

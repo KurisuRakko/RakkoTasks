@@ -158,6 +158,43 @@ def test_classify_filtered_and_item_created(session_factory):
         assert str(it.due_date) == "2026-09-04"
         assert it.actionable is True
         assert it.status == "open"
+        assert it.importance == "normal"  # LLM 未返回 importance 时兜底 normal
+
+
+def test_item_importance_from_llm(session_factory):
+    """sync 建出的 item 带上 LLM 返回的 importance。"""
+    _seed_account(session_factory)
+    imap = FakeImap()
+    imap.mails = {1: make_raw(message_id="<imp>", subject="ELP 确认")}
+    llm = FakeLLM(
+        results=[
+            {"filtered": False, "filter_reason": None, "title": "ELP 确认并转发", "summary": "s",
+             "category": "学业", "due_date": None, "actionable": True, "importance": "high"},
+        ]
+    )
+    _run(session_factory, imap, llm)
+
+    with session_factory() as s:
+        item = s.execute(select(Item)).scalars().one()
+        assert item.importance == "high"
+
+
+def test_item_importance_whitelist_fallback(session_factory):
+    """LLM 返回白名单外的 importance（urgent）时兜底 normal。"""
+    _seed_account(session_factory)
+    imap = FakeImap()
+    imap.mails = {1: make_raw(message_id="<imp2>", subject="补考通知")}
+    llm = FakeLLM(
+        results=[
+            {"filtered": False, "filter_reason": None, "title": "补考", "summary": "s",
+             "category": "学业", "due_date": None, "actionable": True, "importance": "urgent"},
+        ]
+    )
+    _run(session_factory, imap, llm)
+
+    with session_factory() as s:
+        item = s.execute(select(Item)).scalars().one()
+        assert item.importance == "normal"
 
 
 def test_invalid_json_marks_error_no_item(session_factory):

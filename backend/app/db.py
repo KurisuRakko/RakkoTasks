@@ -67,9 +67,33 @@ def make_engine(database_path: str) -> Engine:
     return engine
 
 
+# 需要就地补的列：{表名: {列名: DDL 片段}}，_ensure_columns 每次启动幂等执行。
+# 以后给既有表加列只改这张映射即可。
+_COLUMN_ALTERS: dict[str, dict[str, str]] = {
+    "items": {
+        "importance": "TEXT NOT NULL DEFAULT 'normal'",
+    },
+}
+
+
+def _ensure_columns(engine: Engine) -> None:
+    """SQLite 就地补列：create_all 不会给已存在的表加列。
+
+    生产库里存着邮箱 OAuth token，不能靠删库重建，所以新增列必须走 ALTER TABLE。
+    每次启动都跑一遍，已存在则跳过（幂等）。
+    """
+    with engine.begin() as conn:
+        for table, columns in _COLUMN_ALTERS.items():
+            existing = {row[1] for row in conn.execute(text(f"PRAGMA table_info({table})"))}
+            for name, ddl in columns.items():
+                if name not in existing:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
+
+
 def init_db(engine: Engine) -> None:
-    """建普通表（含 accounts/emails/items）与 FTS5 虚表 + 触发器。"""
+    """建普通表（含 accounts/emails/items）与 FTS5 虚表 + 触发器；对旧库就地补列。"""
     Base.metadata.create_all(engine)
+    _ensure_columns(engine)
     with engine.begin() as conn:
         conn.execute(text(FTS_SCHEMA))
         for sql in FTS_TRIGGERS:

@@ -79,6 +79,9 @@ function GroupSection({
                   },
                 }}
               />
+              {item.importance === 'high' && (
+                <Chip label="重要" color="warning" size="small" variant="outlined" sx={{ ml: 1 }} />
+              )}
               <Chip label={item.category} size="small" variant="outlined" sx={{ ml: 1 }} />
               {item.due_date && (
                 <Chip
@@ -184,6 +187,14 @@ export default function TasksPage() {
           <GroupSection
             title="本周"
             items={grouped.thisWeek}
+            today={today}
+            leavingIds={leavingIds}
+            onToggle={toggleItem}
+            onOpen={setEditing}
+          />
+          <GroupSection
+            title="重要"
+            items={grouped.important}
             today={today}
             leavingIds={leavingIds}
             onToggle={toggleItem}

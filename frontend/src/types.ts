@@ -11,6 +11,9 @@ export interface ItemsResponse {
 /** 条目分类（LLM 四分类 + 兜底） */
 export type Category = '学业' | '工作' | '个人' | '账单' | '其他';
 
+/** 条目重要度（与 due_date 无关；high 无日期也不沉底） */
+export type Importance = 'high' | 'normal' | 'low';
+
 /** 条目（items 表） */
 export interface Item {
   id: number;
@@ -20,6 +23,7 @@ export interface Item {
   category: Category;
   /** YYYY-MM-DD 或 null（无截止日期） */
   due_date: string | null;
+  importance: Importance;
   actionable: boolean;
   status: ItemStatus;
   /** AI 生成详情，懒生成，可能为 null */

@@ -82,7 +82,7 @@ def _seed(session_factory) -> tuple[int, int, int, int]:
         s.commit()
         it = Item(
             email_id=em.id, title="交学费", summary="s", category="学业", actionable=True,
-            status="open",
+            importance="high", status="open",
         )
         done = Item(
             email_id=em2.id, title="旧任务", summary="s", category="工作", actionable=False,
@@ -116,10 +116,12 @@ def test_items_list_and_filter(session_factory, monkeypatch):
     assert len(items) == 1  # 默认 open，done 被过滤
     assert items[0]["title"] == "交学费"
     assert items[0]["email_subject"] == "开学通知"
+    assert items[0]["importance"] == "high"  # /api/items 响应含 importance
 
     resp = client.get("/api/items", params={"status": "done"})
     assert len(resp.json()["items"]) == 1
     assert resp.json()["items"][0]["title"] == "旧任务"
+    assert resp.json()["items"][0]["importance"] == "normal"  # 未显式设置时默认 normal
 
     resp = client.get("/api/items", params={"category": "学业"})
     assert len(resp.json()["items"]) == 1

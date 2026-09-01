@@ -181,3 +181,15 @@ def test_never_sets_max_tokens():
     assert len(completions.calls) == 3
     for kw in completions.calls:
         assert "max_tokens" not in kw
+
+
+def test_normalize_classify_importance_whitelist():
+    """importance 白名单：high/low 原样保留；白名单外（urgent/缺失/None）一律归 normal。"""
+    from app.llm import _normalize_classify
+
+    assert _normalize_classify({"importance": "high"})["importance"] == "high"
+    assert _normalize_classify({"importance": "low"})["importance"] == "low"
+    assert _normalize_classify({"importance": "urgent"})["importance"] == "normal"
+    assert _normalize_classify({"importance": "HIGH"})["importance"] == "normal"
+    assert _normalize_classify({})["importance"] == "normal"
+    assert _normalize_classify({"importance": None})["importance"] == "normal"

@@ -22,6 +22,7 @@ function makeItem(partial: Partial<Item> = {}): Item {
     summary: null,
     category: '工作',
     due_date: null,
+    importance: 'normal',
     actionable: true,
     status: 'open',
     detail_md: null,
@@ -120,6 +121,35 @@ describe('groupItems', () => {
     expect(g.today.map((i) => i.id)).toEqual([1]);
     expect(g.thisWeek.map((i) => i.id)).toEqual([2]);
     expect(g.later.map((i) => i.id)).toEqual([3]);
+  });
+
+  it('无日期且 high → 重要组（不沉底）', () => {
+    const item = makeItem({ id: 6, due_date: null, importance: 'high' });
+    const g = groupItems([item], today);
+    expect(g.important.map((i) => i.id)).toEqual([6]);
+    expect(g.later).toHaveLength(0);
+  });
+
+  it('无日期且 normal → 无期限组', () => {
+    const item = makeItem({ id: 7, due_date: null, importance: 'normal' });
+    const g = groupItems([item], today);
+    expect(g.later.map((i) => i.id)).toEqual([7]);
+    expect(g.important).toHaveLength(0);
+  });
+
+  it('今天到期且 high → 今天组（日期优先于重要度）', () => {
+    const item = makeItem({ id: 8, due_date: dateStr(today), importance: 'high' });
+    const g = groupItems([item], today);
+    expect(g.today.map((i) => i.id)).toEqual([8]);
+    expect(g.important).toHaveLength(0);
+  });
+
+  it('下周到期且 high → 重要组（不是无期限）', () => {
+    const item = makeItem({ id: 9, due_date: dateStr(nextMonday), importance: 'high' });
+    const g = groupItems([item], today);
+    expect(g.important.map((i) => i.id)).toEqual([9]);
+    expect(g.later).toHaveLength(0);
+    expect(g.thisWeek).toHaveLength(0);
   });
 });
 

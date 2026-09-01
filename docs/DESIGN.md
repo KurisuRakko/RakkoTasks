@@ -71,7 +71,8 @@ env：`LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` / `LLM_REASONING_EFFORT`（De
 {"filtered": false, "filter_reason": null,
  "title": "≤30字任务标题", "summary": "1-2句摘要",
  "category": "学业|工作|个人|账单|其他",
- "due_date": "2026-08-30 或 null", "actionable": true}
+ "due_date": "2026-08-30 或 null", "actionable": true,
+ "importance": "high|normal|low"}
 ```
 
 - 统一判定原则：这封邮件是否要求收件人在未来做一件**具体的、非可选**的事？是则建任务，否则过滤。
@@ -92,6 +93,14 @@ env：`LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` / `LLM_REASONING_EFFORT`（De
 - 保留条目中 `actionable=false` 只用于「需知悉但无需动手」的通知（课程结课通知、政策变更告知），
   不用来兜底表达「可能没用」；不可行动的通知类邮件仍生成条目（actionable=false，无截止日期），
   便于「看过就勾掉」。
+- `importance`（high|normal|low）与 `actionable` **相互独立**：`actionable` 表示「是否需要动手」，
+  `importance` 表示「不做的后果有多大」，两者不互相替代。
+  - **high**：涉及学业/工作成绩或资格的关键事项，即使邮件里没写日期也必须尽快处理——考试与补考安排、
+    成绩发布与成绩申诉、课程注册与退课、签证/身份/缴费相关、明确要求本人确认或提交材料的官方流程
+    （如 ELP 确认并转发）、导师或上级直接点名要求回应的事；
+  - **low**：知悉即可、不处理也无损失的通知（课程结课告知、政策变更通报）；
+  - **normal**：其余。不写日期的邮件由 LLM 如实返回 `due_date=null`，**不得推测日期**；
+    重要度由 `importance` 承担，避免推测日期出错让人错过真正截止时间。
 - LLM 返回非法 JSON 时重试一次，仍失败则该邮件标记 `llm_error`，下轮重试，不阻塞队列。
 
 ### 4.2 详情（懒生成）
@@ -124,8 +133,14 @@ emails(id, account_id→accounts, message_id, subject, sender, recipients, sent_
        filtered bool, filter_reason, llm_state pending|done|error)
        UNIQUE(account_id, message_id)；FTS5 虚表 emails_fts(subject, sender, text_body) 由触发器同步
 items(id, email_id→emails UNIQUE, title, summary, category, due_date date|null,
-      actionable bool, status open|done, detail_md|null, created_at, done_at|null)
+      importance high|normal|low, actionable bool, status open|done, detail_md|null,
+      created_at, done_at|null)
 ```
+
+- `items.importance` 等后续新增列通过 `init_db` 的**就地 ALTER 迁移**：`create_all` 不会给已存在的
+  表加列，启动时 `_ensure_columns` 用 `PRAGMA table_info` 检查缺失列并
+  `ALTER TABLE ADD COLUMN`（幂等，每次启动执行、已存在即跳过），**不再需要删库重建**——
+  生产库存着四个邮箱的 OAuth token cache，删库意味着用户要重新授权四遍。
 
 - `users`：登录 Phainon 的用户，首次访问自动创建（准入见第 6 节）。
 - `accounts.app_password`：Gmail 应用专用密码，明文存库，任何 API 都不会返回它。
@@ -170,9 +185,10 @@ GET  /api/status                    各账户健康（含 enabled 停用标记�
 
 - 登录：Phainon SPA 集成（`docs/integration.md` 范式），`APP_ID=rakkotasks`，
   `API_BASE=https://api.rakko.cn`；回跳域 `https://tasks.rakko.cn`。
-- 主页：AppBar + 分类筛选 Chip（全部/学业/工作/个人/账单/其他）+ 按截止日期分组的列表：
-  **今天**（含逾期，逾期红色高亮）/ **本周** / **无期限**（无日期或超出本周，带日期 Chip）。
-  条目 Checkbox 勾选完成；「已完成」在底部折叠区。
+- 主页：AppBar + 分类筛选 Chip（全部/学业/工作/个人/账单/其他）+ 分组列表：
+  **今天**（含逾期，逾期红色高亮）/ **本周** / **重要**（无近期日期但 importance=high，
+  不沉底）/ **无期限**（其余无日期或超出本周，带日期 Chip）。
+  high 条目带「重要」Chip 标记。条目 Checkbox 勾选完成；「已完成」在底部折叠区。
 - 条目详情（全屏 Dialog）：AI 详情（首开时生成，加载态）→ 底部「显示原邮件」展开 sandbox iframe
   → iframe 内「显示远程图片」开关。
 - 搜索页：问题输入 → 回答（Markdown 渲染）+ 引用邮件列表，点击打开邮件查看器。

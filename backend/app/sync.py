@@ -96,6 +96,9 @@ def _process_pending(session: Session, llm: Any, rows: list[Email]) -> None:
                     due = datetime.strptime(str(due_date), "%Y-%m-%d").date()
                 except ValueError:
                     due = None  # 非法日期置 null
+            importance = result.get("importance") or "normal"
+            if importance not in ("high", "normal", "low"):
+                importance = "normal"  # 与 _normalize_classify 同款白名单，防 FakeLLM/异常输出
             session.add(
                 Item(
                     email_id=email.id,
@@ -103,6 +106,7 @@ def _process_pending(session: Session, llm: Any, rows: list[Email]) -> None:
                     summary=result.get("summary") or "",
                     category=category,
                     due_date=due,
+                    importance=importance,
                     actionable=bool(result.get("actionable", True)),
                     status="open",
                 )
