@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import Settings, get_settings
+from app.emailtext import email_plain_text
 from app.imap import client as imap_client
 from app.imap.parser import parse_message
 from app.models import Account, Email, Item
@@ -113,7 +114,9 @@ def _process_pending(
             "subject": email.subject,
             "sender": email.sender,
             "sent_at": email.sent_at,
-            "text_body": email.text_body,
+            # 正文必须回退到 HTML：纯 HTML 邮件（无 text/plain 分段）约占生产四成，
+            # 不回退则 LLM 只看到主题行，正文不可见。
+            "text_body": email_plain_text(email.text_body, email.html_body),
         }
         try:
             result = llm.classify_email(info)

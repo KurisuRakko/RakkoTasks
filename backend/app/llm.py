@@ -87,6 +87,8 @@ title 为不超过 60 字的任务标题；summary 为 1-2 句摘要。
 
 
 def _email_prompt(email_info: dict) -> str:
+    # 正文由调用方负责：sync/api 构造 info 时已用 email_plain_text 做 HTML 回退
+    # （纯 HTML 邮件约占生产四成，text_body 不再为空），这里只截断、不再回退。
     body = (email_info.get("text_body") or "")[:8000]
     block = (
         f"主题：{email_info.get('subject')}\n"
@@ -142,6 +144,8 @@ class LLMClient:
         返回值已经 strip_markdown_media 净化：即使模型被攻陷输出图片语法，
         落库/接口吐出的 detail_md 也不含任何图片。
         """
+        # 正文由调用方负责：api.generate_item_detail 构造 info 时已用
+        # email_plain_text 做 HTML 回退，这里只截断、不再回退。
         body = (email_info.get("text_body") or "")[:8000]
         block = (
             f"主题：{email_info.get('subject')}\n"

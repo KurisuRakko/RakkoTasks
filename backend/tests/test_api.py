@@ -272,3 +272,40 @@ def test_frontend_dist_static_serving(session_factory, tmp_path):
     resp = client.get("/api/health")
     assert resp.status_code == 200
     assert resp.json() == {"status": "ok"}
+
+
+def test_detail_html_only_email_body_extracted(session_factory, monkeypatch):
+    """只有 html_body 的邮件：detail 端点把提取后的正文传给 LLM，而不是空串。"""
+    with session_factory() as s:
+        s.add(User(sub="user-1"))
+        s.commit()
+        acc = Account(user_sub="user-1", name="学校邮箱", kind="microsoft", email="a@example.com", status="ok")
+        s.add(acc)
+        s.commit()
+        em = Email(
+            account_id=acc.id, message_id="<html-only>", subject="纯HTML邮件", sender="b@example.com",
+            sent_at=None, text_body="", html_body="<p>请在周五前提交实验报告</p>", llm_state="done",
+        )
+        s.add(em)
+        s.commit()
+        it = Item(email_id=em.id, title="提交报告", summary="s", category="学业", actionable=True, status="open")
+        s.add(it)
+        s.commit()
+        item_id = it.id
+
+    captured: dict = {}
+
+    class CapturingDetailLLM:
+        def generate_detail(self, info: dict) -> str:
+            captured["info"] = info
+            return "**AI 详情**"
+
+    monkeypatch.setattr("app.llm.get_llm", lambda settings=None: CapturingDetailLLM())
+    client = _client(session_factory, monkeypatch)
+
+    resp = client.post(f"/api/items/{item_id}/detail")
+    assert resp.status_code == 200
+    assert resp.json()["detail_md"] == "**AI 详情**"
+    info = captured["info"]
+    assert info["text_body"] and "实验报告" in info["text_body"]
+    assert "<" not in info["text_body"]

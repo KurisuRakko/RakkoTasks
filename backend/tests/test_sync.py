@@ -21,6 +21,19 @@ def make_raw(subject="主题", message_id="<m@example.com>", body="正文", send
     return msg.as_bytes()
 
 
+def make_raw_html_only(subject="主题", message_id="<m@example.com>", html="<p>正文</p>", sender="a@example.com"):
+    """只有 text/html 分段的邮件（无 text/plain）：text_body 解析为空，正文在 html_body。"""
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = sender
+    msg["To"] = "me@example.com"
+    msg["Date"] = "Tue, 26 Aug 2026 10:00:00 +0800"
+    if message_id:
+        msg["Message-ID"] = message_id
+    msg.add_alternative(html, subtype="html")
+    return msg.as_bytes()
+
+
 class FakeImap:
     """duck-typing 协议类：select_inbox / search_uids / fetch_uid / logout。"""
 
@@ -52,8 +65,10 @@ class FakeLLM:
         self.raise_invalid = raise_invalid
         self.fail_subjects = set(fail_subjects)  # 命中的 subject 抛 ValueError（单封失败）
         self.crash_subjects = set(crash_subjects)  # 命中的 subject 抛 WorkerKilled（模拟崩溃）
+        self.seen_infos: list[dict] = []  # 记录每次 classify_email 收到的 info
 
     def classify_email(self, info: dict) -> dict:
+        self.seen_infos.append(info)
         if self.raise_invalid:
             raise ValueError("LLM 返回非法 JSON")
         subject = info.get("subject") or ""
@@ -311,3 +326,25 @@ def test_progress_logging_every_10_and_no_subject_leak(session_factory, caplog):
     progress = [r.getMessage() for r in caplog.records if r.getMessage().startswith("分类进度")]
     assert len(progress) >= 2
     assert all("机密主题" not in (r.getMessage() or "") for r in caplog.records)
+
+
+def test_html_only_email_body_extracted_for_llm(session_factory):
+    """只有 html_body 的邮件：传给 FakeLLM 的 text_body 非空且含正文关键词（验收核心）。
+
+    纯 HTML 邮件（无 text/plain 分段）占生产约四成；不回退时 LLM 只看到主题行。
+    """
+    _seed_account(session_factory)
+    imap = FakeImap()
+    imap.mails = {
+        1: make_raw_html_only(message_id="<html1>", subject="纯HTML邮件", html="<p>请确认出席周五的评审会</p>"),
+    }
+    llm = FakeLLM(results=[_ok_result("评审会")])
+    _run(session_factory, imap, llm)
+
+    with session_factory() as s:
+        email = s.execute(select(Email)).scalars().one()
+    assert email.text_body == ""
+    assert email.html_body  # 解析确认：正文只在 html
+    info = llm.seen_infos[0]
+    assert info["text_body"] and "评审会" in info["text_body"]
+    assert "<" not in info["text_body"]  # 给 LLM 的是提取后的纯文本，不是 HTML 源码

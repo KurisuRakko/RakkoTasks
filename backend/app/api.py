@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.auth import CurrentUser, require_auth
 from app.config import Settings, get_settings
 from app.db import init_db, make_engine, make_session_factory
+from app.emailtext import email_plain_text
 from app.models import Account, Email, Item
 from app.sanitizer import build_email_document
 from app.search import run_search
@@ -161,7 +162,9 @@ def create_app(
                         "subject": email.subject,
                         "sender": email.sender,
                         "sent_at": email.sent_at,
-                        "text_body": email.text_body,
+                        # 与 sync 分类同一约定：正文经 email_plain_text 做 HTML 回退，
+                        # 纯 HTML 邮件（无 text/plain 分段）约占生产四成，不回退则详情无正文可读。
+                        "text_body": email_plain_text(email.text_body, email.html_body),
                     }
                 )
             except Exception as exc:

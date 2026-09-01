@@ -2,15 +2,14 @@
 from __future__ import annotations
 
 import json
-import re
 from datetime import date, datetime, timedelta
 from typing import Any
 
-import nh3
 from sqlalchemy import or_, select, text
 from sqlalchemy.orm import Session
 
 from app.config import Settings, get_settings
+from app.emailtext import email_plain_text
 from app.models import Account, Email
 from app.promptguard import strip_markdown_media, wrap_untrusted
 
@@ -90,12 +89,6 @@ def _fts_match_ids(db: Session, query: str) -> list[int]:
     return [r[0] for r in rows]
 
 
-def _html_to_text(html: str) -> str:
-    """HTML → 纯文本：nh3 clean 后去标签。"""
-    clean = nh3.clean(html, tags=set())  # 只剥标签，不消毒链接
-    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", clean)).strip()
-
-
 def _tool_search_emails(db: Session, args: dict[str, Any], settings: Settings, owned_ids: list[int]) -> list[dict]:
     """search_emails 工具实现：FTS5 MATCH，无 keywords 时退化为条件过滤；检索范围限定该用户账户。"""
     limit = min(int(args.get("limit") or 10), SEARCH_LIMIT_MAX)
@@ -144,7 +137,7 @@ def _tool_read_emails(db: Session, args: dict[str, Any], owned_ids: list[int]) -
     rows = db.execute(select(Email).where(Email.id.in_(ids), Email.account_id.in_(owned_ids))).scalars().all()
     out = []
     for e in rows:
-        body = e.text_body or (_html_to_text(e.html_body) if e.html_body else "")
+        body = email_plain_text(e.text_body, e.html_body)
         out.append(
             {
                 "id": e.id,
