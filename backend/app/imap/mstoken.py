@@ -196,17 +196,20 @@ def complete_auth_code_flow(
 
 
 def acquire_token_silent(account, settings: Settings | None = None) -> str | None:
-    """同步期静默取 access token；失败返回 None（调用方负责标记账户错误）。"""
+    """同步期静默取 access token；失败返回 None（调用方负责标记账户错误）。
+
+    注意：msal 的 account 参数必须是 get_accounts() 返回的账户字典，
+    传邮箱字符串会在 msal 内部 AttributeError。
+    """
     settings = settings or get_settings()
     app = _app(account, settings)
-    result = app.acquire_token_silent(scopes=MS_SCOPE, account=account.email)
-    if result is None or "access_token" not in result:
-        # 账户参数不符时按 msal 惯例尝试用缓存账户重试
-        accounts = app.get_accounts()
-        if accounts:
-            result = app.acquire_token_silent(scopes=MS_SCOPE, account=accounts[0])
+    # 优先按用户名精确匹配；匹配不到就退回缓存里的第一个账户
+    cached = app.get_accounts(username=account.email) or app.get_accounts()
+    if not cached:
+        return None
+    result = app.acquire_token_silent(scopes=MS_SCOPE, account=cached[0])
     if result and "access_token" in result:
-        _save_cache(account, app)
+        _save_cache(account, app)   # 刷新后的 cache 要落库，refresh token 会轮转
         return result["access_token"]
     return None
 
