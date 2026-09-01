@@ -1,10 +1,11 @@
-"""账户与用户 CLI：python -m app.cli accounts add/connect/list/set-password/remove、users list。
+"""账户与用户 CLI：python -m app.cli accounts add/connect/auth-url/auth-code/list/set-password/remove、users list。
 
 账户管理只走命令行；Gmail 应用专用密码仅经 getpass 交互录入，绝不进命令行参数或日志。
 """
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 
 from sqlalchemy import func, select
@@ -180,6 +181,91 @@ def _cmd_accounts_connect(args: argparse.Namespace, settings: Settings) -> None:
         print(f"授权完成：{account.email}，token 已保存（expires_in={result.get('expires_in')}s）")
 
 
+def _print_auth_url_retry(sub: str, email: str) -> None:
+    """打印可复制的重试命令；sub/email 填本次实际传入的账户参数。"""
+    print("重新运行即可生成新链接：")
+    print(f"  python -m app.cli accounts auth-url --user {sub} {email}")
+
+
+def _cmd_accounts_auth_url(args: argparse.Namespace, settings: Settings) -> None:
+    """授权码流程第一步：生成授权链接并把 flow 落盘（/data 卷），第二步另起进程。"""
+    from app.imap import mstoken
+
+    engine = make_engine(settings.database_path)
+    init_db(engine)
+    with make_session_factory(engine)() as session:
+        user = _resolve_user(session, args.user)
+        account = session.execute(
+            select(Account).where(Account.user_sub == user.sub, Account.email == args.email)
+        ).scalars().first()
+        if account is None:
+            print(f"错误：未找到账户 {args.email}（用户 {user.sub}）", file=sys.stderr)
+            sys.exit(2)
+        if account.kind != "microsoft":
+            print(f"错误：账户 {args.email} 类型为 {account.kind}，仅 microsoft 需要 OAuth 授权", file=sys.stderr)
+            sys.exit(2)
+        initiated = mstoken.initiate_auth_code_flow(account, settings, args.redirect_uri)
+    print("请用浏览器打开下面的链接，用该邮箱登录并完成 MFA：")
+    print(initiated["auth_uri"])
+    print()
+    print("登录成功后浏览器会停在一个空白页。把地址栏里的完整 URL 复制回来，")
+    print("或复制页面上显示的授权码，然后运行第二步（URL 含 & 符号，务必保留引号）：")
+    print(f"  python -m app.cli accounts auth-code --user {args.user} {args.email} '<粘贴回来的完整URL或授权码>'")
+
+
+def _cmd_accounts_auth_code(args: argparse.Namespace, settings: Settings) -> None:
+    """授权码流程第二步：读回第一步落盘的 flow，用粘贴回的 URL/授权码换 token。"""
+    from app.imap import mstoken
+
+    engine = make_engine(settings.database_path)
+    init_db(engine)
+    with make_session_factory(engine)() as session:
+        user = _resolve_user(session, args.user)
+        account = session.execute(
+            select(Account).where(Account.user_sub == user.sub, Account.email == args.email)
+        ).scalars().first()
+        if account is None:
+            print(f"错误：未找到账户 {args.email}（用户 {user.sub}）", file=sys.stderr)
+            sys.exit(2)
+        if account.kind != "microsoft":
+            print(f"错误：账户 {args.email} 类型为 {account.kind}，仅 microsoft 需要 OAuth 授权", file=sys.stderr)
+            sys.exit(2)
+        flow_path = mstoken.flow_file_path(account, settings)
+        if not flow_path.exists():
+            # 两步是两次独立的 docker compose run 进程，flow 靠文件接力；文件不存在
+            # 说明第一步没跑过，或已被上一次 auth-code 消费（授权码一次性有效）
+            print("未找到进行中的授权流程，请先运行 accounts auth-url", file=sys.stderr)
+            sys.exit(1)
+        try:
+            flow = json.loads(flow_path.read_text())
+        except (OSError, ValueError):
+            print("进行中的授权流程文件已损坏，请重新运行 accounts auth-url", file=sys.stderr)
+            sys.exit(1)
+        try:
+            mstoken.complete_auth_code_flow(account, flow, args.auth_response, settings)
+        except mstoken.DeviceFlowError as exc:
+            # 失败语义与设备码流程一致：按类别给提示与可复制的重试命令，不冒 traceback
+            sub = args.user or account.user_sub
+            if exc.kind == "expired":
+                print("授权流程已过期：授权码未在有效期内使用，请重新生成授权链接。")
+                _print_auth_url_retry(sub, args.email)
+            elif exc.kind == "declined":
+                _print_auth_url_retry(sub, args.email)
+                print("授权被拒绝：你在微软页面上点了拒绝。如需继续，请重新生成授权链接并选择同意。")
+            elif exc.kind == "admin_required":
+                print(
+                    "该租户要求管理员同意此应用。可改用你自己的 Azure 应用注册："
+                    f"accounts add 时追加 --client-id <你的client_id>。原始信息：{exc.detail}"
+                )
+            else:
+                print(f"授权码流程失败：{exc.detail}")
+            sys.exit(1)
+        account.status = "ok"
+        account.last_error = None
+        session.commit()
+        print(f"授权成功：{account.email}，token 已保存")
+
+
 def _cmd_accounts_list(args: argparse.Namespace, settings: Settings) -> None:
     engine = make_engine(settings.database_path)
     init_db(engine)
@@ -234,6 +320,8 @@ def _cmd_accounts_remove(args: argparse.Namespace, settings: Settings) -> None:
 
 
 def main() -> None:
+    from app.imap import mstoken  # 保持 msal 懒加载：其它子命令不依赖它
+
     settings = get_settings()
     parser = argparse.ArgumentParser(prog="python -m app.cli", description="RakkoTasks 账户与用户管理")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -258,6 +346,30 @@ def main() -> None:
     connect.add_argument("--user", default=None, help="用户 sub 或邮箱；同邮箱多用户时必填")
     connect.add_argument("email", help="邮箱地址")
     connect.set_defaults(handler=_cmd_accounts_connect)
+
+    authurl = accounts_sub.add_parser(
+        "auth-url", help="微软账户 OAuth 授权码流程第一步：生成授权链接（适合设备码被租户条件访问拒绝的场景）"
+    )
+    authurl.add_argument("--user", required=True, help="用户 sub 或邮箱")
+    authurl.add_argument(
+        "--redirect-uri",
+        dest="redirect_uri",
+        default=mstoken.DEFAULT_REDIRECT_URI,
+        help=(
+            f"OAuth 重定向 URI（默认 {mstoken.DEFAULT_REDIRECT_URI}；"
+            "备选 urn:ietf:wg:oauth:2.0:oob，UNSW 官方文档采用）"
+        ),
+    )
+    authurl.add_argument("email", help="邮箱地址")
+    authurl.set_defaults(handler=_cmd_accounts_auth_url)
+
+    authcode = accounts_sub.add_parser(
+        "auth-code", help="微软账户 OAuth 授权码流程第二步：用粘贴回的 URL/授权码换 token"
+    )
+    authcode.add_argument("--user", required=True, help="用户 sub 或邮箱")
+    authcode.add_argument("email", help="邮箱地址")
+    authcode.add_argument("auth_response", help="浏览器地址栏的完整回调 URL，或页面上显示的授权码")
+    authcode.set_defaults(handler=_cmd_accounts_auth_code)
 
     lst = accounts_sub.add_parser("list", help="列出账户（不指定 --user 时列出全部用户的账户）")
     lst.add_argument("--user", default=None, help="用户 sub 或邮箱，仅列该用户的账户")

@@ -145,6 +145,29 @@ docker compose -f deploy/docker-compose.yml ps
    > 若某个账户需使用自己的 Azure 应用注册（默认用微软官方公共客户端
    > `d3590ed6-...`），`add` 时追加 `--client-id <你的client_id>`。
 
+   > **若设备码被租户条件访问策略拒绝**：部分教育租户（如 UNSW）登录后会报
+   > 「登录已成功，但是不符合访问此资源的条件……身份验证流」，这是管理员按
+   > 安全加固禁用了设备码流程（设备码钓鱼是已知攻击手法）。此时改用**授权码
+   > 流程**（标准浏览器交互），两步、非交互，`run --rm` 分两次执行：
+   >
+   > 第一步，生成授权链接（默认重定向
+   > `login.microsoftonline.com/common/oauth2/nativeclient`；若租户要求，
+   > 可追加 `--redirect-uri urn:ietf:wg:oauth:2.0:oob`，UNSW 官方文档采用该值）：
+   >
+   > ```bash
+   > docker compose -f deploy/docker-compose.yml run --rm web \
+   >   python -m app.cli accounts auth-url --user <sub或邮箱> your@unsw.edu.au
+   > ```
+   >
+   > 第二步，用浏览器打开上面的链接、用该邮箱登录并完成 MFA；登录成功后浏览器
+   > 会停在一个空白页，把地址栏的**完整 URL**（或页面上显示的授权码）粘贴回来
+   > （URL 含 `&`，务必用单引号包住）：
+   >
+   > ```bash
+   > docker compose -f deploy/docker-compose.yml run --rm web \
+   >   python -m app.cli accounts auth-code --user <sub或邮箱> your@unsw.edu.au '<完整URL或授权码>'
+   > ```
+
 ### 核对
 
 ```bash
