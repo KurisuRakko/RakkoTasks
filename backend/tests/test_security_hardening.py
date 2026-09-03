@@ -11,6 +11,7 @@ from app.auth import CurrentUser, require_auth
 from app.config import Settings
 from app.imap.client import connect_account
 from app.models import Account, Email, Item, User
+from app.agent import _tool_search_emails, fts_query
 from app.promptguard import (
     UNTRUSTED_BEGIN,
     UNTRUSTED_END,
@@ -18,7 +19,7 @@ from app.promptguard import (
     wrap_untrusted,
 )
 from app.ratelimit import RateLimiter
-from app.search import _tool_search_emails, fts_query, run_search
+from app.search import run_search
 
 
 def _settings() -> Settings:

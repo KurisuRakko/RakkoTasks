@@ -72,6 +72,7 @@ def make_engine(database_path: str) -> Engine:
 _COLUMN_ALTERS: dict[str, dict[str, str]] = {
     "items": {
         "importance": "TEXT NOT NULL DEFAULT 'normal'",
+        "related_json": "TEXT",
     },
 }
 

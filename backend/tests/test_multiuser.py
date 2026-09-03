@@ -75,11 +75,13 @@ def test_idor_isolation(session_factory):
     assert client.patch(f"/api/items/{ids['it_b']}", json={"status": "done"}).status_code == 404
     assert client.post(f"/api/items/{ids['it_b']}/detail").status_code == 404
     assert client.get(f"/api/emails/{ids['em_b']}").status_code == 404
+    assert client.get(f"/api/items/{ids['it_b']}/export").status_code == 404
 
     # 自己的数据正常访问
     assert client.get(f"/api/items/{ids['it_a']}").status_code == 200
     assert client.patch(f"/api/items/{ids['it_a']}", json={"status": "done"}).status_code == 200
     assert client.get(f"/api/emails/{ids['em_a']}").status_code == 200
+    assert client.get(f"/api/items/{ids['it_a']}/export").status_code == 200
 
     # status：只含 A 的账户，且响应里绝无 app_password / token_cache 及明文
     data = client.get("/api/status").json()

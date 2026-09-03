@@ -1,4 +1,4 @@
-"""就地迁移测试：旧库（缺 importance 列）init_db 补列且默认 normal，重复执行幂等。
+"""就地迁移测试：旧库（缺 importance / related_json 列）init_db 补列，重复执行幂等。
 
 生产库存着邮箱 OAuth token cache，不允许删库重建，所以验证的是 ALTER 路径而非重建。
 """
@@ -82,3 +82,27 @@ def test_fresh_db_has_importance_column():
     )
     init_db(engine)
     assert "importance" in _columns(engine, "items")
+
+
+def test_old_db_gets_related_json_column():
+    """旧 schema（无 related_json 列）init_db 补列，旧行补列后为 NULL 且可写入读回。"""
+    engine = _old_schema_engine()
+    init_db(engine)
+    assert "related_json" in _columns(engine, "items")
+
+    with engine.begin() as conn:
+        conn.execute(text("INSERT INTO items (email_id, title) VALUES (1, '旧任务')"))
+        conn.execute(
+            text("UPDATE items SET related_json = '[{\"email_id\": 2, \"reason\": \"背景\"}]' WHERE id = 1")
+        )
+    with engine.connect() as conn:
+        row = conn.execute(text("SELECT related_json FROM items")).first()
+    assert row[0] == '[{"email_id": 2, "reason": "背景"}]'
+
+
+def test_init_db_idempotent_adds_related_json_once():
+    """旧库跑两遍 init_db：related_json 补上且不重复 ALTER（幂等）。"""
+    engine = _old_schema_engine()
+    init_db(engine)
+    init_db(engine)  # 第二次：已有列应跳过 ALTER
+    assert "related_json" in _columns(engine, "items")

@@ -1,7 +1,7 @@
 """LLMClient 真实实现离线测试：假 OpenAI client 注入 LLMClient.client，不触网。
 
 覆盖：chat_completion 的 SDK→dict 规范化、json_mode/tools 请求参数、
-reasoning_effort 三调用点透传、任何调用都不设置 max_tokens。
+reasoning_effort 两个调用点透传、任何调用都不设置 max_tokens。
 """
 from types import SimpleNamespace
 
@@ -198,16 +198,14 @@ def test_chat_completion_passes_json_mode_and_tools():
 
 
 def test_reasoning_effort_high_applied_to_all_call_sites():
-    """reasoning_effort="high" 时三个调用点（_chat_json/generate_detail/chat_completion）的请求都带该参数。"""
+    """reasoning_effort="high" 时两个调用点（_chat_json/chat_completion）的请求都带该参数。"""
     client, completions = _make_client([
         _response(_message(content=CLASSIFY_OK)),  # classify_email → _chat_json
-        _response(_message(content="**详情**")),    # generate_detail
         _response(_message(content="{}")),          # chat_completion
     ])
     client.classify_email({"subject": "s", "text_body": "b"})
-    client.generate_detail({"subject": "s", "text_body": "b"})
     client.chat_completion([{"role": "user", "content": "hi"}])
-    assert len(completions.calls) == 3
+    assert len(completions.calls) == 2
     for kw in completions.calls:
         assert kw["reasoning_effort"] == "high"
         assert "max_tokens" not in kw
@@ -217,13 +215,11 @@ def test_reasoning_effort_empty_omits_key():
     """reasoning_effort="" 时任何请求参数都不含该键（兼容不支持它的模型/供应商）。"""
     client, completions = _make_client([
         _response(_message(content=CLASSIFY_OK)),
-        _response(_message(content="**详情**")),
         _response(_message(content="{}")),
     ], reasoning_effort="")
     client.classify_email({"subject": "s", "text_body": "b"})
-    client.generate_detail({"subject": "s", "text_body": "b"})
     client.chat_completion([{"role": "user", "content": "hi"}])
-    assert len(completions.calls) == 3
+    assert len(completions.calls) == 2
     for kw in completions.calls:
         assert "reasoning_effort" not in kw
         assert "max_tokens" not in kw
@@ -233,13 +229,11 @@ def test_never_sets_max_tokens():
     """任何调用都不得设置 max_tokens：推理模型下小 max_tokens 会把可见内容全部吃掉。"""
     client, completions = _make_client([
         _response(_message(content=CLASSIFY_OK)),
-        _response(_message(content="**详情**")),
         _response(_message(content="{}")),
     ])
     client.classify_email({"subject": "s", "text_body": "b"})
-    client.generate_detail({"subject": "s", "text_body": "b"})
     client.chat_completion([{"role": "user", "content": "hi"}], json_mode=True)
-    assert len(completions.calls) == 3
+    assert len(completions.calls) == 2
     for kw in completions.calls:
         assert "max_tokens" not in kw
 

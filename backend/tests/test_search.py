@@ -4,8 +4,9 @@ from datetime import datetime
 
 from sqlalchemy import select, text
 
+from app.agent import fts_query
 from app.models import Account, Email, User
-from app.search import fts_query, run_search
+from app.search import run_search
 
 
 class FakeSearchLLM:
