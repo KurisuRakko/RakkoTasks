@@ -1,4 +1,4 @@
-"""reclassify 命令测试：删任务、重置 LLM 状态、邮件本体保留、账户/用户隔离、确认交互。
+"""reclassify 命令测试：删任务、重置 LLM 状态、邮件本体保留、账户/用户隔离、确认交互、--last 限量。
 
 全部离线：直接调用 cli._cmd_reclassify，使用临时 SQLite 文件库
 （CLI 按 settings.database_path 自己开库，不能用内存库 fixture 播种）。
@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import io
+from datetime import datetime, timedelta
 
 import pytest
 from sqlalchemy import select
@@ -29,7 +30,7 @@ def _seed_user(settings: Settings, sub: str, accounts: dict[str, list[dict]]) ->
     """建一个用户及其账户/邮件/任务。
 
     accounts: {账户邮箱: [邮件描述 dict, ...]}；邮件描述支持 message_id/subject/body/
-    filtered/filter_reason/llm_state/item(含 detail_md)。
+    sent_at/filtered/filter_reason/llm_state/item(含 detail_md)。
     """
     with _sf(settings)() as s:
         s.add(User(sub=sub, email=f"{sub}@x.com"))
@@ -44,6 +45,7 @@ def _seed_user(settings: Settings, sub: str, accounts: dict[str, list[dict]]) ->
                     message_id=e["message_id"],
                     subject=e.get("subject", "主题"),
                     text_body=e.get("body", "正文"),
+                    sent_at=e.get("sent_at"),
                     llm_state=e.get("llm_state", "done"),
                     filtered=e.get("filtered", False),
                     filter_reason=e.get("filter_reason"),
@@ -64,9 +66,9 @@ def _seed_user(settings: Settings, sub: str, accounts: dict[str, list[dict]]) ->
         s.commit()
 
 
-def _run(settings, user="sub-1", account=None):
+def _run(settings, user="sub-1", account=None, last=None):
     """以 --yes 方式执行 reclassify。"""
-    args = argparse.Namespace(user=user, account=account, yes=True)
+    args = argparse.Namespace(user=user, account=account, yes=True, last=last)
     cli._cmd_reclassify(args, settings)
 
 
@@ -195,6 +197,75 @@ def test_reclassify_without_yes_and_non_yes_stdin_aborts(tmp_path, monkeypatch):
     with pytest.raises(SystemExit) as exc:
         cli._cmd_reclassify(args, settings)
     assert exc.value.code != 0
+
+    with _sf(settings)() as s:
+        emails = s.execute(select(Email)).scalars().all()
+        assert len(emails) == 1
+        assert emails[0].llm_state == "done"  # 未做任何修改
+        assert len(s.execute(select(Item)).scalars().all()) == 1
+
+
+def _five_mails(prefix: str, base: datetime) -> list[dict]:
+    """一个账户的 5 封邮件：sent_at 递增（第 3 封为 NULL），每封都有任务。"""
+    mails = []
+    for i in range(1, 6):
+        mails.append(
+            {
+                "message_id": f"<{prefix}{i}>",
+                "sent_at": None if i == 3 else base + timedelta(days=i),
+                "item": {"title": f"{prefix}{i}"},
+            }
+        )
+    return mails
+
+
+def test_reclassify_last_takes_recent_n_per_account(tmp_path):
+    """--last N 按账户分别取：每账户恰好重置最近 N 封（sent_at 倒序，NULL 不入选）并删其任务。
+
+    两个账户发送时间完全错开（B 全在 A 之后）：若误按全用户取最近 N 封，
+    会只剩 B 账户的邮件被选中，这里要求 A、B 各选中 2 封。
+    """
+    settings = _settings(tmp_path)
+    init_db(make_engine(settings.database_path))
+    _seed_user(
+        settings,
+        "sub-1",
+        {
+            "a@example.com": _five_mails("a", datetime(2025, 1, 1)),
+            "b@example.com": _five_mails("b", datetime(2025, 2, 1)),
+        },
+    )
+    _run(settings, last=2)
+
+    with _sf(settings)() as s:
+        emails = {e.message_id: e for e in s.execute(select(Email)).scalars().all()}
+        item_email_ids = {i.email_id for i in s.execute(select(Item)).scalars().all()}
+        assert len(item_email_ids) == 6  # 每账户 5 删 2，共剩 6
+        for prefix in ("a", "b"):
+            for n in range(1, 6):
+                mid = f"<{prefix}{n}>"
+                em = emails[mid]
+                if n in (4, 5):  # sent_at 最新的两封（第 3 封 sent_at 为 NULL，不入选）
+                    assert em.llm_state == "pending"
+                    assert em.id not in item_email_ids  # 选中邮件的任务被删
+                else:
+                    assert em.llm_state == "done"  # 其余邮件原样
+                    assert em.id in item_email_ids  # 其余任务保留
+
+
+def test_reclassify_last_zero_rejected(tmp_path):
+    """--last 0：报错退出，退出码 2，且不改任何数据。"""
+    settings = _settings(tmp_path)
+    init_db(make_engine(settings.database_path))
+    _seed_user(
+        settings,
+        "sub-1",
+        {"a@example.com": [{"message_id": "<m1>", "item": {"title": "任务"}}]},
+    )
+    args = argparse.Namespace(user="sub-1", account=None, yes=True, last=0)
+    with pytest.raises(SystemExit) as exc:
+        cli._cmd_reclassify(args, settings)
+    assert exc.value.code == 2
 
     with _sf(settings)() as s:
         emails = s.execute(select(Email)).scalars().all()
