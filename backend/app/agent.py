@@ -6,10 +6,12 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import or_, select, text
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.config import Settings
@@ -57,21 +59,18 @@ TOOLS: list[dict] = [
     },
 ]
 
-_FTS_SPECIALS = set('":^(){}[]-~*+')
 # FTS5 布尔操作符只认全大写；token 恰好等于它们时若裸拼会生成非法查询（如 "OR" 开头），
 # 必须按短语加引号输出，不能追加通配符。
 _FTS_OPERATORS = {"AND", "OR", "NOT", "NEAR"}
 
 
-def _fts_escape_token(token: str) -> str:
-    """FTS5 特殊字符加双引号转义（短语），内部双引号双写。"""
-    if any(c in token for c in _FTS_SPECIALS):
-        return '"' + token.replace('"', '""') + '"'
-    return token
-
-
 def fts_query(keywords: str) -> str:
-    """keywords 空格分词后 OR 连接；普通词加 * 前缀通配（unicode61 下 CJK 整词前缀命中）。"""
+    """keywords 空格分词后 OR 连接；纯词 token 加 * 前缀通配（unicode61 下 CJK 整词前缀命中）。
+
+    FTS5 裸词只允许字母数字下划线与 unicode 字母；token 含 `.` `@` `%` `-` `+` `"` 等任何
+    其它字符时裸拼进 MATCH 会产生语法错误（如生产报错 "rakko.cn*" → fts5: syntax error
+    near "."），必须整体按短语加引号、不加通配符输出。
+    """
     tokens = [t for t in keywords.split() if t.strip()]
     if not tokens:
         return ""
@@ -80,10 +79,10 @@ def fts_query(keywords: str) -> str:
         if t in _FTS_OPERATORS:
             # 裸操作符会让 MATCH 语法非法（如首个 token 就是 "OR"），按短语加引号输出
             parts.append('"' + t + '"')
-        elif any(c in t for c in _FTS_SPECIALS):
-            parts.append('"' + t.replace('"', '""') + '"')
-        else:
+        elif re.fullmatch(r"\w+", t):  # 默认 unicode：CJK/字母/数字/下划线可作裸词
             parts.append(t + "*")
+        else:
+            parts.append('"' + t.replace('"', '""') + '"')
     return " OR ".join(parts)
 
 
@@ -177,10 +176,18 @@ def _tool_read_emails(db: Session, args: dict[str, Any], owned_ids: list[int]) -
 
 
 def _dispatch_tool(db: Session, name: str, args: dict[str, Any], settings: Settings, owned_ids: list[int]) -> dict:
+    # 只兜住数据库层 OperationalError（如 FTS5 语法或锁库）：转为工具失败结果让循环继续，
+    # 不捕获其它异常（真 bug 不能被掩盖）
     if name == "search_emails":
-        return {"ok": True, "emails": _tool_search_emails(db, args, settings, owned_ids)}
+        try:
+            return {"ok": True, "emails": _tool_search_emails(db, args, settings, owned_ids)}
+        except OperationalError:
+            return {"ok": False, "error": "检索语法无效，请换更简单的关键词重试"}
     if name == "read_emails":
-        return {"ok": True, "emails": _tool_read_emails(db, args, owned_ids)}
+        try:
+            return {"ok": True, "emails": _tool_read_emails(db, args, owned_ids)}
+        except OperationalError:
+            return {"ok": False, "error": "检索语法无效，请换更简单的关键词重试"}
     return {"ok": False, "error": f"未知工具 {name}"}
 
 
@@ -203,6 +210,24 @@ def _build_index(db: Session, settings: Settings, user_sub: str) -> str:
     return "\n".join(lines)
 
 
+def _parse_final_json(content: str) -> dict:
+    """解析 LLM 最终输出：容忍被 ``` / ```json 围栏包裹的 JSON，剥掉围栏再 loads。
+
+    解析结果不是 dict（数组/裸串）同样视为失败抛 ValueError（json.JSONDecodeError 是其
+    子类，调用处捕获 ValueError 即可同路径处理）。
+    """
+    text = content.strip()
+    if text.startswith("```"):
+        # 去掉围栏首行（可能是 ```json）与末尾闭合的 ```，其余按普通 JSON 解析
+        text = "\n".join(text.splitlines()[1:]).strip()
+        if text.endswith("```"):
+            text = text[:-3].rstrip()
+    data = json.loads(text)
+    if not isinstance(data, dict):
+        raise ValueError("最终输出不是 JSON 对象")
+    return data
+
+
 def run_tool_loop(
     llm: Any,
     messages: list[dict],
@@ -216,8 +241,9 @@ def run_tool_loop(
     """agentic 工具循环：有 tool_calls 则回填执行并继续，无则把 content 当最终 JSON 解析返回。
 
     llm 需提供 chat_completion(messages, tools=None, json_mode=False) -> dict（openai message 风格）。
-    最终输出不是合法 JSON 时追加 retry_hint 并用 json_mode=True 重试一次，仍失败抛
-    RuntimeError("最终输出非法 JSON")；超 max_rounds 轮抛 RuntimeError("工具循环超过 N 轮")。
+    最终输出按 _parse_final_json 解析（容忍 ```json 围栏包裹）；不是合法 JSON / 顶层不是对象时
+    追加 retry_hint 并用 json_mode=True 重试一次，仍失败抛 RuntimeError("最终输出非法 JSON")；
+    超 max_rounds 轮抛 RuntimeError("工具循环超过 N 轮")。
     messages 就地追加（调用方持有引用即可读到完整对话，测试依赖此行为）。
     """
     for _round in range(max_rounds):
@@ -237,14 +263,14 @@ def run_tool_loop(
         # 无工具调用：尝试解析最终 JSON
         content = msg.get("content") or ""
         try:
-            return json.loads(content)
-        except json.JSONDecodeError:
+            return _parse_final_json(content)
+        except ValueError:
             # 一次显式 json_object 重试
             messages.append({"role": "assistant", "content": content})
             messages.append({"role": "user", "content": retry_hint})
             msg = llm.chat_completion(messages, tools=TOOLS, json_mode=True)
             try:
-                return json.loads(msg.get("content") or "")
-            except json.JSONDecodeError:
+                return _parse_final_json(msg.get("content") or "")
+            except ValueError:
                 raise RuntimeError("最终输出非法 JSON")
     raise RuntimeError(f"工具循环超过 {max_rounds} 轮")

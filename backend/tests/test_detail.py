@@ -274,6 +274,33 @@ class RetryLLM:
         return {"role": "assistant", "content": json.dumps(self.final, ensure_ascii=False)}
 
 
+class FencedJsonLLM:
+    """第 1 轮直接输出被 ```json 围栏包裹的最终 JSON（不触发重试的回归）。"""
+
+    def __init__(self):
+        self.calls: list[dict] = []
+
+    def chat_completion(self, messages, tools=None, json_mode=False):
+        self.calls.append({"tools": bool(tools), "json_mode": json_mode})
+        return {
+            "role": "assistant",
+            "content": '```json\n{"detail_md": "ok", "related": []}\n```',
+        }
+
+
+def test_run_tool_loop_fenced_json_parsed_once(session_factory):
+    """最终输出带 ```json 围栏：首轮直接解析成功，llm 只被调用 1 次。"""
+    with session_factory() as s:
+        llm = FencedJsonLLM()
+        data = run_tool_loop(
+            llm, [{"role": "user", "content": "hi"}], s, _settings(), [],
+            max_rounds=8, retry_hint="hint",
+        )
+        assert data == {"detail_md": "ok", "related": []}
+        assert len(llm.calls) == 1
+        assert llm.calls[0]["json_mode"] is False
+
+
 def test_run_tool_loop_json_retry(session_factory):
     """run_tool_loop：非法 JSON 首轮重试一次且 json_mode=True 后成功返回；messages 就地追加。"""
     with session_factory() as s:

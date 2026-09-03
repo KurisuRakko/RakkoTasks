@@ -4,7 +4,7 @@ from datetime import datetime
 
 from sqlalchemy import select, text
 
-from app.agent import fts_query
+from app.agent import _fts_match_ids, fts_query
 from app.models import Account, Email, User
 from app.search import run_search
 
@@ -109,6 +109,23 @@ def test_fts_search_runs_in_memory(session_factory):
         ).scalars().all()
         assert e1_id in hits
         assert e2_id in hits
+
+
+def test_fts_query_punctuation_tokens_quoted_phrases():
+    """非 \\w 字符（. @ % + 等）token 整体按短语加引号且不加通配；纯词 token 保持 * 前缀。"""
+    # 生产报错回归：rakko.cn 曾裸拼为 "rakko.cn*" 触发 fts5: syntax error near "."
+    assert fts_query("rakko.cn domain verify") == '"rakko.cn" OR domain* OR verify*'
+    # 每个含标点的 token 都被引号包裹，纯 CJK 词加 *
+    assert fts_query("a@b.com 50% C++ 会议") == '"a@b.com" OR "50%" OR "C++" OR 会议*'
+
+
+def test_fts_punctuation_queries_run_in_memory(session_factory):
+    """上述含标点查询在真实 FTS5 虚表上执行 _fts_match_ids 不抛异常（语法错误回归）。"""
+    _seed(session_factory)
+    with session_factory() as s:
+        for keywords in ("rakko.cn domain verify", "a@b.com 50% C++ 会议", 'a b"c'):
+            ids = _fts_match_ids(s, fts_query(keywords))
+            assert isinstance(ids, list)
 
 
 def test_read_emails_falls_back_to_html_text(session_factory):

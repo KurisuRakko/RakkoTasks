@@ -6,12 +6,14 @@ from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
+from sqlalchemy.exc import OperationalError
+
 from app.api import create_app
 from app.auth import CurrentUser, require_auth
 from app.config import Settings
 from app.imap.client import connect_account
 from app.models import Account, Email, Item, User
-from app.agent import _tool_search_emails, fts_query
+from app.agent import _dispatch_tool, _tool_search_emails, fts_query, run_tool_loop
 from app.promptguard import (
     UNTRUSTED_BEGIN,
     UNTRUSTED_END,
@@ -326,6 +328,71 @@ def test_tool_search_bad_date_does_not_crash(session_factory):
         # 正常日期仍生效
         rows2 = _tool_search_emails(s, {"date_from": "2024-01-01"}, _settings(), owned)
         assert isinstance(rows2, list)
+
+
+def test_dispatch_tool_fts_operational_error_returns_ok_false(session_factory, monkeypatch):
+    """FTS5 MATCH 抛 OperationalError（生产报错形态）→ 工具返回 ok=False + error，不向上炸。"""
+    _seed(session_factory)
+    from sqlalchemy import select
+
+    def boom(db, query):
+        raise OperationalError("SELECT rowid FROM emails_fts ...", {}, Exception('fts5: syntax error near "."'))
+
+    monkeypatch.setattr("app.agent._fts_match_ids", boom)
+    with session_factory() as s:
+        owned = list(s.execute(select(Account.id)).scalars().all())
+        out = _dispatch_tool(s, "search_emails", {"keywords": "rakko.cn"}, _settings(), owned)
+        assert out["ok"] is False
+        assert "error" in out
+        assert "检索语法无效" in out["error"]
+
+
+def test_run_tool_loop_continues_after_tool_db_error(session_factory, monkeypatch):
+    """工具层 OperationalError 后 run_tool_loop 照常进入下一轮并拿到最终 JSON。"""
+
+    class BoomThenFinalLLM:
+        """第 1 轮 search_emails（触发数据库错误），第 2 轮直接给最终 JSON。"""
+
+        def __init__(self):
+            self.calls: list[dict] = []
+            self.tool_contents: list[str] = []
+
+        def chat_completion(self, messages, tools=None, json_mode=False):
+            self.calls.append({"tools": bool(tools), "json_mode": json_mode})
+            for m in messages:
+                if m.get("role") == "tool":
+                    self.tool_contents.append(m["content"])
+            if len(self.calls) == 1:
+                return {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {"id": "c1", "function": {"name": "search_emails", "arguments": json.dumps({"keywords": "rakko.cn"})}}
+                    ],
+                }
+            return {
+                "role": "assistant",
+                "content": json.dumps({"answer_md": "ok", "citations": []}, ensure_ascii=False),
+            }
+
+    _seed(session_factory)
+    from sqlalchemy import select
+
+    def boom(db, query):
+        raise OperationalError("SELECT ...", {}, Exception('fts5: syntax error near "."'))
+
+    monkeypatch.setattr("app.agent._fts_match_ids", boom)
+    with session_factory() as s:
+        owned = list(s.execute(select(Account.id)).scalars().all())
+        llm = BoomThenFinalLLM()
+        data = run_tool_loop(
+            llm, [{"role": "user", "content": "hi"}], s, _settings(), owned,
+            max_rounds=8, retry_hint="hint",
+        )
+    assert data == {"answer_md": "ok", "citations": []}
+    assert len(llm.calls) == 2
+    # search_emails 的错误结果确实回填进了对话（下一轮能看到 ok=False）
+    assert any('"ok": false' in c for c in llm.tool_contents)
 
 
 # ── 补充：SearchRequest.question 长度上限 ─────────────────────
