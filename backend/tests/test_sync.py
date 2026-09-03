@@ -1,4 +1,5 @@
 """单轮同步测试：FakeImap / FakeLLM 注入，不触网。"""
+import json
 import logging
 from email.message import EmailMessage
 
@@ -59,6 +60,22 @@ class WorkerKilled(BaseException):
     """模拟 worker 进程崩溃：BaseException 不被 except Exception 捕获，能穿透到调用方。"""
 
 
+def _user_message(messages: list[dict]) -> str:
+    """取对话里最近一条 user 消息（详情流程首轮即 system + user 两条）。"""
+    for m in reversed(messages):
+        if m.get("role") == "user":
+            return m.get("content") or ""
+    raise AssertionError("无 user 消息")
+
+
+def _subject_of(user_content: str) -> str:
+    """从详情 prompt 的「主题：」行解析当前邮件主题（subject 内不会再有「主题：」前缀）。"""
+    for line in user_content.splitlines():
+        if line.startswith("主题："):
+            return line[len("主题：") :]
+    return ""
+
+
 class FakeLLM:
     def __init__(self, results=None, raise_invalid=False, fail_subjects=(), crash_subjects=(),
                  detail_fail_subjects=(), detail_crash_subjects=()):
@@ -67,7 +84,7 @@ class FakeLLM:
         self.fail_subjects = set(fail_subjects)  # 命中的 subject 抛 ValueError（单封失败）
         self.crash_subjects = set(crash_subjects)  # 命中的 subject 抛 WorkerKilled（模拟崩溃）
         self.seen_infos: list[dict] = []  # 记录每次 classify_email 收到的 info
-        self.seen_detail_infos: list[dict] = []  # 记录每次 generate_detail 收到的 info
+        self.seen_detail_messages: list[list[dict]] = []  # 记录每次详情生成的完整对话
         self.detail_fail_subjects = set(detail_fail_subjects)  # 详情生成失败（单条）
         self.detail_crash_subjects = set(detail_crash_subjects)  # 详情生成时崩溃
 
@@ -82,14 +99,19 @@ class FakeLLM:
             raise ValueError("单封处理失败")
         return self.results.pop(0)
 
-    def generate_detail(self, info: dict) -> str:
-        self.seen_detail_infos.append(info)
-        subject = info.get("subject") or ""
+    def chat_completion(self, messages, tools=None, json_mode=False):
+        # 详情生成改为 agentic 对话后的最终回答：直接返回合法 JSON，
+        # 成功/失败/崩溃按当前邮件 subject 区分（与旧 generate_detail 语义一致）
+        self.seen_detail_messages.append(list(messages))
+        subject = _subject_of(_user_message(messages))
         if subject in self.detail_crash_subjects:
             raise WorkerKilled("worker 崩溃")
         if subject in self.detail_fail_subjects:
             raise ValueError("详情生成失败")
-        return f"详情：{subject}"
+        return {
+            "role": "assistant",
+            "content": json.dumps({"detail_md": f"详情：{subject}", "related": []}, ensure_ascii=False),
+        }
 
 
 def _run(session_factory, imap: FakeImap, llm: FakeLLM):
@@ -366,7 +388,7 @@ def test_html_only_email_body_extracted_for_llm(session_factory):
 
 
 def test_prefill_detail_html_only_body_fallback(session_factory):
-    """只有 html_body 的邮件：详情预生成时传给 FakeLLM 的 text_body 非空且含正文关键词。
+    """只有 html_body 的邮件：详情预生成时传给 LLM 的正文非空且含正文关键词。
 
     预生成路径曾直接用 email.text_body，纯 HTML 邮件（约占生产四成）下为空，
     详情会基于空正文生成；此断言在修复前必须失败，防止旧分支合入时把回退改回去。
@@ -385,9 +407,10 @@ def test_prefill_detail_html_only_body_fallback(session_factory):
     assert email.text_body == ""  # 解析确认：正文只在 html
     assert email.html_body
     assert item.detail_md  # 详情非空生成
-    info = llm.seen_detail_infos[0]
-    assert info["text_body"] and "评审会" in info["text_body"]
-    assert "<" not in info["text_body"]  # 给 LLM 的是提取后的纯文本，不是 HTML 源码
+    # 详情对话的 user 消息里正文来自 html 提取：含关键词、不含原始 HTML 标签
+    content = _user_message(llm.seen_detail_messages[0])
+    assert "请确认出席周五的评审会" in content
+    assert "<p>" not in content
     assert summary["details"] == {"total": 1, "generated": 1, "failed": 0}
 
 

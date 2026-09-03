@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import Settings, get_settings
+from app.detail import apply_detail, generate_item_detail
 from app.emailtext import email_plain_text
 from app.imap import client as imap_client
 from app.imap.parser import parse_message
@@ -172,13 +173,14 @@ def _process_pending(
 
 
 def _prefill_details(
-    session: Session, llm: Any, items: list[Item], logger: logging.Logger | None = None
+    session: Session, llm: Any, items: list[Item], settings: Settings, logger: logging.Logger | None = None
 ) -> dict:
-    """为 detail_md 为空的条目预生成详情，逐条提交，返回计数汇总。
+    """为 detail_md 为空的条目预生成详情（agentic，含关联邮件检索），逐条提交，返回计数汇总。
 
     详情原本只在用户首次点开时现场生成（api.py），首开要同步等完
     LLM 推理，体验差；改为分类落库后在 worker 里统一补齐，点开即读缓存。
     API 的现场生成保留为兜底：本轮尚未补到的条目点开仍可用。
+    详情现会检索关联邮件，一条可能是多轮 LLM 调用。
     单条失败只记日志并跳过，detail_md 保持 NULL 由下轮重试；
     逐条提交的理由同 _commit_email：中途崩溃不丢已完成的结果。
     """
@@ -186,17 +188,9 @@ def _prefill_details(
     generated = 0
     failed = 0
     for index, item in enumerate(items, start=1):
-        email = item.email
         try:
-            item.detail_md = llm.generate_detail(
-                {
-                    "subject": email.subject,
-                    "sender": email.sender,
-                    "sent_at": email.sent_at,
-                    # 约四成邮件只有 HTML 正文（text_body 为空），不回退则详情基于空正文生成
-                    "text_body": email_plain_text(email.text_body, email.html_body),
-                }
-            )
+            md, related = generate_item_detail(session, llm, item, settings)
+            apply_detail(item, md, related)
             session.commit()
             generated += 1
         except Exception as exc:
@@ -274,5 +268,5 @@ def run_once(
                 .scalars()
                 .all()
             )
-            summary["details"] = _prefill_details(session, llm, todo, logger=logger)
+            summary["details"] = _prefill_details(session, llm, todo, settings, logger=logger)
     return summary

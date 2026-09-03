@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.auth import CurrentUser, require_auth
 from app.config import Settings, get_settings
 from app.db import init_db, make_engine, make_session_factory
-from app.emailtext import email_plain_text
+from app.detail import apply_detail, build_export_text, generate_item_detail, resolve_related
 from app.models import Account, Email, Item
 from app.ratelimit import RateLimiter
 from app.sanitizer import build_email_document
@@ -143,7 +143,8 @@ def create_app(
             .scalars()
             .all()
         )
-        return {"items": [_item_dict(i) for i in items]}
+        owned_ids = _owned_account_ids(db, user.sub)  # 只查一次，逐条复用
+        return {"items": [_item_dict(i, resolve_related(db, i, owned_ids)) for i in items]}
 
     @app.patch("/api/items/{item_id}")
     def patch_item(
@@ -157,17 +158,17 @@ def create_app(
         item.status = body.status
         item.done_at = datetime.now() if body.status == "done" else None
         db.commit()
-        return _item_dict(item)
+        return _item_dict(item, resolve_related(db, item, _owned_account_ids(db, user.sub)))
 
     @app.get("/api/items/{item_id}")
     def get_item(item_id: int, user: CurrentUser = Depends(require_auth), db: Session = Depends(_get_db)) -> dict:
         item = _owned_item(db, item_id, user.sub)
         if item is None:
             raise HTTPException(status_code=404, detail={"code": "not_found"})
-        return _item_dict(item)
+        return _item_dict(item, resolve_related(db, item, _owned_account_ids(db, user.sub)))
 
     @app.post("/api/items/{item_id}/detail")
-    def generate_item_detail(
+    def generate_detail_endpoint(
         item_id: int, user: CurrentUser = Depends(require_auth), db: Session = Depends(_get_db)
     ) -> dict:
         item = _owned_item(db, item_id, user.sub)
@@ -176,28 +177,25 @@ def create_app(
         if item.detail_md is None:
             if not detail_limiter.allow(user.sub):
                 raise HTTPException(status_code=429, detail={"code": "rate_limited"})
-            email = item.email
-            if email is None:
-                raise HTTPException(status_code=404, detail={"code": "no_email"})
             from app.llm import get_llm  # 延迟导入，便于测试 monkeypatch
 
             try:
-                detail = get_llm(settings).generate_detail(
-                    {
-                        "subject": email.subject,
-                        "sender": email.sender,
-                        "sent_at": email.sent_at,
-                        # 与 sync 分类同一约定：正文经 email_plain_text 做 HTML 回退，
-                        # 纯 HTML 邮件（无 text/plain 分段）约占生产四成，不回退则详情无正文可读。
-                        "text_body": email_plain_text(email.text_body, email.html_body),
-                    }
-                )
+                md, related = generate_item_detail(db, get_llm(settings), item, settings)
             except Exception as exc:
                 logger.exception("生成详情失败 item_id=%s", item_id)
                 raise HTTPException(status_code=502, detail={"code": "llm_error"}) from exc
-            item.detail_md = detail
+            apply_detail(item, md, related)
             db.commit()
-        return {"id": item.id, "detail_md": item.detail_md}
+        owned = _owned_account_ids(db, user.sub)
+        return {"id": item.id, "detail_md": item.detail_md, "related": resolve_related(db, item, owned)}
+
+    @app.get("/api/items/{item_id}/export")
+    def export_item(item_id: int, user: CurrentUser = Depends(require_auth), db: Session = Depends(_get_db)) -> dict:
+        """导出条目为 Markdown 纯文本（含 AI 见解与关联邮件全文）；纯读、无 LLM 调用，不限流。"""
+        item = _owned_item(db, item_id, user.sub)
+        if item is None:
+            raise HTTPException(status_code=404, detail={"code": "not_found"})
+        return {"text": build_export_text(db, item, _owned_account_ids(db, user.sub))}
 
     @app.get("/api/emails/{email_id}")
     def get_email(
@@ -297,7 +295,7 @@ def create_app(
     return app
 
 
-def _item_dict(item: Item) -> dict:
+def _item_dict(item: Item, related: list[dict]) -> dict:
     email = item.email
     return {
         "id": item.id,
@@ -312,6 +310,7 @@ def _item_dict(item: Item) -> dict:
         "actionable": item.actionable,
         "status": item.status,
         "detail_md": item.detail_md,
+        "related": related,
         "created_at": item.created_at.isoformat() if item.created_at else None,
         "done_at": item.done_at.isoformat() if item.done_at else None,
     }

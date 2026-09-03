@@ -49,6 +49,8 @@ docs/       本文档等
   不进 shell history），明文存库、永不经 API 返回；不再走环境变量。
 - 过滤规则调整后重跑历史邮件：`reclassify --user <sub|邮箱> [--account <邮箱>] [--yes]`
   删除目标邮件关联的任务并把 LLM 状态重置为 pending，worker 下一轮同步按新规则重新分类。
+- 详情逻辑调整后重跑历史条目：`regen-details --user <sub|邮箱> [--account <邮箱>] [--yes]`
+  把目标条目（可限账户）的 `detail_md` 与 `related_json` 置 NULL，worker 下一轮按最新详情逻辑重新生成。
 
 ## 3. 同步策略
 
@@ -115,14 +117,23 @@ env：`LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` / `LLM_REASONING_EFFORT`（De
     重要度由 `importance` 承担，避免推测日期出错让人错过真正截止时间。
 - LLM 返回非法 JSON 时重试一次，仍失败则该邮件标记 `llm_error`，下轮重试，不阻塞队列。
 
-### 4.2 详情（worker 预生成 + 点开兜底）
+### 4.2 详情（agentic：先检索关联邮件再写详情；worker 预生成 + 点开兜底）
 
 基于邮件全文写中文详情，剔除客套话、签名档、免责声明、无关信息，
-保留关键事实/时间/链接/要求的动作。生成后缓存于 DB，打开直接读缓存。
+保留关键事实/时间/链接/要求的动作。生成前先走 agentic 循环（上限 8 轮，工具与
+AI 搜索同一套 `search_emails` / `read_emails`）：若邮件涉及来历不明的金额或退款、
+状态变化、异常标记（如成绩「未知」）、或是对之前某次通知的跟进，先翻阅该用户
+的其他邮件查清来龙去脉，只关联确实解释了本邮件的邮件；查到背景时在详情里写
+「## 背景」一节并点明结论来源邮件（主题 + 日期）。输出 JSON
+`{"detail_md": "...", "related": [{"email_id": int, "reason": "一句话原因"}]}`；
+`related` 不含当前邮件自身、只保留本人账户、去重且最多 10 条、reason ≤ 200 字，
+与 `detail_md` 一并落库（`related_json`，JSON 文本列）。历史任务不回填。
 
 生成时机：worker 每轮分类落库后，对 `detail_md` 为空的条目（本轮新建 + 历史回填）
-按新→旧逐条生成并提交；单条失败跳过，留待下轮重试。用户点开尚未生成的条目时，
-`POST /api/items/{id}/detail` 仍现场生成作为兜底。
+按新→旧逐条生成并提交；单条失败跳过，留待下轮重试；一条详情可能是多轮 LLM 调用。
+用户点开尚未生成的条目时，`POST /api/items/{id}/detail` 仍现场生成作为兜底。
+详情/关联逻辑调整后，`regen-details --user <sub|邮箱> [--account <邮箱>] [--yes]`
+可手动把该用户（可限账户）所有条目的详情与关联邮件置空，由 worker 下轮重新生成。
 
 ### 4.3 AI 搜索（全库问答）
 
@@ -150,6 +161,7 @@ emails(id, account_id→accounts, message_id, subject, sender, recipients, sent_
        UNIQUE(account_id, message_id)；FTS5 虚表 emails_fts(subject, sender, text_body) 由触发器同步
 items(id, email_id→emails UNIQUE, title, summary, category, due_date date|null,
       importance high|normal|low, actionable bool, status open|done, detail_md|null,
+      related_json|null（关联邮件 JSON 数组 [{"email_id": int, "reason": str}]）,
       created_at, done_at|null)
 ```
 
@@ -169,10 +181,13 @@ items(id, email_id→emails UNIQUE, title, summary, category, due_date date|null
 
 ```
 GET  /api/health                    公开存活探针
-GET  /api/items?status=&category=   条目列表（默认 open）
+GET  /api/items?status=&category=   条目列表（默认 open；每项含 related 关联邮件）
 PATCH /api/items/{id}               {"status": "done"|"open"}
-GET  /api/items/{id}                含 detail_md（可能为 null）
-POST /api/items/{id}/detail         生成并缓存详情，返回 detail_md
+GET  /api/items/{id}                含 detail_md（可能为 null）与 related
+POST /api/items/{id}/detail         生成并缓存详情与关联邮件（agentic，多轮 LLM），
+                                    返回 detail_md + related
+GET  /api/items/{id}/export         导出条目 Markdown 纯文本（AI 见解 + 当前邮件全文
+                                    + 关联邮件全文）；纯读、无 LLM 调用、不限流
 GET  /api/emails/{id}               元数据 + text_body + sanitized_html
 POST /api/search                    {"question"} → {"answer_md", "citations":[{email_id, subject, sent_at}]}
 GET  /api/status                    各账户健康（含 enabled 停用标记）+ 上次同步时间 + LLM 待处理数

@@ -91,6 +91,8 @@ class Item(Base):
     actionable: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     status: Mapped[str] = mapped_column(String(16), default="open", nullable=False)  # open|done
     detail_md: Mapped[str | None] = mapped_column(Text)
+    # 关联邮件 JSON 数组 [{"email_id": int, "reason": str}]，沿用 attachments_json 的 JSON 文本列惯例
+    related_json: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.now, server_default=func.now(), nullable=False
     )

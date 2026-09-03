@@ -1,4 +1,4 @@
-"""账户与用户 CLI：python -m app.cli accounts add/connect/auth-url/auth-code/list/set-password/remove、users list、reclassify。
+"""账户与用户 CLI：python -m app.cli accounts add/connect/auth-url/auth-code/list/set-password/remove、users list、reclassify、regen-details。
 
 账户管理只走命令行；Gmail 应用专用密码仅经 getpass 交互录入，绝不进命令行参数或日志。
 """
@@ -319,6 +319,27 @@ def _cmd_accounts_remove(args: argparse.Namespace, settings: Settings) -> None:
         )
 
 
+def _resolve_account_ids(session, user: User, account_email: str | None) -> list[int]:
+    """解析「用户 + 可选账户过滤」→ 账户 id 列表（reclassify / regen-details 共用）。
+
+    找不到指定账户 exit 2；该用户没有任何账户 exit 1。
+    """
+    account_stmt = select(Account.id).where(Account.user_sub == user.sub)
+    if account_email:
+        account = session.execute(
+            select(Account).where(Account.user_sub == user.sub, Account.email == account_email)
+        ).scalars().first()
+        if account is None:
+            print(f"错误：未找到账户 {account_email}（用户 {user.sub}）", file=sys.stderr)
+            sys.exit(2)
+        account_stmt = account_stmt.where(Account.id == account.id)
+    account_ids = session.execute(account_stmt).scalars().all()
+    if not account_ids:
+        print(f"用户 {user.sub} 没有账户", file=sys.stderr)
+        sys.exit(1)
+    return list(account_ids)
+
+
 def _cmd_reclassify(args: argparse.Namespace, settings: Settings) -> None:
     """重分类：删除目标邮件的任务并重置 LLM 状态，让 worker 下轮用新规则重跑。
 
@@ -329,19 +350,7 @@ def _cmd_reclassify(args: argparse.Namespace, settings: Settings) -> None:
     init_db(engine)
     with make_session_factory(engine)() as session:
         user = _resolve_user(session, args.user)
-        account_stmt = select(Account.id).where(Account.user_sub == user.sub)
-        if args.account:
-            account = session.execute(
-                select(Account).where(Account.user_sub == user.sub, Account.email == args.account)
-            ).scalars().first()
-            if account is None:
-                print(f"错误：未找到账户 {args.account}（用户 {user.sub}）", file=sys.stderr)
-                sys.exit(2)
-            account_stmt = account_stmt.where(Account.id == account.id)
-        account_ids = session.execute(account_stmt).scalars().all()
-        if not account_ids:
-            print(f"用户 {user.sub} 没有账户，无需重分类", file=sys.stderr)
-            sys.exit(1)
+        account_ids = _resolve_account_ids(session, user, args.account)
         n_emails = session.execute(
             select(func.count(Email.id)).where(Email.account_id.in_(account_ids))
         ).scalar() or 0
@@ -373,6 +382,44 @@ def _cmd_reclassify(args: argparse.Namespace, settings: Settings) -> None:
         print(
             f"已完成：{n_emails} 封邮件已重置为待分类，共删除 {n_items} 条任务。"
             "worker 将在下一轮同步时按新规则重新分类；"
+            "如需立即触发，可在部署目录运行 docker compose -f deploy/docker-compose.yml restart worker"
+        )
+
+
+def _cmd_regen_details(args: argparse.Namespace, settings: Settings) -> None:
+    """重生成详情：把该用户（可限账户）所有条目的 detail_md 与 related_json 置 NULL。
+
+    条目与邮件本体保留，worker 下轮按最新详情逻辑重新生成（历史任务不回填，
+    需要刷新时用本命令手动触发）。
+    """
+    engine = make_engine(settings.database_path)
+    init_db(engine)
+    with make_session_factory(engine)() as session:
+        user = _resolve_user(session, args.user)
+        account_ids = _resolve_account_ids(session, user, args.account)
+        n_items = session.execute(
+            select(func.count(Item.id))
+            .join(Email, Item.email_id == Email.id)
+            .where(Email.account_id.in_(account_ids))
+        ).scalar() or 0
+        print(f"将重置 {n_items} 条任务详情（detail_md 与关联邮件），worker 下轮重新生成")
+        if not args.yes:
+            print("确认请输入 yes：", end="", flush=True)
+            if sys.stdin.readline().strip() != "yes":
+                print("已取消，未做任何修改", file=sys.stderr)
+                sys.exit(1)
+        items = session.execute(
+            select(Item)
+            .join(Email, Item.email_id == Email.id)
+            .where(Email.account_id.in_(account_ids))
+        ).scalars().all()
+        for item in items:
+            item.detail_md = None
+            item.related_json = None
+        session.commit()
+        print(
+            f"已完成：{n_items} 条任务详情已标记为待重生成。"
+            "worker 将在下一轮同步时重新生成；"
             "如需立即触发，可在部署目录运行 docker compose -f deploy/docker-compose.yml restart worker"
         )
 
@@ -450,6 +497,14 @@ def main() -> None:
     reclassify.add_argument("--account", default=None, help="只重分类该邮箱账户；缺省为该用户全部账户")
     reclassify.add_argument("--yes", action="store_true", help="跳过确认（非交互调用）")
     reclassify.set_defaults(handler=_cmd_reclassify)
+
+    regen = sub.add_parser(
+        "regen-details", help="重生成详情：把该用户（或指定账户）所有任务条目的详情与关联邮件置空，worker 下轮重跑"
+    )
+    regen.add_argument("--user", required=True, help="用户 sub 或邮箱")
+    regen.add_argument("--account", default=None, help="只重置该邮箱账户；缺省为该用户全部账户")
+    regen.add_argument("--yes", action="store_true", help="跳过确认（非交互调用）")
+    regen.set_defaults(handler=_cmd_regen_details)
 
     args = parser.parse_args()
     args.handler(args, settings)
