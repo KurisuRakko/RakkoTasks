@@ -340,40 +340,72 @@ def _resolve_account_ids(session, user: User, account_email: str | None) -> list
     return list(account_ids)
 
 
+def _select_target_email_ids(session, account_ids: list[int], last: int | None) -> list[int]:
+    """选择要重分类的邮件 id 列表。
+
+    last 为 None：返回这些账户的全部邮件 id（保持既有语义）；
+    last 为正整数：对每个账户分别取最近的 last 封（sent_at 倒序、无时间的排最后，
+    同时间按 id 倒序），合并返回。
+    """
+    if last is None:
+        return list(
+            session.execute(select(Email.id).where(Email.account_id.in_(account_ids))).scalars().all()
+        )
+    ids: list[int] = []
+    for aid in account_ids:
+        ids.extend(
+            session.execute(
+                select(Email.id)
+                .where(Email.account_id == aid)
+                .order_by(Email.sent_at.desc().nulls_last(), Email.id.desc())
+                .limit(last)
+            ).scalars().all()
+        )
+    return ids
+
+
 def _cmd_reclassify(args: argparse.Namespace, settings: Settings) -> None:
     """重分类：删除目标邮件的任务并重置 LLM 状态，让 worker 下轮用新规则重跑。
 
     必须先删 item 再重置状态：items.email_id 有 UNIQUE 约束，item 不删的话，
     下轮 sync 重分类时插入同 email_id 的新 item 会撞唯一约束。
     """
+    last = getattr(args, "last", None)  # 直调方（测试）可能不带 last 属性
+    if last is not None and last <= 0:
+        print("错误：--last 必须是正整数", file=sys.stderr)
+        sys.exit(2)
     engine = make_engine(settings.database_path)
     init_db(engine)
     with make_session_factory(engine)() as session:
         user = _resolve_user(session, args.user)
         account_ids = _resolve_account_ids(session, user, args.account)
-        n_emails = session.execute(
-            select(func.count(Email.id)).where(Email.account_id.in_(account_ids))
-        ).scalar() or 0
+        email_ids = _select_target_email_ids(session, account_ids, last)
+        if not email_ids:
+            print("没有匹配的邮件", file=sys.stderr)
+            sys.exit(1)
+        n_emails = len(email_ids)
         n_items = session.execute(
-            select(func.count(Item.id))
-            .join(Email, Item.email_id == Email.id)
-            .where(Email.account_id.in_(account_ids))
+            select(func.count(Item.id)).where(Item.email_id.in_(email_ids))
         ).scalar() or 0
-        print(f"将重分类 {n_emails} 封邮件、删除 {n_items} 条任务（邮件本体保留）")
+        if last is None:
+            print(f"将重分类 {n_emails} 封邮件、删除 {n_items} 条任务（邮件本体保留）")
+        else:
+            print(
+                f"将重分类 {n_emails} 封邮件（每账户最近 {last} 封）、"
+                f"删除 {n_items} 条任务（邮件本体保留）"
+            )
         if not args.yes:
             print("确认请输入 yes：", end="", flush=True)
             if sys.stdin.readline().strip() != "yes":
                 print("已取消，未做任何修改", file=sys.stderr)
                 sys.exit(1)
         items = session.execute(
-            select(Item)
-            .join(Email, Item.email_id == Email.id)
-            .where(Email.account_id.in_(account_ids))
+            select(Item).where(Item.email_id.in_(email_ids))
         ).scalars().all()
         for item in items:
             session.delete(item)
         for email in session.execute(
-            select(Email).where(Email.account_id.in_(account_ids))
+            select(Email).where(Email.id.in_(email_ids))
         ).scalars().all():
             email.llm_state = "pending"
             email.filtered = False
@@ -495,6 +527,10 @@ def main() -> None:
     )
     reclassify.add_argument("--user", required=True, help="用户 sub 或邮箱")
     reclassify.add_argument("--account", default=None, help="只重分类该邮箱账户；缺省为该用户全部账户")
+    reclassify.add_argument(
+        "--last", type=int, default=None, metavar="N",
+        help="只重分类每个账户最近的 N 封邮件（按发送时间倒序，无时间的排最后）；缺省为全部",
+    )
     reclassify.add_argument("--yes", action="store_true", help="跳过确认（非交互调用）")
     reclassify.set_defaults(handler=_cmd_reclassify)
 

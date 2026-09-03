@@ -47,8 +47,9 @@ docs/       本文档等
 - 账户由 CLI 管理：`add` / `connect` / `list` / `remove`，每个账户归属某个用户
   （`--user <sub|邮箱>`）。Gmail 应用专用密码在 CLI 交互式录入（getpass，不回显、
   不进 shell history），明文存库、永不经 API 返回；不再走环境变量。
-- 过滤规则调整后重跑历史邮件：`reclassify --user <sub|邮箱> [--account <邮箱>] [--yes]`
-  删除目标邮件关联的任务并把 LLM 状态重置为 pending，worker 下一轮同步按新规则重新分类。
+- 过滤规则调整后重跑历史邮件：`reclassify --user <sub|邮箱> [--account <邮箱>] [--last N] [--yes]`
+  删除目标邮件关联的任务并把 LLM 状态重置为 pending，worker 下一轮同步按新规则重新分类；
+  加 `--last N` 时每个账户只处理最近 N 封邮件（按发送时间倒序，无发送时间的排最后），其余不动。
 - 详情逻辑调整后重跑历史条目：`regen-details --user <sub|邮箱> [--account <邮箱>] [--yes]`
   把目标条目（可限账户）的 `detail_md` 与 `related_json` 置 NULL，worker 下一轮按最新详情逻辑重新生成。
 
