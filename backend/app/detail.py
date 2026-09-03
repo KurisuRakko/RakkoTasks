@@ -83,27 +83,37 @@ def generate_item_detail(db: Session, llm: Any, item: Item, settings: Settings) 
     return detail_md, related
 
 
-def _resolve_candidate_related(db: Session, data: dict, owned_ids: list[int], *, exclude_id: int) -> list[dict]:
-    """把 LLM 输出的 related 数组过滤成可信条目：本人账户、非当前邮件、去重、限量。
+def _parse_related_entries(raw: Any) -> list[tuple[int, str]]:
+    """把「related」来源（LLM JSON 数组或落库 JSON 数组）解析成有序去重的 (email_id, reason) 列表。
 
-    任何一项不是 dict 或 email_id 不可转 int 都跳过——LLM 输出不可信，坏项
-    只丢弃不炸整条详情。
+    raw 非列表返回 []；任何一项不是 dict 或 email_id 不可转 int 都跳过——
+    来源不可信，坏项只丢弃不炸整条链路；reason 非字符串置 ""；重复 id 保留首个。
     """
-    wanted: list[tuple[int, str]] = []
+    if not isinstance(raw, list):
+        return []
+    out: list[tuple[int, str]] = []
     seen: set[int] = set()
-    for entry in data.get("related") or []:
+    for entry in raw:
         if not isinstance(entry, dict):
             continue
         try:
             email_id = int(entry.get("email_id"))
         except (TypeError, ValueError):
             continue
-        reason = entry.get("reason")
-        if not isinstance(reason, str):
-            reason = ""
-        if email_id == exclude_id or email_id in seen:
+        if email_id in seen:
             continue
         seen.add(email_id)
+        reason = entry.get("reason")
+        out.append((email_id, reason if isinstance(reason, str) else ""))
+    return out
+
+
+def _resolve_candidate_related(db: Session, data: dict, owned_ids: list[int], *, exclude_id: int) -> list[dict]:
+    """把 LLM 输出的 related 数组过滤成可信条目：本人账户、非当前邮件、去重、限量。"""
+    wanted: list[tuple[int, str]] = []
+    for email_id, reason in _parse_related_entries(data.get("related")):
+        if email_id == exclude_id:
+            continue
         wanted.append((email_id, strip_sentinels(reason)[:REASON_MAX]))
     if not wanted:
         return []
@@ -142,22 +152,7 @@ def resolve_related(db: Session, item: Item, owned_ids: list[int]) -> list[dict]
             raw = None
     else:
         raw = None
-    if not isinstance(raw, list):
-        return []
-    wanted: list[tuple[int, str]] = []
-    seen: set[int] = set()
-    for entry in raw:
-        if not isinstance(entry, dict):
-            continue
-        try:
-            email_id = int(entry.get("email_id"))
-        except (TypeError, ValueError):
-            continue
-        if email_id in seen:
-            continue
-        seen.add(email_id)
-        reason = entry.get("reason")
-        wanted.append((email_id, reason if isinstance(reason, str) else ""))
+    wanted = _parse_related_entries(raw)
     if not wanted:
         return []
     rows = db.execute(
@@ -205,12 +200,10 @@ def build_export_text(db: Session, item: Item, owned_ids: list[int]) -> str:
     if not related:
         lines.append("（无）")
     else:
-        bodies = {}
-        if related:
-            rows = db.execute(
-                select(Email).where(Email.id.in_([r["email_id"] for r in related]))
-            ).scalars().all()
-            bodies = {e.id: email_plain_text(e.text_body, e.html_body) for e in rows}
+        rows = db.execute(
+            select(Email).where(Email.id.in_([r["email_id"] for r in related]))
+        ).scalars().all()
+        bodies = {e.id: email_plain_text(e.text_body, e.html_body) for e in rows}
         for index, r in enumerate(related, start=1):
             lines.append(f"### {index}. {r['subject']}")
             lines.append(f"关联原因：{r['reason']}")

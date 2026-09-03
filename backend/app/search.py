@@ -7,7 +7,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.agent import TOOLS, _build_index, _owned_account_ids, run_tool_loop
+from app.agent import _build_index, _owned_account_ids, run_tool_loop
 from app.config import Settings, get_settings
 from app.models import Account, Email
 from app.promptguard import strip_markdown_media, wrap_untrusted

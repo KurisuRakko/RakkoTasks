@@ -18,12 +18,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.auth import CurrentUser, require_auth
 from app.config import Settings, get_settings
 from app.db import init_db, make_engine, make_session_factory
-from app.detail import (
-    apply_detail,
-    build_export_text,
-    generate_item_detail as agent_generate_item_detail,
-    resolve_related,
-)
+from app.detail import apply_detail, build_export_text, generate_item_detail, resolve_related
 from app.models import Account, Email, Item
 from app.ratelimit import RateLimiter
 from app.sanitizer import build_email_document
@@ -173,7 +168,7 @@ def create_app(
         return _item_dict(item, resolve_related(db, item, _owned_account_ids(db, user.sub)))
 
     @app.post("/api/items/{item_id}/detail")
-    def generate_item_detail(
+    def generate_detail_endpoint(
         item_id: int, user: CurrentUser = Depends(require_auth), db: Session = Depends(_get_db)
     ) -> dict:
         item = _owned_item(db, item_id, user.sub)
@@ -185,7 +180,7 @@ def create_app(
             from app.llm import get_llm  # 延迟导入，便于测试 monkeypatch
 
             try:
-                md, related = agent_generate_item_detail(db, get_llm(settings), item, settings)
+                md, related = generate_item_detail(db, get_llm(settings), item, settings)
             except Exception as exc:
                 logger.exception("生成详情失败 item_id=%s", item_id)
                 raise HTTPException(status_code=502, detail={"code": "llm_error"}) from exc
