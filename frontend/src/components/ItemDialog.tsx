@@ -1,4 +1,5 @@
-// 条目详情 Dialog：元信息 + AI 详情（懒生成）+ 「显示原邮件」展开 EmailViewer。
+// 条目详情 Dialog：元信息 + AI 详情（懒生成）+ 关联邮件（点击展开 EmailViewer）
+// + 底部「显示原邮件/复制给 AI」（复制产物为 Markdown 纯文本，供粘贴给 AI）。
 // 移动端全屏、桌面端限宽（md），带向上滑入过渡。
 
 import type { ReactElement } from 'react';
@@ -10,18 +11,25 @@ import Chip from '@mui/material/Chip';
 import Dialog from '@mui/material/Dialog';
 import Divider from '@mui/material/Divider';
 import IconButton from '@mui/material/IconButton';
+import List from '@mui/material/List';
+import ListItem from '@mui/material/ListItem';
+import ListItemButton from '@mui/material/ListItemButton';
+import ListItemText from '@mui/material/ListItemText';
 import Skeleton from '@mui/material/Skeleton';
 import Slide from '@mui/material/Slide';
+import Snackbar from '@mui/material/Snackbar';
 import Stack from '@mui/material/Stack';
 import Toolbar from '@mui/material/Toolbar';
 import Typography from '@mui/material/Typography';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import { useTheme } from '@mui/material/styles';
 import CloseIcon from '@mui/icons-material/Close';
+import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import EmailIcon from '@mui/icons-material/Email';
-import { fetchEmail, fetchItemDetail, fetchStatus } from '../lib/api';
+import { fetchEmail, fetchItemDetail, fetchItemExport, fetchStatus } from '../lib/api';
+import { copyText } from '../lib/clipboard';
 import { formatDueDate } from '../lib/grouping';
-import type { AccountInfo, Email, Item } from '../types';
+import type { AccountInfo, Email, Item, RelatedEmail } from '../types';
 import EmailViewer from './EmailViewer';
 import SafeMarkdown from './SafeMarkdown';
 import type { TransitionProps } from '@mui/material/transitions';
@@ -38,11 +46,17 @@ const SlideUp = forwardRef<HTMLDivElement, TransitionProps & { children: ReactEl
 
 export default function ItemDialog({ item, onClose }: Props) {
   const [detail, setDetail] = useState<string | null>(item.detail_md);
+  // 关联邮件优先用条目自带数据；详情懒生成成功后以后端返回的为准
+  const [related, setRelated] = useState<RelatedEmail[]>(item.related ?? []);
+  // 同一时间只展开一封关联邮件；null 表示全部收起
+  const [openRelatedId, setOpenRelatedId] = useState<number | null>(null);
   const [detailLoading, setDetailLoading] = useState(item.detail_md === null);
   const [detailError, setDetailError] = useState(false);
   const [email, setEmail] = useState<Email | null>(null);
   const [accounts, setAccounts] = useState<AccountInfo[]>([]);
   const [showEmail, setShowEmail] = useState(false);
+  const [copying, setCopying] = useState(false);
+  const [snack, setSnack] = useState<string | null>(null);
 
   const theme = useTheme();
   // 移动端全屏、桌面端限宽对话框
@@ -54,9 +68,10 @@ export default function ItemDialog({ item, onClose }: Props) {
     if (detail === null && !detailError) {
       setDetailLoading(true);
       fetchItemDetail(item.id)
-        .then((md) => {
+        .then((r) => {
           if (alive) {
-            setDetail(md);
+            setDetail(r.detail_md);
+            setRelated(r.related);
             setDetailLoading(false);
           }
         })
@@ -86,6 +101,15 @@ export default function ItemDialog({ item, onClose }: Props) {
   const accountName = email
     ? accounts.find((a) => a.id === email.account_id)?.name
     : undefined;
+
+  const handleCopyToAI = () => {
+    setCopying(true);
+    // 导出内容可能较大，由 copyText 在用户手势内发起请求再写剪贴板
+    copyText(() => fetchItemExport(item.id))
+      .then(() => setSnack('已复制到剪贴板'))
+      .catch(() => setSnack('复制失败'))
+      .finally(() => setCopying(false));
+  };
 
   return (
     <Dialog
@@ -157,21 +181,73 @@ export default function ItemDialog({ item, onClose }: Props) {
             暂无详情
           </Typography>
         )}
+        {related.length > 0 && (
+          <>
+            <Typography variant="subtitle2" gutterBottom sx={{ mt: 1 }}>
+              关联邮件
+            </Typography>
+            <List dense disablePadding>
+              {related.map((r) => {
+                const open = openRelatedId === r.email_id;
+                return (
+                  <ListItem
+                    key={r.email_id}
+                    disablePadding
+                    sx={{ flexDirection: 'column', alignItems: 'stretch' }}
+                  >
+                    <ListItemButton
+                      onClick={() => setOpenRelatedId(open ? null : r.email_id)}
+                    >
+                      <ListItemText
+                        primary={r.subject}
+                        secondary={[r.sent_at ? r.sent_at.slice(0, 10) : '', r.reason]
+                          .filter(Boolean)
+                          .join(' · ')}
+                      />
+                    </ListItemButton>
+                    {open && (
+                      <Box sx={{ mt: 1 }}>
+                        <EmailViewer emailId={r.email_id} />
+                      </Box>
+                    )}
+                  </ListItem>
+                );
+              })}
+            </List>
+          </>
+        )}
         <Divider sx={{ my: 1.5 }} />
-        <Button
-          fullWidth
-          variant="outlined"
-          startIcon={<EmailIcon />}
-          onClick={() => setShowEmail((v) => !v)}
-        >
-          {showEmail ? '收起原邮件' : '显示原邮件'}
-        </Button>
+        <Stack direction="row" spacing={1}>
+          <Button
+            variant="outlined"
+            startIcon={<EmailIcon />}
+            sx={{ flex: 1 }}
+            onClick={() => setShowEmail((v) => !v)}
+          >
+            {showEmail ? '收起原邮件' : '显示原邮件'}
+          </Button>
+          <Button
+            variant="outlined"
+            startIcon={<ContentCopyIcon />}
+            sx={{ flex: 1 }}
+            disabled={detailLoading || copying}
+            onClick={handleCopyToAI}
+          >
+            复制给 AI
+          </Button>
+        </Stack>
         {showEmail && (
           <Box sx={{ mt: 1.5 }}>
             <EmailViewer emailId={item.email_id} />
           </Box>
         )}
       </Box>
+      <Snackbar
+        open={snack !== null}
+        autoHideDuration={3000}
+        onClose={() => setSnack(null)}
+        message={snack}
+      />
     </Dialog>
   );
 }

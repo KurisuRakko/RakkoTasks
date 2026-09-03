@@ -9,6 +9,7 @@ import type {
   Item,
   ItemsResponse,
   ItemStatus,
+  RelatedEmail,
   SearchResponse,
   StatusResponse,
 } from '../types';
@@ -48,12 +49,22 @@ export async function patchItem(id: number, patch: { status: ItemStatus }): Prom
   return (await res.json()) as Item;
 }
 
-/** POST /api/items/{id}/detail 生成并缓存详情，返回 detail_md */
-export async function fetchItemDetail(id: number): Promise<string | null> {
+/** POST /api/items/{id}/detail 生成并缓存详情；返回详情与检索到的关联邮件 */
+export async function fetchItemDetail(id: number): Promise<{
+  detail_md: string | null;
+  related: RelatedEmail[];
+}> {
   const res = await authedFetch(`${API_BASE}/items/${id}/detail`, { method: 'POST' });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const data = (await res.json()) as { detail_md: string | null };
-  return data.detail_md;
+  return (await res.json()) as { detail_md: string | null; related: RelatedEmail[] };
+}
+
+/** GET /api/items/{id}/export 生成可粘贴给 AI 的 Markdown 纯文本 */
+export async function fetchItemExport(id: number): Promise<string> {
+  const res = await authedFetch(`${API_BASE}/items/${id}/export`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = (await res.json()) as { text: string };
+  return data.text;
 }
 
 /** GET /api/emails/{id}；remoteImages 时附 ?remote_images=1（放行远程图片重渲染） */

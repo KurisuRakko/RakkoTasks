@@ -28,6 +28,8 @@ export interface Item {
   status: ItemStatus;
   /** AI 生成详情，懒生成，可能为 null */
   detail_md: string | null;
+  /** AI 详情生成时检索到的关联邮件（可为空数组） */
+  related: RelatedEmail[];
   created_at: string;
   done_at: string | null;
 }
@@ -42,6 +44,15 @@ export interface Email {
   sent_at: string | null;
   text_body: string | null;
   html: string | null;
+}
+
+/** AI 详情生成时检索到的关联邮件 */
+export interface RelatedEmail {
+  email_id: number;
+  subject: string;
+  sender: string | null;
+  sent_at: string | null;
+  reason: string;
 }
 
 /** 账户类型 */
