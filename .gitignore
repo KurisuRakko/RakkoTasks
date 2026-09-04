@@ -13,3 +13,4 @@ data/
 coverage/
 .pytest_cache/
 *.egg-info/
+.claude/
