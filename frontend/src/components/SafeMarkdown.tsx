@@ -8,6 +8,7 @@
 // 3. 链接统一 target="_blank" + rel="noopener noreferrer nofollow"，
 //    需用户主动点击，风险可接受，保留其实用价值。
 import ReactMarkdown from 'react-markdown';
+import remarkBreaks from 'remark-breaks';
 
 /** 只放行 http/https/mailto 与站内相对路径；其余协议一律丢弃（返回空串）。 */
 function safeUrlTransform(url: string): string {
@@ -20,11 +21,15 @@ function safeUrlTransform(url: string): string {
 
 interface Props {
   children: string;
+  /** 为 true 时单个换行渲染为 <br>（手动条目详情是纯文本，需要保留换行）；
+   *   breaks 只影响换行，不放宽任何 URL/元素限制。 */
+  breaks?: boolean;
 }
 
-export default function SafeMarkdown({ children }: Props) {
+export default function SafeMarkdown({ children, breaks = false }: Props) {
   return (
     <ReactMarkdown
+      remarkPlugins={breaks ? [remarkBreaks] : undefined}
       disallowedElements={['img']}
       unwrapDisallowed
       urlTransform={safeUrlTransform}

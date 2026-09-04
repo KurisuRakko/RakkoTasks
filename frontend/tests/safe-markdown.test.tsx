@@ -48,6 +48,18 @@ describe('SafeMarkdown 渲染', () => {
     expect(container.textContent).toContain('加粗');
     expect(container.querySelector('strong')).not.toBeNull();
   });
+
+  it('breaks=true 时单个换行渲染为 <br>', () => {
+    const { container } = render(<SafeMarkdown breaks>{'a\nb'}</SafeMarkdown>);
+    expect(container.querySelector('br')).not.toBeNull();
+    expect(container.textContent).toContain('a');
+    expect(container.textContent).toContain('b');
+  });
+
+  it('默认（breaks 未开）单个换行不渲染 <br>', () => {
+    const { container } = render(<SafeMarkdown>{'a\nb'}</SafeMarkdown>);
+    expect(container.querySelector('br')).toBeNull();
+  });
 });
 
 describe('react-markdown 使用范围', () => {

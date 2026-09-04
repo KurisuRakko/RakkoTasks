@@ -2,7 +2,7 @@
 // fetch 按 URL 分发 mock：/detail、/emails/、/status、/export。
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import ItemDialog from '../src/components/ItemDialog';
 import type { Item } from '../src/types';
 
@@ -161,6 +161,92 @@ describe('ItemDialog', () => {
     resolveDetail(json(DETAIL_RESPONSE));
     await waitFor(() => {
       expect(copyButton()).toBeEnabled();
+    });
+  });
+});
+
+describe('ItemDialog 手动条目（email_id 为 null）', () => {
+  it('不请求 detail/email，summary 两行都渲染；无 AI 详情/原邮件区；有编辑与删除按钮', async () => {
+    const fetchMock = vi.fn(async (_url: string | URL) => json({}, 404));
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(
+      <ItemDialog
+        item={makeItem({
+          id: 7,
+          email_id: null,
+          title: '手动任务',
+          summary: '第一行\n第二行',
+          category: '个人',
+          due_date: '2026-09-10',
+        })}
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(await screen.findByText('手动任务')).toBeTruthy();
+
+    // 手动条目专属操作按钮
+    expect(screen.getByRole('button', { name: '编辑' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '删除' })).toBeTruthy();
+
+    // 邮件条目专属内容一律不出现
+    expect(screen.queryByText('AI 详情')).toBeNull();
+    expect(screen.queryByText('显示原邮件')).toBeNull();
+    expect(screen.queryByText('关联邮件')).toBeNull();
+    expect(screen.queryByText('来源账户：…')).toBeNull();
+
+    // summary 两行都渲染出来（SafeMarkdown breaks 保留换行）
+    const dialog = screen.getAllByRole('dialog')[0];
+    expect(dialog.textContent).toContain('第一行');
+    expect(dialog.textContent).toContain('第二行');
+
+    // 不请求 /detail（AI 详情懒生成）与 /emails/（原邮件）
+    const calls = fetchMock.mock.calls.map(([u]) => String(u));
+    expect(calls.some((u) => u.includes('/detail'))).toBe(false);
+    expect(calls.some((u) => u.includes('/emails/'))).toBe(false);
+  });
+
+  it('邮件条目（email_id 非 null）不出现编辑/删除按钮', async () => {
+    vi.stubGlobal('fetch', makeFetchMock());
+
+    render(<ItemDialog item={makeItem({})} onClose={vi.fn()} />);
+    await screen.findByText('退款来源');
+
+    expect(screen.queryByRole('button', { name: '编辑' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '删除' })).toBeNull();
+  });
+
+  it('删除：确认框点「删除」后 DELETE /api/items/{id}，onDeleted 收到 id、onClose 被调', async () => {
+    const fetchMock = vi.fn(async (url: string | URL, init?: RequestInit) => {
+      const u = String(url);
+      if (init?.method === 'DELETE' && u === '/api/items/7') {
+        return new Response(null, { status: 204 });
+      }
+      return json({}, 404);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const onDeleted = vi.fn();
+    const onClose = vi.fn();
+
+    render(
+      <ItemDialog
+        item={makeItem({ id: 7, email_id: null, title: '待删任务' })}
+        onClose={onClose}
+        onDeleted={onDeleted}
+      />,
+    );
+
+    // 打开删除确认框
+    fireEvent.click(await screen.findByRole('button', { name: '删除' }));
+    const prompt = await screen.findByText('删除这条任务？此操作不可撤销。');
+    const confirmDialog = prompt.closest('[role="dialog"]') as HTMLElement;
+    fireEvent.click(within(confirmDialog).getByRole('button', { name: '删除' }));
+
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.some(([, init]) => init?.method === 'DELETE')).toBe(true);
+      expect(onDeleted).toHaveBeenCalledWith(7);
+      expect(onClose).toHaveBeenCalled();
     });
   });
 });

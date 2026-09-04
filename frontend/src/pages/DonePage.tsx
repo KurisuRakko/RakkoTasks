@@ -119,7 +119,14 @@ export default function DonePage() {
           })}
         </List>
       )}
-      {editing && <ItemDialog item={editing} onClose={() => setEditing(null)} />}
+      {editing && (
+        <ItemDialog
+          item={editing}
+          onClose={() => setEditing(null)}
+          onChanged={(it) => setItems((p) => p.map((i) => (i.id === it.id ? it : i)))}
+          onDeleted={(id) => setItems((p) => p.filter((i) => i.id !== id))}
+        />
+      )}
       <Snackbar
         open={snack !== null}
         autoHideDuration={3000}
