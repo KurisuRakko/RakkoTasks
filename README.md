@@ -1,65 +1,92 @@
+<p align="right"><strong>English</strong>&nbsp;|&nbsp;<a href="README.zh-CN.md"><kbd>中文</kbd></a></p>
+
 # RakkoTasks
 
-**把邮箱变成待办清单。** RakkoTasks 是一个自托管的个人任务系统：它定时从你的多个邮箱拉取邮件，
-用大语言模型过滤掉广告与噪音，把真正需要你行动的邮件提炼成一条条中文待办（标题、摘要、分类、
-截止日期、重要度），然后在手机或电脑的网页上勾选管理。你也可以手动添加待办，并把所有有截止日的
-任务订阅到系统日历里。
+**Turn your inbox into a to-do list.** RakkoTasks is a self-hosted personal task system.
+It periodically pulls mail from several mailboxes, uses a large language model to filter out
+advertising and noise, and distills the emails that actually need your attention into to-do
+items with a title, summary, category, due date and importance. You manage them from a web app
+on your phone or desktop. You can also add tasks by hand, and subscribe to every dated task
+from your system calendar.
 
-它面向的是这样一个场景：学校通知、账单提醒、工作邮件和个人邮件散落在四个邮箱里，
-每天真正需要做的事就藏在几百封邮件中间。RakkoTasks 负责把它们挑出来、排好序、等你处理。
+It was built for a specific problem: school notices, bills, work mail and personal mail spread
+across four mailboxes, with the handful of things you actually have to do today buried among
+hundreds of messages. RakkoTasks digs them out, orders them, and waits for you.
 
-## 功能
+## Features
 
-- **邮件驱动的待办**：每 15 分钟增量同步 Outlook / Microsoft 365（OAuth2 + XOAUTH2）与 Gmail（应用专用密码）邮箱，
-  LLM 判断哪些邮件是需要行动的任务，生成中文标题、摘要、分类（学业 / 工作 / 个人 / 账单 / 其他）、截止日期与重要度。
-- **按时间分组**：任务页按「今天 / 本周 / 重要 / 无期限」分组，逾期标红；源邮件是今天发来的条目左侧显示小蓝点，过了当天自动消失。
-- **手动待办**：右下角 `+` 直接记一条任务，第一行是标题、其余行是详情，可选分类与截止日期；手动条目可随时编辑或删除。
-- **AI 详情**：点开任务时，模型会翻阅你的其他邮件找背景（比如同一件事的前几封通知），写出详情并列出关联邮件，可一键「复制给 AI」继续追问。
-- **AI 搜索**：对整个邮件库自然语言提问，回答带邮件引用，基于 SQLite FTS5 全文检索。
-- **日历订阅**：每个用户一条带密钥的 iCalendar 订阅链接，有截止日的未完成任务以全天事件出现在系统日历里，完成后自动消失，截止日当天 10:00 提醒。iPhone 可一键 `webcal://` 订阅。
-- **原邮件查看**：在任务里直接看原邮件，HTML 经服务端消毒并在沙箱 iframe 中渲染，远程图片默认不加载。
-- **多用户**：通过自建的 Phainon 鉴权服务登录，每个用户只看到自己的邮箱、邮件与任务。
-- **PWA**：可添加到手机主屏，深浅色跟随系统。
+- **Email-driven tasks.** Every 15 minutes it incrementally syncs Outlook / Microsoft 365
+  (OAuth2 + XOAUTH2) and Gmail (app password) mailboxes. The LLM decides which emails are
+  actionable and produces a title, summary, category (Study / Work / Personal / Bills / Other),
+  due date and importance.
+- **Grouped by time.** The task page groups items into Today / This week / Important / No deadline.
+  Overdue items are highlighted, and items whose source email arrived today show a small blue dot
+  that disappears the next day.
+- **Manual tasks.** Tap the `+` button to jot down a task: the first line is the title, the rest
+  is the description, with optional category and due date. Manual tasks can be edited or deleted
+  at any time.
+- **AI details.** When you open a task, the model reads your other emails for background (for
+  example earlier notices about the same matter), writes up the details and lists the related
+  emails. One tap copies everything as Markdown to paste into an AI chat.
+- **AI search.** Ask questions about your whole mail archive in natural language. Answers cite
+  the emails they came from, backed by SQLite FTS5 full-text search.
+- **Calendar subscription.** Each user gets a tokenised iCalendar feed. Open tasks with a due
+  date appear as all-day events in your system calendar, vanish when completed, and remind you
+  at 10:00 on the due date. On iPhone the feed can be added with one tap via `webcal://`.
+- **Original email view.** Read the original email inside the task. HTML is sanitised on the
+  server and rendered in a sandboxed iframe; remote images are blocked by default.
+- **Multi-user.** Sign-in is handled by Phainon, the author's own authentication service. Each
+  user sees only their own mailboxes, emails and tasks.
+- **PWA.** Add it to your home screen; light and dark themes follow the system.
 
-## 工作原理
+## How it works
 
 ```
-邮箱 (IMAP) ──► worker 定时同步 ──► SQLite (WAL + FTS5)
-                      │                     ▲
-                      ▼                     │
-                 LLM 过滤/提炼          FastAPI 后端 ◄──► React 前端 (PWA)
-                                            │
-                                    iCalendar 订阅 / AI 搜索
+Mailboxes (IMAP) ──► worker (periodic sync) ──► SQLite (WAL + FTS5)
+                          │                          ▲
+                          ▼                          │
+                  LLM filter / distil          FastAPI backend ◄──► React frontend (PWA)
+                                                     │
+                                          iCalendar feed / AI search
 ```
 
-- `backend/`：FastAPI 应用、同步 worker、LLM 管线、命令行管理工具（添加邮箱、重分类等）。
-- `frontend/`：React + TypeScript 单页应用，构建产物由后端同源托管。
-- `deploy/`：Docker Compose 与 Cloudflare Tunnel 的生产部署。
-- 全部架构与设计决策见 [docs/DESIGN.md](docs/DESIGN.md)。
+- `backend/`: FastAPI application, sync worker, LLM pipeline and the command-line admin tool
+  (add mailboxes, reclassify, and so on).
+- `frontend/`: React + TypeScript single-page app; the build output is served by the backend on
+  the same origin.
+- `deploy/`: production deployment with Docker Compose and Cloudflare Tunnel.
+- The full architecture and every design decision is documented in
+  [docs/DESIGN.md](docs/DESIGN.md) (Chinese).
 
-### 关于安全
+### A note on security
 
-LLM 会阅读不可信的邮件正文，因此存在提示注入的风险。RakkoTasks 在模型输入侧做了注入检测，
-在输出侧剥离所有会自动发起外部请求的 Markdown 元素（如图片），前端渲染层再做一次白名单过滤，
-避免攻击者借邮件诱导模型把你的数据带出去。原邮件 HTML 一律经服务端消毒后在沙箱中显示。
-细节见 [docs/DESIGN.md](docs/DESIGN.md) 第 7 节。
+The LLM reads untrusted email bodies, which opens the door to prompt injection. RakkoTasks
+screens model input for injection attempts, strips every Markdown element that would trigger an
+automatic outbound request (such as images) from model output, and applies an allow-list once
+more in the frontend renderer, so an attacker cannot use a crafted email to make the model leak
+your data. Original email HTML is always sanitised on the server and displayed in a sandbox.
+See section 7 of [docs/DESIGN.md](docs/DESIGN.md).
 
-## 快速开始
+## Quick start
 
-三行式指引（前置条件、Phainon 应用注册、Cloudflare Tunnel 等完整步骤见
-[deploy/README.md](deploy/README.md)）：
+Three steps. Prerequisites, Phainon app registration, Cloudflare Tunnel setup and the complete
+walkthrough are in [deploy/README.md](deploy/README.md) (Chinese).
 
-1. 填配置：`cp deploy/.env.example .env`，填写 `LLM_API_KEY`、`TUNNEL_TOKEN` 等项。
-2. 启动：`docker compose -f deploy/docker-compose.yml up -d --build`
-   （web + worker + cloudflared 三个服务，公网经隧道走 HTTPS）。
-3. 首次接入邮箱：先在网页上登录一次（后端自动建用户记录），再用
-   `docker compose -f deploy/docker-compose.yml run --rm web python -m app.cli users list`
-   查到自己的 sub，然后 `python -m app.cli accounts add --user <sub> --kind gmail --name Gmail --email you@gmail.com`
-   添加 Gmail（按提示交互式输入应用专用密码）；Outlook 账户分别执行
-   `accounts connect --user <sub> <email>` 完成设备码授权。完整步骤见
-   [deploy/README.md](deploy/README.md) 第 6 节。
+1. Configure: `cp deploy/.env.example .env` and fill in `LLM_API_KEY`, `TUNNEL_TOKEN` and the
+   other values.
+2. Start: `docker compose -f deploy/docker-compose.yml up -d --build`
+   (three services: web, worker and cloudflared; public traffic reaches the app over HTTPS
+   through the tunnel).
+3. Connect mailboxes: sign in once on the web app so the backend creates your user record, then
+   look up your subject id with
+   `docker compose -f deploy/docker-compose.yml run --rm web python -m app.cli users list`.
+   Add Gmail with
+   `python -m app.cli accounts add --user <sub> --kind gmail --name Gmail --email you@gmail.com`
+   (you will be prompted for the app password), and connect each Outlook account with
+   `accounts connect --user <sub> <email>` to complete the OAuth device-code flow. Full details are
+   in section 6 of [deploy/README.md](deploy/README.md).
 
-### 本地开发
+### Local development
 
 ```bash
 cd backend && python3 -m venv .venv && .venv/bin/pip install -e '.[dev]' && .venv/bin/python -m pytest -q
@@ -69,43 +96,45 @@ cd backend && python3 -m venv .venv && .venv/bin/pip install -e '.[dev]' && .ven
 cd frontend && npm ci && npm run typecheck && npx vitest run && npm run build
 ```
 
-## 致谢与使用的开源软件
+## Acknowledgements and open-source software
 
-RakkoTasks 站在许多开源项目的肩膀上。以下按用途列出，感谢这些项目的作者与维护者。
+RakkoTasks stands on the shoulders of many open-source projects. They are listed here by purpose,
+with thanks to their authors and maintainers.
 
 ### Mozilla Thunderbird
 
-接入 Outlook / Microsoft 365 邮箱时，默认使用的 Microsoft OAuth 客户端标识
-`9e5f94bc-e8a4-4e73-b8be-63364c29d753` 是 [Mozilla Thunderbird](https://www.thunderbird.net/)
-向微软注册的公共客户端。这与 Thunderbird 自身访问 IMAP 时所用的是同一个标识，
-也是目前个人用户不注册 Azure 应用就能用 OAuth2 访问 Outlook IMAP 的通行做法。
-RakkoTasks 不包含 Thunderbird 的任何代码；如果你希望使用自己注册的 Azure 应用，
-可以在添加账户时用 `--client-id` 覆盖。Thunderbird 以 MPL 2.0 许可发布。
+When connecting Outlook / Microsoft 365 mailboxes, the default Microsoft OAuth client identifier
+`9e5f94bc-e8a4-4e73-b8be-63364c29d753` is the public client that
+[Mozilla Thunderbird](https://www.thunderbird.net/) registered with Microsoft. It is the same
+identifier Thunderbird itself uses for IMAP access, and it is the established way for an
+individual to reach Outlook IMAP over OAuth2 without registering an Azure application.
+RakkoTasks contains no Thunderbird code. If you prefer your own Azure app registration, pass
+`--client-id` when adding the account. Thunderbird is released under the MPL 2.0.
 
-### 后端
+### Backend
 
-- [FastAPI](https://fastapi.tiangolo.com/) 与 [Uvicorn](https://www.uvicorn.org/)：HTTP 服务
-- [SQLAlchemy](https://www.sqlalchemy.org/)：ORM 与数据库访问
-- [SQLite](https://www.sqlite.org/) 及其 FTS5 扩展：存储与全文检索
-- [Pydantic](https://docs.pydantic.dev/) 与 pydantic-settings：数据校验与配置
-- [MSAL for Python](https://github.com/AzureAD/microsoft-authentication-library-for-python)：Microsoft OAuth2 设备码流程与令牌缓存
-- [nh3](https://github.com/messense/nh3)（基于 [ammonia](https://github.com/rust-ammonia/ammonia)）：邮件 HTML 消毒
-- [openai-python](https://github.com/openai/openai-python)：OpenAI 兼容接口的 LLM 客户端（默认对接 DeepSeek）
-- [httpx](https://www.python-httpx.org/)：HTTP 客户端
-- 测试：[pytest](https://pytest.org/)、pytest-asyncio、[respx](https://lundberg.github.io/respx/)
+- [FastAPI](https://fastapi.tiangolo.com/) and [Uvicorn](https://www.uvicorn.org/): HTTP server
+- [SQLAlchemy](https://www.sqlalchemy.org/): ORM and database access
+- [SQLite](https://www.sqlite.org/) with the FTS5 extension: storage and full-text search
+- [Pydantic](https://docs.pydantic.dev/) and pydantic-settings: validation and configuration
+- [MSAL for Python](https://github.com/AzureAD/microsoft-authentication-library-for-python): Microsoft OAuth2 device-code flow and token cache
+- [nh3](https://github.com/messense/nh3) (built on [ammonia](https://github.com/rust-ammonia/ammonia)): email HTML sanitisation
+- [openai-python](https://github.com/openai/openai-python): LLM client for OpenAI-compatible APIs (DeepSeek by default)
+- [httpx](https://www.python-httpx.org/): HTTP client
+- Testing: [pytest](https://pytest.org/), pytest-asyncio, [respx](https://lundberg.github.io/respx/)
 
-### 前端
+### Frontend
 
-- [React](https://react.dev/) 与 [React Router](https://reactrouter.com/)
-- [MUI](https://mui.com/)（Material UI）与 [Emotion](https://emotion.sh/)：组件与样式
-- [react-markdown](https://github.com/remarkjs/react-markdown) 与 [remark-breaks](https://github.com/remarkjs/remark-breaks)：Markdown 渲染
-- [Vite](https://vite.dev/)、[vite-plugin-pwa](https://vite-pwa-org.netlify.app/) 与 [Workbox](https://developer.chrome.com/docs/workbox)：构建与 PWA
+- [React](https://react.dev/) and [React Router](https://reactrouter.com/)
+- [MUI](https://mui.com/) (Material UI) and [Emotion](https://emotion.sh/): components and styling
+- [react-markdown](https://github.com/remarkjs/react-markdown) and [remark-breaks](https://github.com/remarkjs/remark-breaks): Markdown rendering
+- [Vite](https://vite.dev/), [vite-plugin-pwa](https://vite-pwa-org.netlify.app/) and [Workbox](https://developer.chrome.com/docs/workbox): build tooling and PWA
 - [TypeScript](https://www.typescriptlang.org/)
-- 测试：[Vitest](https://vitest.dev/)、[Testing Library](https://testing-library.com/)、[jsdom](https://github.com/jsdom/jsdom)
+- Testing: [Vitest](https://vitest.dev/), [Testing Library](https://testing-library.com/), [jsdom](https://github.com/jsdom/jsdom)
 
-### 部署
+### Deployment
 
-- [Docker](https://www.docker.com/) 与 Docker Compose
-- [cloudflared](https://github.com/cloudflare/cloudflared)：Cloudflare Tunnel 客户端
+- [Docker](https://www.docker.com/) and Docker Compose
+- [cloudflared](https://github.com/cloudflare/cloudflared): Cloudflare Tunnel client
 
-鉴权服务 Phainon 为作者自建的基础设施，不属于本仓库。
+The authentication service, Phainon, is the author's own infrastructure and is not part of this repository.
