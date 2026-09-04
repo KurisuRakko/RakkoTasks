@@ -4,9 +4,11 @@
 import { authedFetch } from './phainon';
 import { API_BASE_URL } from './env';
 import type {
+  CalendarTokenResponse,
   Category,
   Email,
   Item,
+  ItemFields,
   ItemsResponse,
   ItemStatus,
   RelatedEmail,
@@ -38,8 +40,11 @@ export async function fetchItem(id: number): Promise<Item> {
   return (await res.json()) as Item;
 }
 
-/** PATCH /api/items/{id} {"status": "done"|"open"} */
-export async function patchItem(id: number, patch: { status: ItemStatus }): Promise<Item> {
+/** PATCH /api/items/{id}：手动条目可改 title/summary/category/due_date，任意条目可改 status */
+export async function patchItem(
+  id: number,
+  patch: Partial<ItemFields> & { status?: ItemStatus },
+): Promise<Item> {
   const res = await authedFetch(`${API_BASE}/items/${id}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
@@ -47,6 +52,46 @@ export async function patchItem(id: number, patch: { status: ItemStatus }): Prom
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return (await res.json()) as Item;
+}
+
+/** POST /api/items 新建手动条目；成功 201 + 完整 Item */
+export async function createItem(fields: ItemFields): Promise<Item> {
+  const res = await authedFetch(`${API_BASE}/items`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(fields),
+  });
+  if (res.status !== 201) throw new Error(`HTTP ${res.status}`);
+  return (await res.json()) as Item;
+}
+
+/** DELETE /api/items/{id} 删除手动条目；成功 204 无正文 */
+export async function deleteItem(id: number): Promise<void> {
+  const res = await authedFetch(`${API_BASE}/items/${id}`, { method: 'DELETE' });
+  if (res.status !== 204) throw new Error(`HTTP ${res.status}`);
+}
+
+/** GET /api/calendar 返回日历订阅令牌；该用户尚无令牌时服务端生成后返回 */
+export async function fetchCalendarToken(): Promise<string> {
+  const res = await authedFetch(`${API_BASE}/calendar`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = (await res.json()) as CalendarTokenResponse;
+  return data.token;
+}
+
+/** POST /api/calendar/rotate 生成新令牌并覆盖旧令牌；旧订阅链接立即失效 */
+export async function rotateCalendarToken(): Promise<string> {
+  const res = await authedFetch(`${API_BASE}/calendar/rotate`, { method: 'POST' });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = (await res.json()) as CalendarTokenResponse;
+  return data.token;
+}
+
+/** 由令牌拼出订阅地址；webcal 把 http(s):// 换成 webcal://（iPhone 日历专用） */
+export function calendarUrls(token: string): { https: string; webcal: string } {
+  const base = API_BASE_URL || window.location.origin;
+  const https = `${base}/api/calendar/${token}.ics`;
+  return { https, webcal: https.replace(/^https?:\/\//, 'webcal://') };
 }
 
 /** POST /api/items/{id}/detail 生成并缓存详情；返回详情与检索到的关联邮件 */

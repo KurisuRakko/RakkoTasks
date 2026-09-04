@@ -2,9 +2,8 @@
 
 import Chip from '@mui/material/Chip';
 import Stack from '@mui/material/Stack';
+import { CATEGORIES } from '../types';
 import type { Category } from '../types';
-
-const CATEGORIES: Category[] = ['学业', '工作', '个人', '账单', '其他'];
 
 interface Props {
   value: Category | null;

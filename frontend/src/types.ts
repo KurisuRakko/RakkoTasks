@@ -11,13 +11,17 @@ export interface ItemsResponse {
 /** 条目分类（LLM 四分类 + 兜底） */
 export type Category = '学业' | '工作' | '个人' | '账单' | '其他';
 
+/** 可选分类常量（编辑器与筛选共用同一份） */
+export const CATEGORIES: readonly Category[] = ['学业', '工作', '个人', '账单', '其他'];
+
 /** 条目重要度（与 due_date 无关；high 无日期也不沉底） */
 export type Importance = 'high' | 'normal' | 'low';
 
 /** 条目（items 表） */
 export interface Item {
   id: number;
-  email_id: number;
+  /** 源邮件 id；null = 手动创建的条目（无源邮件） */
+  email_id: number | null;
   /** 源邮件发送时间（ISO 8601，带 UTC 偏移）；邮件无 Date 头时为 null */
   email_sent_at: string | null;
   title: string;
@@ -93,6 +97,19 @@ export interface SearchCitation {
 export interface SearchResponse {
   answer_md: string;
   citations: SearchCitation[];
+}
+
+/** 手动条目可编辑字段（POST /api/items 请求体；PATCH 时各字段可选） */
+export interface ItemFields {
+  title: string;
+  summary: string;
+  category: Category;
+  due_date: string | null;
+}
+
+/** GET /api/calendar、POST /api/calendar/rotate 返回体 */
+export interface CalendarTokenResponse {
+  token: string;
 }
 
 /** Phainon /me 返回体 */

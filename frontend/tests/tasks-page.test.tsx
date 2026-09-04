@@ -1,7 +1,7 @@
 // TasksPage 测试：high 条目渲染「重要」Chip，normal/low 条目不渲染；「重要」组标题出现。
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import TasksPage from '../src/pages/TasksPage';
 import type { Item } from '../src/types';
 
@@ -109,5 +109,63 @@ describe('今日新邮件蓝点', () => {
     const oldRow = screen.getByText('旧条目').closest('li');
     expect(oldRow).not.toBeNull();
     expect(within(oldRow!).queryByLabelText('今日新邮件')).toBeNull();
+  });
+});
+
+describe('TasksPage 手动添加', () => {
+  it('页面存在右下角「添加任务」悬浮按钮', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => json({ items: [] })));
+
+    render(<TasksPage />);
+
+    expect(await screen.findByRole('button', { name: '添加任务' })).toBeTruthy();
+  });
+
+  it('点「添加任务」打开编辑器，保存后 POST /api/items 且新标题出现在列表', async () => {
+    const fetchMock = vi.fn(async (url: string | URL, init?: RequestInit) => {
+      const u = String(url);
+      if (init?.method === 'POST') {
+        // 契约：201 + 完整 Item（email_id null 的手动条目）
+        return json(
+          makeItem({
+            id: 101,
+            email_id: null,
+            title: '买牛奶',
+            summary: '两盒',
+            category: '个人',
+            status: 'open',
+          }),
+          201,
+        );
+      }
+      if (u.startsWith('/api/items')) return json({ items: [] });
+      return json({}, 404);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<TasksPage />);
+
+    fireEvent.click(await screen.findByRole('button', { name: '添加任务' }));
+    const textarea = await screen.findByLabelText('任务内容');
+    fireEvent.change(textarea, { target: { value: '买牛奶\n两盒' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(true);
+    });
+    const postCall = fetchMock.mock.calls.find(
+      ([, init]) => init?.method === 'POST',
+    ) as [string, RequestInit];
+    expect(postCall[0]).toBe('/api/items');
+    expect(JSON.parse(String(postCall[1].body))).toEqual({
+      title: '买牛奶',
+      summary: '两盒',
+      category: '个人',
+      due_date: null,
+    });
+
+    // 新条目出现在列表中，并提示「已添加」
+    expect(await screen.findByText('买牛奶')).toBeTruthy();
+    expect(await screen.findByText('已添加')).toBeTruthy();
   });
 });

@@ -63,3 +63,40 @@ describe('SettingsPage 已停用账户', () => {
     expect(styles.opacity).not.toBe('0.6');
   });
 });
+
+describe('SettingsPage 日历订阅', () => {
+  function makeFetchMock(): ReturnType<typeof vi.fn> {
+    return vi.fn(async (url: string | URL) => {
+      const u = String(url);
+      // GET /api/calendar 返回令牌；其余请求按账户状态处理
+      if (u.includes('/api/calendar')) return json({ token: 'abc' });
+      return json(STATUS);
+    });
+  }
+
+  it('fetch 返回令牌时展示订阅链接输入框，值以 /api/calendar/abc.ics 结尾', async () => {
+    vi.stubGlobal('fetch', makeFetchMock());
+
+    render(
+      <ThemeModeProvider>
+        <SettingsPage />
+      </ThemeModeProvider>,
+    );
+
+    const input = (await screen.findByLabelText('订阅链接')) as HTMLInputElement;
+    expect(input.value.endsWith('/api/calendar/abc.ics')).toBe(true);
+  });
+
+  it('「在 iPhone 上订阅」是 webcal:// 开头的链接', async () => {
+    vi.stubGlobal('fetch', makeFetchMock());
+
+    render(
+      <ThemeModeProvider>
+        <SettingsPage />
+      </ThemeModeProvider>,
+    );
+
+    const link = await screen.findByRole('link', { name: '在 iPhone 上订阅' });
+    expect(link.getAttribute('href')).toMatch(/^webcal:\/\//);
+  });
+});

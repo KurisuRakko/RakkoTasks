@@ -9,17 +9,31 @@ import Card from '@mui/material/Card';
 import CardContent from '@mui/material/CardContent';
 import Chip from '@mui/material/Chip';
 import CircularProgress from '@mui/material/CircularProgress';
+import Dialog from '@mui/material/Dialog';
+import DialogActions from '@mui/material/DialogActions';
+import DialogContent from '@mui/material/DialogContent';
+import DialogContentText from '@mui/material/DialogContentText';
+import DialogTitle from '@mui/material/DialogTitle';
 import Divider from '@mui/material/Divider';
 import IconButton from '@mui/material/IconButton';
 import List from '@mui/material/List';
 import ListItem from '@mui/material/ListItem';
 import ListItemText from '@mui/material/ListItemText';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import Skeleton from '@mui/material/Skeleton';
+import Snackbar from '@mui/material/Snackbar';
 import Stack from '@mui/material/Stack';
+import TextField from '@mui/material/TextField';
 import ToggleButton from '@mui/material/ToggleButton';
 import ToggleButtonGroup from '@mui/material/ToggleButtonGroup';
 import Typography from '@mui/material/Typography';
-import { fetchStatus } from '../lib/api';
+import {
+  calendarUrls,
+  fetchCalendarToken,
+  fetchStatus,
+  rotateCalendarToken,
+} from '../lib/api';
+import { copyText } from '../lib/clipboard';
 import { API_BASE_URL, PHAINON_API_BASE } from '../lib/env';
 import { enterSx, usePrefersReducedMotion } from '../lib/motion';
 import { logout, startLogin } from '../lib/phainon';
@@ -32,6 +46,13 @@ export default function SettingsPage() {
   const [status, setStatus] = useState<StatusResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // 日历订阅：令牌 + 订阅链接，加载失败降级为 Alert
+  const [token, setToken] = useState<string | null>(null);
+  const [calLoading, setCalLoading] = useState(true);
+  const [calError, setCalError] = useState(false);
+  const [rotateOpen, setRotateOpen] = useState(false);
+  const [rotating, setRotating] = useState(false);
+  const [snack, setSnack] = useState<string | null>(null);
   const { mode, setMode } = useThemeMode();
   const me = useSession();
   const reduced = usePrefersReducedMotion();
@@ -56,6 +77,49 @@ export default function SettingsPage() {
   }, []);
 
   useEffect(() => load(), [load]);
+
+  // 挂载时取日历订阅令牌（服务端尚无则生成后返回）
+  useEffect(() => {
+    let alive = true;
+    fetchCalendarToken()
+      .then((t) => {
+        if (alive) setToken(t);
+      })
+      .catch(() => {
+        if (alive) setCalError(true);
+      })
+      .finally(() => {
+        if (alive) setCalLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const urls = token ? calendarUrls(token) : null;
+
+  const handleCopyLink = () => {
+    if (!urls) return;
+    copyText(() => Promise.resolve(urls.https))
+      .then(() => setSnack('已复制'))
+      .catch(() => setSnack('复制失败'));
+  };
+
+  /** 重新生成：旧令牌立即作废，已订阅的日历需要重新添加 */
+  const handleRotate = () => {
+    setRotating(true);
+    rotateCalendarToken()
+      .then((t) => {
+        setToken(t);
+        setRotateOpen(false);
+        setSnack('已重新生成');
+      })
+      .catch(() => {
+        setRotateOpen(false);
+        setSnack('重新生成失败');
+      })
+      .finally(() => setRotating(false));
+  };
 
   const displayName = me ? (me.user.name ?? me.user.email ?? me.user.sub) : '未知用户';
 
@@ -168,6 +232,43 @@ export default function SettingsPage() {
 
       <Divider sx={{ my: 2 }} />
 
+      {/* 日历订阅：只读订阅链接（iCal 公开端点）+ 订阅 / 复制 / 重新生成 */}
+      <Box sx={{ px: 2 }}>
+        <Typography variant="overline">日历订阅</Typography>
+        {calLoading ? (
+          <Skeleton variant="text" />
+        ) : calError ? (
+          <Alert severity="error">加载订阅链接失败</Alert>
+        ) : token && urls ? (
+          <>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+              有截止日的未完成任务会出现在日历里，完成后自动消失；提醒时间为截止日当天
+              10:00。iPhone 上订阅日历的刷新频率由系统「获取新数据」设置决定。
+            </Typography>
+            <TextField
+              fullWidth
+              size="small"
+              value={urls.https}
+              InputProps={{ readOnly: true }}
+              inputProps={{ 'aria-label': '订阅链接' }}
+            />
+            <Stack direction="row" spacing={1} sx={{ mt: 1, flexWrap: 'wrap' }}>
+              <Button variant="contained" component="a" href={urls.webcal}>
+                在 iPhone 上订阅
+              </Button>
+              <Button variant="outlined" onClick={handleCopyLink}>
+                复制链接
+              </Button>
+              <Button variant="outlined" color="warning" onClick={() => setRotateOpen(true)}>
+                重新生成
+              </Button>
+            </Stack>
+          </>
+        ) : null}
+      </Box>
+
+      <Divider sx={{ my: 2 }} />
+
       {/* 账户：显示登录者 + 退出登录（回到登录流程） */}
       <Box sx={{ px: 2 }}>
         <Typography variant="overline">账户</Typography>
@@ -196,6 +297,30 @@ export default function SettingsPage() {
           </ListItem>
         </List>
       </Box>
+
+      {/* 重新生成确认：旧链接立即失效，已订阅的日历需重新添加 */}
+      <Dialog open={rotateOpen} onClose={rotating ? undefined : () => setRotateOpen(false)}>
+        <DialogTitle>重新生成订阅链接</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            重新生成后，旧链接立即失效，已订阅的日历需要重新添加。
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setRotateOpen(false)} disabled={rotating}>
+            取消
+          </Button>
+          <Button color="error" onClick={handleRotate} disabled={rotating}>
+            确认
+          </Button>
+        </DialogActions>
+      </Dialog>
+      <Snackbar
+        open={snack !== null}
+        autoHideDuration={3000}
+        onClose={() => setSnack(null)}
+        message={snack}
+      />
     </Box>
   );
 }
