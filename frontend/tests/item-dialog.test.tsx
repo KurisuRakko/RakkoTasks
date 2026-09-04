@@ -10,6 +10,7 @@ function makeItem(partial: Partial<Item>): Item {
   return {
     id: 1,
     email_id: 1,
+    email_sent_at: null,
     title: '测试任务',
     summary: null,
     category: '工作',

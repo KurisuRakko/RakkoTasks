@@ -1,5 +1,6 @@
 // 任务页：分类筛选 + 按截止日期分组列表（今天/本周/无期限）。
 // 勾选 → 离场动画 → 移除并 PATCH done；已完成列表已拆到 /done，本页不再持有 done 数据。
+// 条目左侧小蓝点表示源邮件是今天发的，按日期自动过期，与查看/勾选状态无关。
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Alert from '@mui/material/Alert';
@@ -15,7 +16,7 @@ import ListSubheader from '@mui/material/ListSubheader';
 import Snackbar from '@mui/material/Snackbar';
 import Typography from '@mui/material/Typography';
 import { fetchItems, patchItem } from '../lib/api';
-import { formatDueDate, groupItems, isOverdue } from '../lib/grouping';
+import { formatDueDate, groupItems, isNewToday, isOverdue } from '../lib/grouping';
 import { enterSx, LEAVE_SX, usePrefersReducedMotion } from '../lib/motion';
 import type { Category, Item } from '../types';
 import CategoryChips from '../components/CategoryChips';
@@ -56,6 +57,15 @@ function GroupSection({
             sx={leaving ? LEAVE_SX : enterSx(index, reduced)}
           >
             <ListItemButton onClick={() => onOpen(item)}>
+              <Box sx={{ width: 12, display: 'flex', justifyContent: 'center', flexShrink: 0 }}>
+                {isNewToday(item, today) && (
+                  <Box
+                    role="img"
+                    aria-label="今日新邮件"
+                    sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: 'primary.main' }}
+                  />
+                )}
+              </Box>
               <Checkbox
                 edge="start"
                 checked={leaving}

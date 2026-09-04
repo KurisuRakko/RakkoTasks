@@ -9,6 +9,7 @@ function makeItem(partial: Partial<Item>): Item {
   return {
     id: 1,
     email_id: 1,
+    email_sent_at: null,
     title: 't',
     summary: null,
     category: '工作',
@@ -80,5 +81,33 @@ describe('TasksPage 重要度标记', () => {
 
     // 文本「重要」出现两次：一次是分组标题（ListSubheader），一次是 high 条目的 Chip
     expect(screen.getAllByText('重要')).toHaveLength(2);
+  });
+});
+
+describe('今日新邮件蓝点', () => {
+  it('今天发送的条目显示蓝点，旧条目不显示', async () => {
+    const items: Item[] = [
+      makeItem({ id: 11, title: '今天的新条目', email_sent_at: new Date().toISOString() }),
+      makeItem({ id: 12, title: '旧条目', email_sent_at: '2026-08-01T00:00:00+00:00' }),
+    ];
+    const fetchMock = vi.fn(async () => json({ items }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<TasksPage />);
+
+    await screen.findByText('今天的新条目');
+
+    // 只有发送于今天的那条带蓝点
+    expect(screen.getAllByLabelText('今日新邮件')).toHaveLength(1);
+
+    // 蓝点位于新条目所在行内
+    const newRow = screen.getByText('今天的新条目').closest('li');
+    expect(newRow).not.toBeNull();
+    expect(within(newRow!).getByLabelText('今日新邮件')).toBeTruthy();
+
+    // 旧条目行内没有蓝点
+    const oldRow = screen.getByText('旧条目').closest('li');
+    expect(oldRow).not.toBeNull();
+    expect(within(oldRow!).queryByLabelText('今日新邮件')).toBeNull();
   });
 });

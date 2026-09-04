@@ -1,5 +1,6 @@
 """REST API 测试：TestClient + 依赖覆盖指定当前用户。"""
 import json
+from datetime import datetime
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
@@ -77,7 +78,8 @@ def _seed(session_factory) -> tuple[int, int, int, int]:
         s.commit()
         em = Email(
             account_id=acc.id, message_id="<m1>", subject="开学通知", sender="b@example.com",
-            sent_at=None, text_body="九月一号开学", html_body="<p>九月一号开学</p><script>x()</script>",
+            # sent_at 与 parser.py 一致：naive UTC
+            sent_at=datetime(2026, 9, 4, 1, 2, 3), text_body="九月一号开学", html_body="<p>九月一号开学</p><script>x()</script>",
             llm_state="done",
         )
         em2 = Email(
@@ -127,12 +129,14 @@ def test_items_list_and_filter(session_factory, monkeypatch):
     assert items[0]["title"] == "交学费"
     assert items[0]["email_subject"] == "开学通知"
     assert items[0]["importance"] == "high"  # /api/items 响应含 importance
+    assert items[0]["email_sent_at"] == "2026-09-04T01:02:03+00:00"  # naive UTC 补显式 +00:00 偏移
     assert items[0]["related"] == []  # 每项都带 related（未生成时为 []）
 
     resp = client.get("/api/items", params={"status": "done"})
     assert len(resp.json()["items"]) == 1
     assert resp.json()["items"][0]["title"] == "旧任务"
     assert resp.json()["items"][0]["importance"] == "normal"  # 未显式设置时默认 normal
+    assert resp.json()["items"][0]["email_sent_at"] is None  # em2 未设 sent_at
     assert "related" in resp.json()["items"][0]
 
     resp = client.get("/api/items", params={"category": "学业"})

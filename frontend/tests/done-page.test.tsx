@@ -8,6 +8,7 @@ const ITEMS = [
   {
     id: 1,
     email_id: 1,
+    email_sent_at: null,
     title: '任务一',
     summary: null,
     category: '工作',
@@ -21,6 +22,7 @@ const ITEMS = [
   {
     id: 2,
     email_id: 2,
+    email_sent_at: null,
     title: '任务二',
     summary: null,
     category: '学业',

@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Iterator
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
@@ -300,6 +300,10 @@ def _item_dict(item: Item, related: list[dict]) -> dict:
     return {
         "id": item.id,
         "email_id": item.email_id,
+        # DB 存 naive UTC，显式补 +00:00 偏移，前端 new Date() 才不会按本地时区误读
+        "email_sent_at": (
+            email.sent_at.replace(tzinfo=timezone.utc).isoformat() if email and email.sent_at else None
+        ),
         "email_subject": email.subject if email else None,
         "email_sender": email.sender if email else None,
         "title": item.title,

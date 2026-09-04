@@ -1,4 +1,4 @@
-// 纯函数：条目分组为 今天 / 本周 / 重要 / 无期限，并标记逾期。
+// 纯函数：条目分组为 今天 / 本周 / 重要 / 无期限、标记逾期，并负责「今日新邮件」判定。
 // 日期比较一律基于「传入的 today」的本地年/月/日分量，不依赖真实当前时间，便于测试。
 // 分组优先级（每条目只进一个组）：today（due ≤ 今天，含逾期）→ thisWeek（明天~本周日）
 // → important（以上都不属于且 importance==='high'）→ later（其余）。
@@ -29,6 +29,16 @@ export function isOverdue(item: Item, today: Date): boolean {
   const due = parseDueDate(item.due_date);
   const t = startOfDay(today);
   return due.getTime() < t.getTime();
+}
+
+/** 条目源邮件是否发送于 today 所在的本地日期（用于「今日新邮件」标记） */
+export function isNewToday(item: Item, today: Date): boolean {
+  if (!item.email_sent_at) return false;
+  const sent = new Date(item.email_sent_at).getTime();
+  if (Number.isNaN(sent)) return false;
+  const start = startOfDay(today).getTime();
+  const end = start + 86_400_000;
+  return sent >= start && sent < end;
 }
 
 function startOfDay(d: Date): Date {

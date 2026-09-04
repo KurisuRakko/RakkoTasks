@@ -70,6 +70,7 @@ describe('fetchItems', () => {
     const item = {
       id: 1,
       email_id: 2,
+      email_sent_at: null,
       title: '写周报',
       summary: null,
       category: '工作',

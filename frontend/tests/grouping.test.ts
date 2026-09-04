@@ -1,7 +1,7 @@
 // grouping 纯函数测试：日期边界全部基于传入的 today 动态构造，不依赖真实“现在”。
 
 import { describe, expect, it } from 'vitest';
-import { formatDueDate, groupItems, isOverdue, parseDueDate } from '../src/lib/grouping';
+import { formatDueDate, groupItems, isNewToday, isOverdue, parseDueDate } from '../src/lib/grouping';
 import type { Item } from '../src/types';
 
 /** 固定 today：2026-08-05（本地时区） */
@@ -18,6 +18,7 @@ function makeItem(partial: Partial<Item> = {}): Item {
   return {
     id: 1,
     email_id: 1,
+    email_sent_at: null,
     title: 't',
     summary: null,
     category: '工作',
@@ -151,6 +152,38 @@ describe('groupItems', () => {
     expect(g.important.map((i) => i.id)).toEqual([9]);
     expect(g.later).toHaveLength(0);
     expect(g.thisWeek).toHaveLength(0);
+  });
+});
+
+describe('isNewToday', () => {
+  // email_sent_at 一律由本地时刻经 toISOString() 生成（绝对瞬间），
+  // 与固定 today 的本地日期比较，保证任意时区下结果确定。
+  it('today 当天 00:00:00（本地）→ true', () => {
+    const sent = new Date(2026, 7, 5, 0, 0, 0).toISOString();
+    expect(isNewToday(makeItem({ email_sent_at: sent }), today)).toBe(true);
+  });
+
+  it('today 当天 23:59:59（本地）→ true', () => {
+    const sent = new Date(2026, 7, 5, 23, 59, 59).toISOString();
+    expect(isNewToday(makeItem({ email_sent_at: sent }), today)).toBe(true);
+  });
+
+  it('前一天 23:59:59（本地）→ false', () => {
+    const sent = new Date(2026, 7, 4, 23, 59, 59).toISOString();
+    expect(isNewToday(makeItem({ email_sent_at: sent }), today)).toBe(false);
+  });
+
+  it('次日 00:00:00（本地）→ false', () => {
+    const sent = new Date(2026, 7, 6, 0, 0, 0).toISOString();
+    expect(isNewToday(makeItem({ email_sent_at: sent }), today)).toBe(false);
+  });
+
+  it('email_sent_at 为 null → false', () => {
+    expect(isNewToday(makeItem({ email_sent_at: null }), today)).toBe(false);
+  });
+
+  it('非法字符串 → false', () => {
+    expect(isNewToday(makeItem({ email_sent_at: 'not-a-date' }), today)).toBe(false);
   });
 });
 

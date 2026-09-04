@@ -18,6 +18,8 @@ export type Importance = 'high' | 'normal' | 'low';
 export interface Item {
   id: number;
   email_id: number;
+  /** 源邮件发送时间（ISO 8601，带 UTC 偏移）；邮件无 Date 头时为 null */
+  email_sent_at: string | null;
   title: string;
   summary: string | null;
   category: Category;
