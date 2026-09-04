@@ -17,6 +17,7 @@ class User(Base):
     sub: Mapped[str] = mapped_column(Text, primary_key=True)  # Phainon user.sub
     email: Mapped[str | None] = mapped_column(Text)
     name: Mapped[str | None] = mapped_column(Text)
+    calendar_token: Mapped[str | None] = mapped_column(Text, unique=True)  # 日历订阅密钥：链接即凭据，泄露就 rotate
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.now, server_default=func.now(), nullable=False
     )
@@ -81,7 +82,10 @@ class Item(Base):
     __tablename__ = "items"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    email_id: Mapped[int] = mapped_column(ForeignKey("emails.id"), nullable=False, unique=True)
+    # null = 手动条目（无源邮件）；SQLite 的 UNIQUE 允许多个 NULL，不冲突
+    email_id: Mapped[int | None] = mapped_column(ForeignKey("emails.id"), nullable=True, unique=True)
+    # 归属直接落在条目上，不再经邮件链推导；手动条目没有邮件可推导
+    user_sub: Mapped[str] = mapped_column(ForeignKey("users.sub"), nullable=False, index=True)
     title: Mapped[str] = mapped_column(String(128), nullable=False)
     summary: Mapped[str] = mapped_column(Text, default="", nullable=False)
     category: Mapped[str] = mapped_column(String(16), default="其他", nullable=False)
@@ -98,4 +102,4 @@ class Item(Base):
     )
     done_at: Mapped[datetime | None] = mapped_column(DateTime)
 
-    email: Mapped[Email] = relationship(back_populates="item")
+    email: Mapped["Email | None"] = relationship(back_populates="item")

@@ -177,8 +177,21 @@ def resolve_related(db: Session, item: Item, owned_ids: list[int]) -> list[dict]
 
 
 def build_export_text(db: Session, item: Item, owned_ids: list[int]) -> str:
-    """导出条目为 Markdown 纯文本：AI 见解 + 当前邮件全文 + 关联邮件全文，正文不截断。"""
+    """导出条目为 Markdown 纯文本：AI 见解 + 当前邮件全文 + 关联邮件全文，正文不截断。
+
+    手动条目（无源邮件）：没有当前邮件/关联邮件可导出，summary 即内容主体，
+    输出「## 详情」原文；邮件条目输出不变。
+    """
     email = item.email
+    if email is None:
+        lines = [
+            f"# {item.title}",
+            f"分类：{item.category}　截止：{item.due_date.isoformat() if item.due_date else '无'}　重要度：{item.importance}",
+            "",
+            "## 详情",
+            item.summary,
+        ]
+        return "\n".join(lines)
     related = resolve_related(db, item, owned_ids)
     body = email_plain_text(email.text_body, email.html_body)
     lines = [

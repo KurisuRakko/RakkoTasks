@@ -148,6 +148,7 @@ def _process_pending(
                 session.add(
                     Item(
                         email_id=email.id,
+                        user_sub=email.account.user_sub,
                         title=(result.get("title") or "")[:30] or "未命名任务",
                         summary=result.get("summary") or "",
                         category=category,
@@ -261,10 +262,15 @@ def run_once(
                     email.filter_reason = "LLM 未配置，下轮重试"
         session.commit()
         # 详情预生成：分类之后补齐 detail_md 为空的条目（本轮新建 + 历史回填），
-        # 新条目在前——越新越可能被点开
+        # 新条目在前——越新越可能被点开；只处理邮件条目——手动条目没有邮件正文，
+        # 不生成 AI 详情
         if llm is not None:
             todo = (
-                session.execute(select(Item).where(Item.detail_md.is_(None)).order_by(Item.id.desc()))
+                session.execute(
+                    select(Item)
+                    .where(Item.detail_md.is_(None), Item.email_id.is_not(None))
+                    .order_by(Item.id.desc())
+                )
                 .scalars()
                 .all()
             )

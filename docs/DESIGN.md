@@ -151,7 +151,7 @@ AI 搜索同一套 `search_emails` / `read_emails`）：若邮件涉及来历不
 ## 5. 数据模型（SQLite，WAL）
 
 ```
-users(sub, email, name, created_at, last_seen_at)
+users(sub, email, name, calendar_token|null（订阅密钥，见下）, created_at, last_seen_at)
 accounts(id, user_sub→users, name, kind gmail|microsoft, email, ms_client_id,
          app_password, enabled, token_cache, uidvalidity, last_uid,
          last_sync_at, last_error, status ok|error|pending)
@@ -160,44 +160,67 @@ emails(id, account_id→accounts, message_id, subject, sender, recipients, sent_
        text_body, html_body, attachments_json, fetched_at,
        filtered bool, filter_reason, llm_state pending|done|error)
        UNIQUE(account_id, message_id)；FTS5 虚表 emails_fts(subject, sender, text_body) 由触发器同步
-items(id, email_id→emails UNIQUE, title, summary, category, due_date date|null,
+items(id, email_id→emails UNIQUE|null（null=手动条目，无源邮件）, user_sub→users,
+      title, summary, category, due_date date|null,
       importance high|normal|low, actionable bool, status open|done, detail_md|null,
       related_json|null（关联邮件 JSON 数组 [{"email_id": int, "reason": str}]）,
       created_at, done_at|null)
+      user_sub 建索引（手动条目没有邮件链，归属直接落在条目上）
 ```
 
 - `items.importance` 等后续新增列通过 `init_db` 的**就地 ALTER 迁移**：`create_all` 不会给已存在的
   表加列，启动时 `_ensure_columns` 用 `PRAGMA table_info` 检查缺失列并
   `ALTER TABLE ADD COLUMN`（幂等，每次启动执行、已存在即跳过），**不再需要删库重建**——
   生产库存着四个邮箱的 OAuth token cache，删库意味着用户要重新授权四遍。
-
+- `items` 支持手动条目（`email_id` 为 null）那次是**整表重建迁移**（`_migrate_items_manual`）：
+  SQLite 的 ALTER 不能去掉既有列的 NOT NULL，而 items 上没有 FTS 触发器、也没有表引用它，
+  所以可以 `RENAME → 按模型建新表 → 搬行 → 计数核对 → DROP` 整表重建；旧行的归属在迁移里
+  经邮件链推导回填进 `user_sub`，邮件链断裂的行宁可启动失败（回滚）也不静默丢弃。
 - `users`：登录 Phainon 的用户，首次访问自动创建（准入见第 6 节）。
+- `users.calendar_token`：日历订阅密钥（`/api/calendar/{token}.ics`），链接即凭据；
+  旧库由 `_ensure_columns` 补普通列（ADD COLUMN 加不了 UNIQUE，新建库才有 UNIQUE 约束），
+  泄露即用 rotate 换新。
 - `accounts.app_password`：Gmail 应用专用密码，明文存库，任何 API 都不会返回它。
 - `accounts.enabled`：软删除标记，CLI `accounts remove` 置 false（停用并清除凭据、
   不再同步），已抓取的邮件与已生成的任务保留。
-- 多用户隔离：emails/items 的归属通过 `emails.account_id → accounts.user_sub` 推导，
-  所有查询都以当前登录者 sub 过滤。
+- 多用户隔离：items 直接持有 `user_sub`（手动条目无邮件可推导）；emails 仍经
+  `emails.account_id → accounts.user_sub` 推导，所有查询都以当前登录者 sub 过滤。
 
-## 6. REST API（/api/*，除 /api/health 外全部 Bearer 鉴权）
+## 6. REST API（/api/* 除 /api/health 与 /api/calendar/{token}.ics 外全部 Bearer 鉴权）
 
 ```
 GET  /api/health                    公开存活探针
 GET  /api/items?status=&category=   条目列表（默认 open；每项含 related 关联邮件）
-PATCH /api/items/{id}               {"status": "done"|"open"}
+POST /api/items                     新建手动条目（email_id=null）：{"title","summary","category","due_date"}，
+                                    校验失败 400 bad_title|bad_summary|bad_category|bad_due_date；成功 201
+PATCH /api/items/{id}               {"status"} 任何条目可改；{"title","summary","category","due_date"}
+                                    只对手动条目（email_id=null）开放，邮件条目改这四个字段 400 not_editable；
+                                    空请求体 400 bad_request；成功 200
+DELETE /api/items/{id}              手动条目 → 204；邮件条目 → 400 not_editable
 GET  /api/items/{id}                含 detail_md（可能为 null）与 related
 POST /api/items/{id}/detail         生成并缓存详情与关联邮件（agentic，多轮 LLM），
-                                    返回 detail_md + related
+                                    返回 detail_md + related；手动条目 → 400 no_email（不调 LLM）
 GET  /api/items/{id}/export         导出条目 Markdown 纯文本（AI 见解 + 当前邮件全文
-                                    + 关联邮件全文）；纯读、无 LLM 调用、不限流
+                                    + 关联邮件全文）；手动条目输出标题 + 「## 详情」（summary 原文），
+                                    无当前邮件/关联邮件段；纯读、无 LLM 调用、不限流
 GET  /api/emails/{id}               元数据 + text_body + sanitized_html
 POST /api/search                    {"question"} → {"answer_md", "citations":[{email_id, subject, sent_at}]}
 GET  /api/status                    各账户健康（含 enabled 停用标记）+ 上次同步时间 + LLM 待处理数
+GET  /api/calendar                  → {"token"}；尚无令牌时生成并落库（鉴权）
+POST /api/calendar/rotate           无条件生成新令牌并覆盖（鉴权）；旧订阅链接立即失效
+GET  /api/calendar/{token}.ics      公开（令牌即凭据，不需要 Bearer）：该用户 status=open 且
+                                    due_date 非空（含手动条目）的全部条目 → 全天事件 iCalendar，
+                                    每条带当天 10:00 提醒（TRIGGER;RELATED=START:PT10H，相对触发，
+                                    不做服务端时区假设）；令牌无效 404
 ```
 
 - **多用户隔离**：所有端点只返回当前登录者自己的邮箱账户、邮件与任务；访问他人
-  资源的越权请求一律返回 404 而非 403，不暴露资源 id 是否存在。
+  资源的越权请求一律返回 404 而非 403，不暴露资源 id 是否存在。手动条目没有邮件链，
+  `user_sub` 直接挂在条目上；`/api/calendar/{token}.ics` 按令牌对应用户的 sub 过滤条目。
 - `/api/status` 的账户对象新增 `enabled: boolean`（CLI 停用后为 false，账户仍返回）；
   任何 API 响应都不含 `app_password` / `token_cache`。
+- 手动条目对象：`email_id: null`（前端据此区分手动/邮件条目），`email_subject` /
+  `email_sender` / `email_sent_at` 为 null，`detail_md` 恒为 null、`related` 恒为 []。
 
 鉴权中间件：取 Bearer → `GET {PHAINON_API_BASE}/auth/priestess/oidc/me`
 （转发同一 Bearer，附 `Origin: {FRONTEND_ORIGIN}`）→ 200 且 `app_id == PHAINON_APP_ID`

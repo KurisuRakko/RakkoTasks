@@ -54,8 +54,8 @@ def _seed_two_users(session_factory) -> dict:
         )
         s.add_all([em_a, em_b])
         s.commit()
-        it_a = Item(email_id=em_a.id, title="A 的任务", summary="", category="其他", status="open")
-        it_b = Item(email_id=em_b.id, title="B 的任务", summary="", category="其他", status="open")
+        it_a = Item(email_id=em_a.id, user_sub="user-A", title="A 的任务", summary="", category="其他", status="open")
+        it_b = Item(email_id=em_b.id, user_sub="user-B", title="B 的任务", summary="", category="其他", status="open")
         s.add_all([it_a, it_b])
         s.commit()
         return {"acc_a": acc_a.id, "acc_b": acc_b.id, "em_a": em_a.id, "em_b": em_b.id, "it_a": it_a.id, "it_b": it_b.id}
@@ -189,7 +189,7 @@ def test_soft_deleted_account_skipped_by_sync_but_data_kept(session_factory):
         em = Email(account_id=acc.id, message_id="<old1>", subject="旧邮件", text_body="正文", llm_state="done")
         s.add(em)
         s.commit()
-        it = Item(email_id=em.id, title="旧任务", summary="", category="其他", status="open")
+        it = Item(email_id=em.id, user_sub="user-A", title="旧任务", summary="", category="其他", status="open")
         s.add(it)
         s.commit()
 

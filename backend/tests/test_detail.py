@@ -93,7 +93,7 @@ def _seed(session_factory) -> tuple[int, int, int, int]:
         s.add_all([cur, other, stranger])
         s.commit()
         it = Item(
-            email_id=cur.id, title="核对成绩", summary="s", category="学业", actionable=True,
+            email_id=cur.id, user_sub="user-1", title="核对成绩", summary="s", category="学业", actionable=True,
             importance="high", status="open",
         )
         s.add(it)
@@ -218,7 +218,7 @@ def test_build_export_text_sections_and_html_body(session_factory):
         )
         s.add_all([cur, rel])
         s.commit()
-        item = Item(email_id=cur.id, title="交报告", summary="", category="学业", status="open")
+        item = Item(email_id=cur.id, user_sub="user-1", title="交报告", summary="", category="学业", status="open")
         s.add(item)
         s.commit()
         item.related_json = json.dumps([{"email_id": rel.id, "reason": "评分标准说明"}], ensure_ascii=False)

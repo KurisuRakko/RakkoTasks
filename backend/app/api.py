@@ -3,32 +3,48 @@ from __future__ import annotations
 
 import json
 import logging
+import secrets
 from collections.abc import Iterator
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.auth import CurrentUser, require_auth
+from app.calendar import build_ics
 from app.config import Settings, get_settings
 from app.db import init_db, make_engine, make_session_factory
 from app.detail import apply_detail, build_export_text, generate_item_detail, resolve_related
-from app.models import Account, Email, Item
+from app.models import Account, Email, Item, User
 from app.ratelimit import RateLimiter
 from app.sanitizer import build_email_document
 from app.search import run_search
 
 logger = logging.getLogger("rakkotasks.api")
 
+CATEGORIES = ("学业", "工作", "个人", "账单", "其他")
+
+
+class ItemCreate(BaseModel):
+    title: str
+    summary: str = ""
+    category: str
+    due_date: str | None = None
+
 
 class ItemPatch(BaseModel):
-    status: str  # done | open
+    # due_date 区分「没传」与「传 null 清除」：用 model_fields_set 判断字段是否出现在请求体里
+    status: str | None = None  # done | open
+    title: str | None = None
+    summary: str | None = None
+    category: str | None = None
+    due_date: str | None = None
 
 
 class SearchRequest(BaseModel):
@@ -53,13 +69,30 @@ def _owned_account_ids(db: Session, user_sub: str) -> list[int]:
 
 
 def _owned_item(db: Session, item_id: int, user_sub: str) -> Item | None:
-    """按归属链 Item→Email→Account 取属于该用户的条目；不属于返回 None（对外按 404 处理）。"""
+    """按归属直挂字段取属于该用户的条目；不属于返回 None（对外按 404 处理）。"""
     return db.execute(
-        select(Item)
-        .join(Item.email)
-        .join(Email.account)
-        .where(Item.id == item_id, Account.user_sub == user_sub)
+        select(Item).where(Item.id == item_id, Item.user_sub == user_sub)
     ).scalars().first()
+
+
+def _validate_item_fields(title: str, summary: str, category: str, due_date: str | None) -> date | None:
+    """手动条目字段校验（POST 与 PATCH 共用）：非法抛 400 错误码；返回解析后的 date 或 None。"""
+    title = title.strip()
+    if not title or len(title) > 128:
+        raise HTTPException(status_code=400, detail={"code": "bad_title"})
+    if len(summary or "") > 5000:
+        raise HTTPException(status_code=400, detail={"code": "bad_summary"})
+    if category not in CATEGORIES:
+        raise HTTPException(status_code=400, detail={"code": "bad_category"})
+    if due_date is None:
+        return None
+    try:
+        parsed = date.fromisoformat(due_date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail={"code": "bad_due_date"}) from None
+    if parsed.isoformat() != due_date:  # fromisoformat 容忍带时间/偏移的串，这里只收 YYYY-MM-DD
+        raise HTTPException(status_code=400, detail={"code": "bad_due_date"})
+    return parsed
 
 
 def _owned_email(db: Session, email_id: int, user_sub: str) -> Email | None:
@@ -130,12 +163,7 @@ def create_app(
         status: str = Query(default="open"),
         category: str | None = Query(default=None),
     ) -> dict:
-        stmt = (
-            select(Item)
-            .join(Item.email)
-            .join(Email.account)
-            .where(Account.user_sub == user.sub, Item.status == status)
-        )
+        stmt = select(Item).where(Item.user_sub == user.sub, Item.status == status)
         if category:
             stmt = stmt.where(Item.category == category)
         items = (
@@ -146,19 +174,75 @@ def create_app(
         owned_ids = _owned_account_ids(db, user.sub)  # 只查一次，逐条复用
         return {"items": [_item_dict(i, resolve_related(db, i, owned_ids)) for i in items]}
 
+    @app.post("/api/items", status_code=201)
+    def create_item(
+        body: ItemCreate, user: CurrentUser = Depends(require_auth), db: Session = Depends(_get_db)
+    ) -> dict:
+        """新建手动条目（无源邮件，email_id 为 null）：importance/actionable 固定、status=open。"""
+        due = _validate_item_fields(body.title, body.summary, body.category, body.due_date)
+        item = Item(
+            user_sub=user.sub,
+            email_id=None,
+            title=body.title.strip(),
+            summary=body.summary,
+            category=body.category,
+            due_date=due,
+            importance="normal",
+            actionable=True,
+            status="open",
+        )
+        db.add(item)
+        db.commit()
+        return _item_dict(item, [])
+
     @app.patch("/api/items/{item_id}")
     def patch_item(
         item_id: int, body: ItemPatch, user: CurrentUser = Depends(require_auth), db: Session = Depends(_get_db)
     ) -> dict:
-        if body.status not in ("done", "open"):
-            raise HTTPException(status_code=400, detail={"code": "bad_status"})
         item = _owned_item(db, item_id, user.sub)
         if item is None:
             raise HTTPException(status_code=404, detail={"code": "not_found"})
-        item.status = body.status
-        item.done_at = datetime.now() if body.status == "done" else None
+        fields = body.model_fields_set
+        if not fields:
+            raise HTTPException(status_code=400, detail={"code": "bad_request"})
+        editable = fields & {"title", "summary", "category", "due_date"}
+        if editable and item.email_id is not None:
+            raise HTTPException(status_code=400, detail={"code": "not_editable"})
+        if "status" in fields:
+            if body.status not in ("done", "open"):
+                raise HTTPException(status_code=400, detail={"code": "bad_status"})
+            item.status = body.status
+            item.done_at = datetime.now() if body.status == "done" else None
+        if editable:
+            # 未给出的字段用现值合并后整体校验一次（校验语义与 POST 一致）
+            title = body.title if "title" in fields else item.title
+            summary = body.summary if "summary" in fields else item.summary
+            category = body.category if "category" in fields else item.category
+            due_raw = (
+                body.due_date
+                if "due_date" in fields
+                else (item.due_date.isoformat() if item.due_date else None)
+            )
+            due = _validate_item_fields(title, summary, category, due_raw)
+            item.title = title.strip()
+            item.summary = summary
+            item.category = category
+            item.due_date = due
         db.commit()
         return _item_dict(item, resolve_related(db, item, _owned_account_ids(db, user.sub)))
+
+    @app.delete("/api/items/{item_id}", status_code=204)
+    def delete_item(
+        item_id: int, user: CurrentUser = Depends(require_auth), db: Session = Depends(_get_db)
+    ) -> Response:
+        item = _owned_item(db, item_id, user.sub)
+        if item is None:
+            raise HTTPException(status_code=404, detail={"code": "not_found"})
+        if item.email_id is not None:
+            raise HTTPException(status_code=400, detail={"code": "not_editable"})
+        db.delete(item)
+        db.commit()
+        return Response(status_code=204)
 
     @app.get("/api/items/{item_id}")
     def get_item(item_id: int, user: CurrentUser = Depends(require_auth), db: Session = Depends(_get_db)) -> dict:
@@ -174,6 +258,8 @@ def create_app(
         item = _owned_item(db, item_id, user.sub)
         if item is None:
             raise HTTPException(status_code=404, detail={"code": "not_found"})
+        if item.email_id is None:
+            raise HTTPException(status_code=400, detail={"code": "no_email"})  # 手动条目没有邮件正文，不生成 AI 详情
         if item.detail_md is None:
             if not detail_limiter.allow(user.sub):
                 raise HTTPException(status_code=429, detail={"code": "rate_limited"})
@@ -196,6 +282,57 @@ def create_app(
         if item is None:
             raise HTTPException(status_code=404, detail={"code": "not_found"})
         return {"text": build_export_text(db, item, _owned_account_ids(db, user.sub))}
+
+    @app.get("/api/calendar")
+    def get_calendar_token(
+        user: CurrentUser = Depends(require_auth), db: Session = Depends(_get_db)
+    ) -> dict:
+        """当前用户日历订阅令牌；尚无令牌则生成并落库（鉴权首次登录会 upsert 用户，此处兜底补建）。"""
+        u = db.get(User, user.sub)
+        if u is None:
+            u = User(sub=user.sub)
+            db.add(u)
+        if not u.calendar_token:
+            u.calendar_token = secrets.token_urlsafe(32)
+            db.commit()
+        return {"token": u.calendar_token}
+
+    @app.post("/api/calendar/rotate")
+    def rotate_calendar_token(
+        user: CurrentUser = Depends(require_auth), db: Session = Depends(_get_db)
+    ) -> dict:
+        """无条件生成新令牌覆盖旧令牌：旧订阅链接立即失效。"""
+        u = db.get(User, user.sub)
+        if u is None:
+            u = User(sub=user.sub)
+            db.add(u)
+        u.calendar_token = secrets.token_urlsafe(32)
+        db.commit()
+        return {"token": u.calendar_token}
+
+    @app.get("/api/calendar/{token}.ics")
+    def calendar_ics(token: str, db: Session = Depends(_get_db)) -> Response:
+        """公开订阅端点（无 Depends(require_auth)）：令牌即链接即凭据，泄露就 rotate。
+
+        返回该用户 status=open 且 due_date 非空（含手动条目）的全天事件 ICS。
+        """
+        u = db.execute(select(User).where(User.calendar_token == token)).scalars().first()
+        if u is None:
+            raise HTTPException(status_code=404, detail={"code": "not_found"})
+        items = (
+            db.execute(
+                select(Item)
+                .where(Item.user_sub == u.sub, Item.status == "open", Item.due_date.is_not(None))
+                .order_by(Item.due_date)
+            )
+            .scalars()
+            .all()
+        )
+        return Response(
+            content=build_ics(items, now=datetime.now(timezone.utc)),
+            media_type="text/calendar; charset=utf-8",
+            headers={"Content-Disposition": 'inline; filename="rakkotasks.ics"'},
+        )
 
     @app.get("/api/emails/{email_id}")
     def get_email(

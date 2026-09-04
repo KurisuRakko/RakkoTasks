@@ -8,6 +8,7 @@ from sqlalchemy import create_engine, event, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
+from sqlalchemy.schema import CreateIndex, CreateTable
 
 from app.config import Settings, get_settings
 from app.models import Base
@@ -69,10 +70,16 @@ def make_engine(database_path: str) -> Engine:
 
 # 需要就地补的列：{表名: {列名: DDL 片段}}，_ensure_columns 每次启动幂等执行。
 # 以后给既有表加列只改这张映射即可。
+# 注意：UNIQUE 约束不能用 ADD COLUMN 补，就地补列只加普通列；新建库由
+# create_all 直接建带 UNIQUE 的完整结构（users.calendar_token 的 unique 属
+# 性只在全新库生效，旧库补上的是无唯一约束的普通列）。
 _COLUMN_ALTERS: dict[str, dict[str, str]] = {
     "items": {
         "importance": "TEXT NOT NULL DEFAULT 'normal'",
         "related_json": "TEXT",
+    },
+    "users": {
+        "calendar_token": "TEXT",
     },
 }
 
@@ -91,10 +98,69 @@ def _ensure_columns(engine: Engine) -> None:
                     conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
 
 
+def _migrate_items_manual(engine: Engine) -> None:
+    """items 表重建迁移：email_id 去掉 NOT NULL、补 user_sub（归属直挂条目）。
+
+    为什么重建：手动条目（无源邮件）没有 email_id，旧结构 email_id NOT NULL 写
+    不进去，而 SQLite 的 ALTER TABLE 不能改既有列的约束（去 NOT NULL），只能
+    重建表。为什么安全：items 上没有 FTS 触发器（FTS 只挂在 emails 上），也
+    没有别的表引用 items，重建不牵动其他表。模型（Base.metadata）是唯一 schema
+    来源，新表的 CREATE TABLE / CREATE INDEX 都由模型编译，不手写 DDL。
+    归属推导链已从 Item→Email→Account.user_sub 换成 items.user_sub 直挂，旧行
+    的归属在迁移里回填：某行邮件链断裂（邮件/账户已不存在）导致归属无法推导时
+    抛 RuntimeError 回滚整个事务——宁可启动失败也不能静默丢条目。
+    """
+    with engine.connect() as conn:
+        dbapi = conn.connection.driver_connection
+        cur = dbapi.cursor()
+        try:
+            # 幂等检查放事务外：已具备 user_sub 且 email_id 已允许 NULL → 无需再迁
+            info = {row[1]: row for row in cur.execute("PRAGMA table_info(items)")}
+            if "user_sub" in info and info["email_id"][3] == 0:
+                return
+            # pysqlite 的隐式事务只包 DML 不包 DDL，engine.begin() 的回滚管不住
+            # RENAME/CREATE/DROP，所以迁移开显式事务并全部走裸 cursor（绕开
+            # sqlite3 模块的隐式事务状态机），失败整体 ROLLBACK，表结构原样保留。
+            cur.execute("BEGIN IMMEDIATE")
+            try:
+                cur.execute("ALTER TABLE items RENAME TO items_old")
+                table = Base.metadata.tables["items"]
+                cur.execute(str(CreateTable(table).compile(dialect=engine.dialect)))
+                for index in table.indexes:
+                    cur.execute(str(CreateIndex(index).compile(dialect=engine.dialect)))
+                # _ensure_columns 已补过 importance/related_json，这里直接全部搬列 + 推导归属
+                cur.execute(
+                    "INSERT INTO items"
+                    " (id, email_id, title, summary, category, due_date, importance, actionable,"
+                    "  status, detail_md, related_json, created_at, done_at, user_sub)"
+                    " SELECT o.id, o.email_id, o.title, o.summary, o.category, o.due_date,"
+                    "        o.importance, o.actionable, o.status, o.detail_md, o.related_json,"
+                    "        o.created_at, o.done_at, a.user_sub"
+                    " FROM items_old o"
+                    " JOIN emails e ON e.id = o.email_id"
+                    " JOIN accounts a ON a.id = e.account_id"
+                )
+                old_count = cur.execute("SELECT COUNT(*) FROM items_old").fetchone()[0]
+                new_count = cur.execute("SELECT COUNT(*) FROM items").fetchone()[0]
+                if old_count != new_count:
+                    raise RuntimeError(
+                        f"items 迁移失败：{old_count - new_count} 行无法推导归属（邮件链断裂），"
+                        "已回滚，请人工修复后再启动"
+                    )
+                cur.execute("DROP TABLE items_old")
+                cur.execute("COMMIT")
+            except BaseException:
+                cur.execute("ROLLBACK")
+                raise
+        finally:
+            cur.close()
+
+
 def init_db(engine: Engine) -> None:
     """建普通表（含 accounts/emails/items）与 FTS5 虚表 + 触发器；对旧库就地补列。"""
     Base.metadata.create_all(engine)
     _ensure_columns(engine)
+    _migrate_items_manual(engine)
     with engine.begin() as conn:
         conn.execute(text(FTS_SCHEMA))
         for sql in FTS_TRIGGERS:

@@ -43,7 +43,7 @@ def _seed(session_factory, subject: str = "开学通知", sender: str = "b@examp
         s.add(em)
         s.commit()
         it = Item(
-            email_id=em.id, title="交学费", summary="s", category="学业", actionable=True,
+            email_id=em.id, user_sub="user-1", title="交学费", summary="s", category="学业", actionable=True,
             importance="high", status="open",
         )
         s.add(it)

@@ -48,6 +48,7 @@ def _seed_user(settings: Settings, sub: str, accounts: dict[str, list[dict]]) ->
                     s.add(
                         Item(
                             email_id=em.id,
+                            user_sub=sub,
                             title=e["item"]["title"],
                             summary=e["item"].get("summary", ""),
                             category="其他",

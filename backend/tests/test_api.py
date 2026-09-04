@@ -93,11 +93,11 @@ def _seed(session_factory) -> tuple[int, int, int, int]:
         s.add_all([em, em2, pending])
         s.commit()
         it = Item(
-            email_id=em.id, title="交学费", summary="s", category="学业", actionable=True,
+            email_id=em.id, user_sub="user-1", title="交学费", summary="s", category="学业", actionable=True,
             importance="high", status="open",
         )
         done = Item(
-            email_id=em2.id, title="旧任务", summary="s", category="工作", actionable=False,
+            email_id=em2.id, user_sub="user-1", title="旧任务", summary="s", category="工作", actionable=False,
             status="done",
         )
         s.add_all([it, done])
@@ -348,7 +348,7 @@ def test_detail_html_only_email_body_extracted(session_factory, monkeypatch):
         )
         s.add(em)
         s.commit()
-        it = Item(email_id=em.id, title="提交报告", summary="s", category="学业", actionable=True, status="open")
+        it = Item(email_id=em.id, user_sub="user-1", title="提交报告", summary="s", category="学业", actionable=True, status="open")
         s.add(it)
         s.commit()
         item_id = it.id
