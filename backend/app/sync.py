@@ -14,9 +14,8 @@ from app.detail import apply_detail, generate_item_detail
 from app.emailtext import email_plain_text
 from app.imap import client as imap_client
 from app.imap.parser import parse_message
+from app.itemrules import CATEGORIES
 from app.models import Account, Email, Item
-
-FIXED_CATEGORIES = {"学业", "工作", "个人", "账单", "其他"}
 
 # worker 与 API 触发同步共用：进度日志只含计数，不写邮件内容
 logger = logging.getLogger("rakkotasks.sync")
@@ -133,7 +132,7 @@ def _process_pending(
                 filtered += 1
             else:
                 category = result.get("category") or "其他"
-                if category not in FIXED_CATEGORIES:
+                if category not in CATEGORIES:
                     category = "其他"  # 分类不在固定集时归“其他”
                 due_date = result.get("due_date")
                 due = None

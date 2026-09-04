@@ -10,6 +10,7 @@ import sys
 
 from sqlalchemy import func, select
 
+from app.auth import find_user_by_spec
 from app.config import Settings, get_settings
 from app.db import init_db, make_engine, make_session_factory
 from app.models import Account, Email, Item, User
@@ -18,20 +19,14 @@ from app.models import Account, Email, Item, User
 def _resolve_user(session, spec: str) -> User:
     """按 --user 取值解析用户：先精确匹配 users.sub，再精确匹配 users.email。
 
-    找不到或邮箱歧义时打印提示并以退出码 1 结束（用户需先登录网页才能被 CLI 管理）。
+    找不到或邮箱歧义（find_user_by_spec 返回 None）时打印提示并以退出码 1
+    结束（用户需先登录网页才能被 CLI 管理）。
     """
-    user = session.get(User, spec)
-    if user is not None:
-        return user
-    rows = session.execute(select(User).where(User.email == spec)).scalars().all()
-    if len(rows) == 1:
-        return rows[0]
-    if len(rows) > 1:
-        subs = ", ".join(u.sub for u in rows)
-        print(f"错误：邮箱 {spec} 对应多个用户，请改用 sub 精确指定：{subs}", file=sys.stderr)
+    user = find_user_by_spec(session, spec)
+    if user is None:
+        print(f"未找到用户 {spec}；该用户需要先登录一次网页，再用 users list 查看", file=sys.stderr)
         sys.exit(1)
-    print(f"未找到用户 {spec}；该用户需要先登录一次网页，再用 users list 查看", file=sys.stderr)
-    sys.exit(1)
+    return user
 
 
 def _dt(s: object) -> str:

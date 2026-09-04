@@ -17,6 +17,8 @@ COPY --from=frontend-build /build/dist /app/frontend-dist
 ENV FRONTEND_DIST=/app/frontend-dist \
     DATABASE_PATH=/data/rakkotasks.db \
     PYTHONUNBUFFERED=1
+# 库内 naive 时间按 UTC 解释：显式设容器 TZ，把假设变成保证
+ENV TZ=UTC
 
 # 以非 root 运行：uid 1000 的 app 用户，数据卷归其所有
 RUN useradd --uid 1000 --create-home app \

@@ -38,6 +38,12 @@ class Settings(BaseSettings):
     # 用 accounts add --client-id 按账户覆盖。
     ms_default_client_id: str = "9e5f94bc-e8a4-4e73-b8be-63364c29d753"
 
+    # CalDAV（iPhone 提醒事项）
+    # 只用于把客户端 UTC 形态的 DUE 反算成本地日期（读 CalDAV 载荷时）
+    local_timezone: str = "Australia/Sydney"
+    # 已完成条目在 CalDAV 集合里的保留天数
+    caldav_done_retention_days: int = 30
+
 
 @lru_cache
 def get_settings() -> Settings:

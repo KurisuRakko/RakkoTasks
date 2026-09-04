@@ -12,7 +12,7 @@ from datetime import datetime
 import httpx
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
 from app.config import Settings, get_settings
@@ -129,6 +129,21 @@ def _upsert_user(session_factory, user: CurrentUser) -> None:
         session.rollback()
     finally:
         session.close()
+
+
+def find_user_by_spec(session, spec: str) -> User | None:
+    """按 sub 或邮箱精确找用户：先精确匹配 users.sub，再精确匹配 users.email。
+
+    邮箱对应多行（多用户同一邮箱）时返回 None，由调用方按「找不到」处理
+    （CLI 打印提示退出、CalDAV Basic 鉴权直接拒绝），避免歧义命中。
+    """
+    user = session.get(User, spec)
+    if user is not None:
+        return user
+    rows = session.execute(select(User).where(User.email == spec)).scalars().all()
+    if len(rows) == 1:
+        return rows[0]
+    return None
 
 
 async def require_auth(

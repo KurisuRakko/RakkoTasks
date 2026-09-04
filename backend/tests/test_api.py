@@ -3,11 +3,13 @@ import json
 from datetime import datetime
 from types import SimpleNamespace
 
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app.api import create_app
 from app.auth import CurrentUser, require_auth
+from app.caldav.auth import hash_app_password, verify_app_password
 from app.config import Settings
 from app.llm import LLMClient
 from app.models import Account, Email, Item, User
@@ -374,3 +376,82 @@ def test_detail_html_only_email_body_extracted(session_factory, monkeypatch):
     content = captured["user_content"]
     assert "请在周五前提交实验报告" in content  # 提取后的正文进了 prompt
     assert "<p>" not in content  # 给 LLM 的是纯文本，不是 HTML 源码
+
+
+# ── CalDAV 配置端点 ───────────────────────────────────────────────
+
+
+def test_caldav_status_initial_configured_false(session_factory, monkeypatch):
+    """GET /api/caldav：初始未配置（无应用密码），username 为邮箱；GET 不自动生成密码。"""
+    _seed(session_factory)
+    client = _client(session_factory, monkeypatch)
+
+    resp = client.get("/api/caldav")
+    assert resp.status_code == 200
+    assert resp.json() == {"username": "a@example.com", "path": "/caldav/", "configured": False}
+    with session_factory() as s:
+        assert s.get(User, "user-1").caldav_password_hash is None  # GET 不产生密码
+
+
+def test_caldav_password_endpoint_lifecycle(session_factory, monkeypatch):
+    """POST /api/caldav/password：返回 32 字符密码且落库的是 hash；再次 POST 旧密码失效。"""
+    _seed(session_factory)
+    client = _client(session_factory, monkeypatch)
+
+    resp = client.post("/api/caldav/password")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert set(data) == {"password"}
+    pw = data["password"]
+    assert len(pw) == 32
+    assert hash_app_password(pw) not in resp.text  # 响应不含 hash
+    with session_factory() as s:
+        stored1 = s.get(User, "user-1").caldav_password_hash
+    assert stored1 == hash_app_password(pw)
+
+    assert client.get("/api/caldav").json() == {
+        "username": "a@example.com",
+        "path": "/caldav/",
+        "configured": True,
+    }
+
+    # 无条件重新生成：旧密码立即失效
+    resp2 = client.post("/api/caldav/password")
+    pw2 = resp2.json()["password"]
+    assert pw2 != pw
+    with session_factory() as s:
+        stored2 = s.get(User, "user-1").caldav_password_hash
+    assert stored2 == hash_app_password(pw2)
+    assert verify_app_password(pw, stored2) is False  # 旧密码对新 hash 验不过
+    assert verify_app_password(pw2, stored2) is True
+
+
+def test_caldav_status_creates_user_row_without_password(session_factory, monkeypatch):
+    """用户行不存在（如首次登录缓存未落库）：GET /api/caldav 兜底建行，username 回退 sub。"""
+    app = create_app(settings=_settings(), session_factory=session_factory)
+    app.dependency_overrides[require_auth] = lambda: CurrentUser(sub="fresh-user", email=None, name=None)
+    client = TestClient(app)
+
+    resp = client.get("/api/caldav")
+    assert resp.status_code == 200
+    assert resp.json() == {"username": "fresh-user", "path": "/caldav/", "configured": False}
+    with session_factory() as s:
+        u = s.get(User, "fresh-user")
+        assert u is not None
+        assert u.caldav_password_hash is None
+
+
+def test_http_exception_headers_are_forwarded(session_factory, monkeypatch):
+    """HTTPException 自带 headers 时，处理器必须原样透传（CalDAV 401 质询头依赖它）。"""
+    app = create_app(settings=_settings(), session_factory=session_factory)
+
+    @app.get("/boom")
+    def _boom():
+        raise HTTPException(
+            status_code=401, detail={"code": "unauthorized"}, headers={"WWW-Authenticate": 'Basic realm="x"'}
+        )
+
+    resp = TestClient(app).get("/boom")
+    assert resp.status_code == 401
+    assert resp.json() == {"code": "unauthorized"}
+    assert resp.headers.get("www-authenticate") == 'Basic realm="x"'

@@ -1,6 +1,7 @@
 """SQLAlchemy 2.0 声明式模型：users / accounts / emails / items（见 DESIGN.md 第 5 节）。"""
 from __future__ import annotations
 
+import uuid
 from datetime import date, datetime
 
 from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
@@ -18,6 +19,8 @@ class User(Base):
     email: Mapped[str | None] = mapped_column(Text)
     name: Mapped[str | None] = mapped_column(Text)
     calendar_token: Mapped[str | None] = mapped_column(Text, unique=True)  # 日历订阅密钥：链接即凭据，泄露就 rotate
+    # CalDAV Basic 鉴权应用密码的 sha256 hex；NULL = 未开通（旧库由 _ensure_columns 就地补列）
+    caldav_password_hash: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.now, server_default=func.now(), nullable=False
     )
@@ -101,5 +104,11 @@ class Item(Base):
         DateTime, default=datetime.now, server_default=func.now(), nullable=False
     )
     done_at: Mapped[datetime | None] = mapped_column(DateTime)
+    # CalDAV 资源标识：服务端生成的 32 位大写 hex UID；资源名 = coalesce(caldav_name, caldav_uid)
+    caldav_uid: Mapped[str | None] = mapped_column(Text, default=lambda: uuid.uuid4().hex.upper())
+    caldav_name: Mapped[str | None] = mapped_column(Text)  # 客户端文件名 stem ≠ UID 时才非空
+    caldav_ics: Mapped[str | None] = mapped_column(Text)  # 客户端最近一次 PUT 的原始 VCALENDAR 文本（透传载体）
+    # onupdate 保证任何 ORM 变更都刷新（ETag 来源）；库内 naive datetime 按 UTC 解释
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)
 
     email: Mapped["Email | None"] = relationship(back_populates="item")
