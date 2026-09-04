@@ -4,6 +4,7 @@
 import { authedFetch } from './phainon';
 import { API_BASE_URL } from './env';
 import type {
+  CaldavInfo,
   CalendarTokenResponse,
   Category,
   Email,
@@ -92,6 +93,27 @@ export function calendarUrls(token: string): { https: string; webcal: string } {
   const base = API_BASE_URL || window.location.origin;
   const https = `${base}/api/calendar/${token}.ics`;
   return { https, webcal: https.replace(/^https?:\/\//, 'webcal://') };
+}
+
+/** GET /api/caldav 返回 iPhone「提醒事项」经 CalDAV 同步所需的连接信息 */
+export async function fetchCaldavInfo(): Promise<CaldavInfo> {
+  const res = await authedFetch(`${API_BASE}/caldav`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return (await res.json()) as CaldavInfo;
+}
+
+/** POST /api/caldav/password 生成一次性同步密码；每次调用都会重新生成，旧密码立即失效 */
+export async function generateCaldavPassword(): Promise<string> {
+  const res = await authedFetch(`${API_BASE}/caldav/password`, { method: 'POST' });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = (await res.json()) as { password: string };
+  return data.password;
+}
+
+/** 由 CalDAV 根路径拼出 iOS 配置用的填表值：host 填「服务器」栏（靠 /.well-known/caldav 自动发现），url 为全路径备用 */
+export function caldavTarget(path: string): { host: string; url: string } {
+  const base = API_BASE_URL || window.location.origin;
+  return { host: new URL(base).host, url: `${base}${path}` };
 }
 
 /** POST /api/items/{id}/detail 生成并缓存详情；返回详情与检索到的关联邮件 */
