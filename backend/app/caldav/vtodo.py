@@ -202,14 +202,14 @@ def _parse_utc_z(v: str) -> datetime:
     raise VTodoError("valid-calendar-data")
 
 
-def _due_from_value(value: str, params: dict[str, str], *, zone_for_z: ZoneInfo | None) -> date:
+def _due_from_value(value: str, params: dict[str, str], *, zone_for_z: ZoneInfo) -> date:
     """把 DUE 值解析成日期（read_fields 与 serialize 共用同一套规则）：
 
     - VALUE=DATE（或裸 8 位数字）：字面日期；
     - DATE-TIME 无 Z（浮动时间或带 TZID）：取字面日期（客户端给的是其本地时间）；
-    - 以 Z 结尾：UTC 时刻；有本地时区（read_fields）转本地日取日期，无时区
-      上下文（serialize 比较用）按 UTC 日取——不一致只会导致按服务端日期
-      重写，语义安全；
+    - 以 Z 结尾：UTC 时刻，经 local_zone 转成本地日取日期——读载荷与透传
+      比较必须用同一个时区，否则同一 Z 时刻会算出两个日期，导致客户端设的
+      时刻/依赖 DTSTART 的闹钟被误删；
     - 其余形态 → VTodoError。
     """
     v = value.strip()
@@ -221,8 +221,6 @@ def _due_from_value(value: str, params: dict[str, str], *, zone_for_z: ZoneInfo 
             raise VTodoError("valid-calendar-data") from None
     if v.endswith("Z"):
         utc = _parse_utc_z(v)
-        if zone_for_z is None:
-            return utc.date()
         return utc.replace(tzinfo=timezone.utc).astimezone(zone_for_z).date()
     for fmt in ("%Y%m%dT%H%M%S", "%Y%m%dT%H%M"):
         try:
@@ -449,26 +447,28 @@ def _apply_owned(vtodo: Component, item: Item) -> None:
         vtodo.lines = out
 
 
-def _payload_due(vtodo: Component) -> date | None:
-    """透传体主 VTODO 的 DUE 日期（首个 DUE 行，无时区上下文）；没有 → None。
+def _payload_due(vtodo: Component, local_zone: ZoneInfo) -> date | None:
+    """透传体主 VTODO 的 DUE 日期（首个 DUE 行，按与 read_fields 相同的规则
+    用 local_zone 反算本地日）；没有 → None。比较两侧时区必须一致，否则 Z
+    形态的 DUE 会算出与落库 due_date 不同的日期，整簇被误删重写。
 
     畸形 DUE 返回 None 并走整体重写分支（把客户端坏行删掉换成服务端日期）。
     """
     for ln in vtodo.lines:
         if ln.name == "DUE":
             try:
-                return _due_from_value(ln.value, ln.params, zone_for_z=None)
+                return _due_from_value(ln.value, ln.params, zone_for_z=local_zone)
             except VTodoError:
                 return None
     return None
 
 
-def _apply_time_cluster(cal: Component, vtodo: Component, item: Item) -> None:
-    """时间簇规则：透传体 DUE 解析出的日期 == item.due_date → 簇原样保留；
-    否则删除簇（主 VTODO 的 DTSTART/DUE/DURATION/RRULE/RDATE/EXDATE 行 +
-    顶层与主 VTODO 同级的带 RECURRENCE-ID 的重复实例组件），按 item.due_date
-    只写 DUE;VALUE=DATE（due_date 为 None 则不写）。"""
-    if _payload_due(vtodo) == item.due_date:
+def _apply_time_cluster(cal: Component, vtodo: Component, item: Item, local_zone: ZoneInfo) -> None:
+    """时间簇规则：透传体 DUE 解析出的日期（local_zone 反算）== item.due_date →
+    簇原样保留；否则删除簇（主 VTODO 的 DTSTART/DUE/DURATION/RRULE/RDATE/
+    EXDATE 行 + 顶层与主 VTODO 同级的带 RECURRENCE-ID 的重复实例组件），按
+    item.due_date 只写 DUE;VALUE=DATE（due_date 为 None 则不写）。"""
+    if _payload_due(vtodo, local_zone) == item.due_date:
         return
     vtodo.lines = [ln for ln in vtodo.lines if ln.name not in _CLUSTER_NAMES]
     if cal.name == "VCALENDAR":
@@ -497,8 +497,12 @@ def _render(comp: Component) -> str:
     return "\r\n".join(out) + "\r\n"
 
 
-def serialize(item: Item, *, now_unused=None) -> str:
+def serialize(item: Item, *, local_zone: ZoneInfo) -> str:
     """把条目序列化成 VCALENDAR 文本（CRLF，末尾换行）。
+
+    local_zone 必填：时间簇比较要把透传体 Z 形态的 DUE 反算成本地日，与
+    read_fields 落库用的是同一时区（配置项 Settings.local_timezone），否则
+    同一 Z 时刻会算出两个日期，导致客户端设的时刻与闹钟在每轮同步被误删。
 
     无透传体（caldav_ics 为空）：固定结构输出（见 _serialize_fresh）。
     有透传体：解析客户端最近一次 PUT 的原文，主 VTODO 的「拥有属性」逐个
@@ -515,7 +519,7 @@ def serialize(item: Item, *, now_unused=None) -> str:
     cal = parse_calendar(item.caldav_ics)
     vtodo = master_vtodo(cal)
     _apply_owned(vtodo, item)
-    _apply_time_cluster(cal, vtodo, item)
+    _apply_time_cluster(cal, vtodo, item, local_zone)
     return _render(cal)
 
 

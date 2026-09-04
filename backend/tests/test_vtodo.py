@@ -89,7 +89,7 @@ def test_serialize_fresh_exact_structure():
         "END:VTODO\r\n"
         "END:VCALENDAR\r\n"
     )
-    body = serialize(it)
+    body = serialize(it, local_zone=SYDNEY)
     assert body == expected
     assert body.endswith("\r\n")
     assert "METHOD:" not in body
@@ -102,7 +102,7 @@ def test_serialize_fresh_exact_structure():
 def test_serialize_fresh_done_item():
     """done 条目：STATUS:COMPLETED + PERCENT-COMPLETE:100 + COMPLETED 时间。"""
     it = _item(status="done", done_at=datetime(2026, 9, 5, 6, 7, 8), due=date(2026, 9, 10))
-    body = serialize(it)
+    body = serialize(it, local_zone=SYDNEY)
     assert "STATUS:COMPLETED" in body
     assert "PERCENT-COMPLETE:100" in body
     assert "COMPLETED:20260905T060708Z" in body
@@ -114,7 +114,7 @@ def test_serialize_fresh_done_item():
 
 def test_serialize_fresh_done_without_done_at_omits_completed():
     it = _item(status="done", done_at=None)
-    body = serialize(it)
+    body = serialize(it, local_zone=SYDNEY)
     assert "STATUS:COMPLETED" in body
     assert "PERCENT-COMPLETE:100" in body
     assert "COMPLETED:" not in body
@@ -122,9 +122,9 @@ def test_serialize_fresh_done_without_done_at_omits_completed():
 
 def test_serialize_fresh_priority_buckets():
     """PRIORITY：high→1、low→9、normal 不输出。"""
-    high = serialize(_item(importance="high"))
-    low = serialize(_item(importance="low"))
-    normal = serialize(_item(importance="normal"))
+    high = serialize(_item(importance="high"), local_zone=SYDNEY)
+    low = serialize(_item(importance="low"), local_zone=SYDNEY)
+    normal = serialize(_item(importance="normal"), local_zone=SYDNEY)
     assert "PRIORITY:1" in high and "PRIORITY:9" not in high
     assert "PRIORITY:9" in low
     assert "PRIORITY" not in normal
@@ -132,7 +132,7 @@ def test_serialize_fresh_priority_buckets():
 
 def test_serialize_fresh_summary_and_escape():
     it = _item(title="交报告;周一,截止\n急", summary="含,逗号;分号\n与换行", due=date(2026, 9, 9))
-    body = serialize(it)
+    body = serialize(it, local_zone=SYDNEY)
     assert "SUMMARY:交报告\\;周一\\,截止\\n急" in body
     assert "DESCRIPTION:含\\,逗号\\;分号\\n与换行" in body
     assert "DUE;VALUE=DATE:20260909" in body
@@ -141,7 +141,7 @@ def test_serialize_fresh_summary_and_escape():
 def test_serialize_fresh_long_chinese_title_folded_and_unfoldable():
     """长中文标题折行：每物理行 ≤75 UTF-8 字节，解折后与原文一致。"""
     title = "今天要完成的事项清单" * 12  # 120 汉字 ≈ 360 字节
-    body = serialize(_item(title=title))
+    body = serialize(_item(title=title), local_zone=SYDNEY)
     lines = body.split("\r\n")
     assert all(len(ln.encode("utf-8")) <= 75 for ln in lines)
     start = next(i for i, ln in enumerate(lines) if ln.startswith("SUMMARY:"))
@@ -154,17 +154,17 @@ def test_serialize_fresh_long_chinese_title_folded_and_unfoldable():
 def test_serialize_fresh_deterministic_bytes_and_etag():
     """同一条目两次序列化字节相同 → ETag 相同（无 datetime.now() 的体现）。"""
     it = _item(title="不动的内容", due=date(2026, 9, 4), status="done", done_at=datetime(2026, 9, 4, 2, 3, 4))
-    b1 = serialize(it)
-    b2 = serialize(it)
+    b1 = serialize(it, local_zone=SYDNEY)
+    b2 = serialize(it, local_zone=SYDNEY)
     assert b1 == b2
     assert etag_for(b1) == etag_for(b2)
 
 
 def test_serialize_changes_etag_on_title_due_status():
-    base = serialize(_item(title="原题", due=date(2026, 9, 4)))
-    changed_title = serialize(_item(title="改题", due=date(2026, 9, 4)))
-    changed_due = serialize(_item(title="原题", due=date(2026, 9, 5)))
-    changed_status = serialize(_item(title="原题", due=date(2026, 9, 4), status="done", done_at=None))
+    base = serialize(_item(title="原题", due=date(2026, 9, 4)), local_zone=SYDNEY)
+    changed_title = serialize(_item(title="改题", due=date(2026, 9, 4)), local_zone=SYDNEY)
+    changed_due = serialize(_item(title="原题", due=date(2026, 9, 5)), local_zone=SYDNEY)
+    changed_status = serialize(_item(title="原题", due=date(2026, 9, 4), status="done", done_at=None), local_zone=SYDNEY)
     etags = {etag_for(b) for b in (base, changed_title, changed_due, changed_status)}
     assert len(etags) == 4  # 各自改变内容 → ETag 各自改变
     assert etag_for(base).startswith('"') and etag_for(base).endswith('"')
@@ -174,7 +174,7 @@ def test_serialize_changes_etag_on_title_due_status():
 def test_serialize_fresh_updated_at_none_falls_back_to_created_at():
     """updated_at 为 None（如迁移回填前/手工对象）→ DTSTAMP 与 LAST-MODIFIED 用 created_at。"""
     it = _item(created=datetime(2026, 8, 30, 12, 0, 0), updated=None)
-    body = serialize(it)
+    body = serialize(it, local_zone=SYDNEY)
     assert "DTSTAMP:20260830T120000Z" in body
     assert "LAST-MODIFIED:20260830T120000Z" in body
     assert "CREATED:20260830T120000Z" in body
@@ -183,7 +183,7 @@ def test_serialize_fresh_updated_at_none_falls_back_to_created_at():
 def test_serialize_fresh_requires_flushed_item():
     """created_at/updated_at 全空（未落库条目）：报错而不是产出不确定时间戳。"""
     with pytest.raises(ValueError):
-        serialize(Item(caldav_uid=UID, title="x", category="学业", status="open"))
+        serialize(Item(caldav_uid=UID, title="x", category="学业", status="open"), local_zone=SYDNEY)
 
 
 # ── 解析：unfold / split / read_fields ────────────────────────────
@@ -421,7 +421,7 @@ _PASSTHROUGH = (
 def test_passthrough_preserves_client_lines_and_overrides_owned():
     """透传：VALARM/X-APPLE-*/LOCATION 与客户端 VCALENDAR 头保留，SUMMARY 等服务端属性覆盖。"""
     it = _item(title="服务端标题", summary="服务端描述", category="工作", due=date(2026, 9, 10), ics=_PASSTHROUGH)
-    body = serialize(it)
+    body = serialize(it, local_zone=SYDNEY)
     assert body.endswith("\r\n")
     # 客户端独有内容原样保留
     assert "PRODID:-//Apple Inc.//iOS 17.5//EN" in body
@@ -448,7 +448,7 @@ def test_passthrough_open_item_removes_client_completion_markers():
         "COMPLETED:20260905T010203Z\r\nEND:VTODO\r\nEND:VCALENDAR\r\n"
     )
     it = _item(title="服务端仍是待办", status="open", ics=payload)
-    body = serialize(it)
+    body = serialize(it, local_zone=SYDNEY)
     assert "STATUS:NEEDS-ACTION" in body
     assert "SUMMARY:服务端仍是待办" in body
     assert "PERCENT-COMPLETE" not in body
@@ -461,7 +461,7 @@ def test_passthrough_done_item_replaces_status_fields():
         "END:VTODO\r\nEND:VCALENDAR\r\n"
     )
     it = _item(status="done", done_at=datetime(2026, 9, 6, 8, 0, 0), ics=payload)
-    body = serialize(it)
+    body = serialize(it, local_zone=SYDNEY)
     assert "STATUS:COMPLETED" in body
     assert "PERCENT-COMPLETE:100" in body
     assert "COMPLETED:20260906T080000Z" in body
@@ -475,7 +475,7 @@ def test_passthrough_keeps_client_folding_of_unowned_lines():
         "LOCATION:这是一个很长很长需要被客户端折行的地点名称\r\n"
         " 这是续行第二段内容\r\nEND:VTODO\r\nEND:VCALENDAR\r\n"
     )
-    body = serialize(_item(title="y", ics=payload))
+    body = serialize(_item(title="y", ics=payload), local_zone=SYDNEY)
     assert "这是续行第二段内容" in body
     assert "LOCATION:这是一个很长很长需要被客户端折行的地点名称" in body
 
@@ -490,7 +490,7 @@ def test_passthrough_time_cluster_kept_when_due_matches():
         "DUE;VALUE=DATE:20260917\r\nEND:VTODO\r\n"
         "END:VCALENDAR\r\n"
     )
-    body = serialize(_item(title="每周买菜", due=date(2026, 9, 10), ics=payload))
+    body = serialize(_item(title="每周买菜", due=date(2026, 9, 10), ics=payload), local_zone=SYDNEY)
     assert "RRULE:FREQ=WEEKLY;COUNT=4" in body
     assert "DTSTART;VALUE=DATE:20260910" in body
     assert "RECURRENCE-ID;VALUE=DATE:20260917" in body
@@ -506,7 +506,7 @@ def test_passthrough_time_cluster_rewritten_when_due_differs():
         "END:VTODO\r\nBEGIN:VTODO\r\nUID:abc\r\nRECURRENCE-ID;VALUE=DATE:20260917\r\n"
         "SUMMARY:x\r\nEND:VTODO\r\nEND:VCALENDAR\r\n"
     )
-    body = serialize(_item(title="改期", due=date(2026, 9, 20), ics=payload))
+    body = serialize(_item(title="改期", due=date(2026, 9, 20), ics=payload), local_zone=SYDNEY)
     assert "DUE;VALUE=DATE:20260920" in body
     assert "RRULE" not in body
     assert "RECURRENCE-ID" not in body
@@ -522,7 +522,7 @@ def test_passthrough_time_cluster_cleared_when_no_due():
         "SUMMARY:无限期\r\nDUE;VALUE=DATE:20260910\r\nRRULE:FREQ=DAILY\r\n"
         "END:VTODO\r\nEND:VCALENDAR\r\n"
     )
-    body = serialize(_item(title="无限期", due=None, ics=payload))
+    body = serialize(_item(title="无限期", due=None, ics=payload), local_zone=SYDNEY)
     assert "RRULE" not in body
     assert not any(ln.startswith("DUE") for ln in body.split("\r\n"))
 
@@ -533,7 +533,7 @@ def test_passthrough_normal_priority_deleted_but_non_owned_kept():
         "BEGIN:VCALENDAR\r\nBEGIN:VTODO\r\nSUMMARY:x\r\nPRIORITY:5\r\n"
         "X-APPLE-SORT-ORDER:0\r\nEND:VTODO\r\nEND:VCALENDAR\r\n"
     )
-    body = serialize(_item(title="x", importance="normal", ics=payload))
+    body = serialize(_item(title="x", importance="normal", ics=payload), local_zone=SYDNEY)
     assert "PRIORITY" not in body
     assert "X-APPLE-SORT-ORDER:0" in body
 
@@ -544,15 +544,15 @@ def test_passthrough_empty_summary_deletes_client_description():
         "BEGIN:VCALENDAR\r\nBEGIN:VTODO\r\nSUMMARY:x\r\nDESCRIPTION:客户端写了但服务端没有\r\n"
         "END:VTODO\r\nEND:VCALENDAR\r\n"
     )
-    body = serialize(_item(title="x", summary="", ics=payload))
+    body = serialize(_item(title="x", summary="", ics=payload), local_zone=SYDNEY)
     assert "DESCRIPTION" not in body
 
 
 def test_passthrough_corrupt_payload_raises():
     with pytest.raises(VTodoError):
-        serialize(_item(title="x", ics="这不是日历\r\n"))
+        serialize(_item(title="x", ics="这不是日历\r\n"), local_zone=SYDNEY)
     with pytest.raises(VTodoError):
-        serialize(_item(title="x", ics="BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"))
+        serialize(_item(title="x", ics="BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"), local_zone=SYDNEY)
 
 
 def test_etag_for_shape_and_stability():
@@ -563,3 +563,50 @@ def test_etag_for_shape_and_stability():
     assert e1 != e3
     assert e1[0] == '"' and e1[-1] == '"'
     assert len(e1) == 34  # 引号 + 32 hex
+
+
+def test_passthrough_z_due_kept_when_local_date_matches():
+    """Z 形态 DUE 经 local_zone 反算本地日与库内 due_date 同一天 → 时间簇保留：
+    原 DUE:...Z 行、DTSTART 与 VALARM 一个不少（客户端设的时刻/闹钟不被抹掉）。"""
+    payload = (
+        "BEGIN:VCALENDAR\r\nBEGIN:VTODO\r\n"
+        "SUMMARY:悉尼提醒\r\n"
+        "DUE:20260909T230000Z\r\n"
+        "DTSTART:20260909T230000Z\r\n"
+        "BEGIN:VALARM\r\n"
+        "ACTION:DISPLAY\r\n"
+        "DESCRIPTION:闹钟\r\n"
+        "END:VALARM\r\n"
+        "END:VTODO\r\n"
+        "END:VCALENDAR\r\n"
+    )
+    # 2026-09-09 23:00Z = 悉尼（UTC+10）2026-09-10 09:00 → 落库日期 2026-09-10
+    it = _item(title="悉尼提醒", due=date(2026, 9, 10), ics=payload)
+    body = serialize(it, local_zone=SYDNEY)
+    assert "DUE:20260909T230000Z" in body
+    assert "DTSTART:20260909T230000Z" in body
+    assert "BEGIN:VALARM" in body and "END:VALARM" in body
+    assert "DUE;VALUE=DATE:20260910" not in body  # 未被重写成 DATE 形态
+
+
+def test_passthrough_z_due_rewritten_when_local_date_differs():
+    """同一 Z 载荷但库内 due_date 是另一个本地日 → 簇删除，重写为服务端日期。"""
+    payload = (
+        "BEGIN:VCALENDAR\r\nBEGIN:VTODO\r\n"
+        "SUMMARY:悉尼提醒\r\n"
+        "DUE:20260909T230000Z\r\n"
+        "DTSTART:20260909T230000Z\r\n"
+        "BEGIN:VALARM\r\n"
+        "ACTION:DISPLAY\r\n"
+        "DESCRIPTION:闹钟\r\n"
+        "END:VALARM\r\n"
+        "END:VTODO\r\n"
+        "END:VCALENDAR\r\n"
+    )
+    it = _item(title="悉尼提醒", due=date(2026, 9, 11), ics=payload)
+    body = serialize(it, local_zone=SYDNEY)
+    assert "DUE;VALUE=DATE:20260911" in body
+    assert "DUE:20260909T230000Z" not in body
+    assert "DTSTART" not in body
+    # VALARM 不是时间簇行：重写后仍原样保留
+    assert "BEGIN:VALARM" in body and "DESCRIPTION:闹钟" in body and "END:VALARM" in body

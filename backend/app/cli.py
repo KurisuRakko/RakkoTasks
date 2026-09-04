@@ -19,12 +19,18 @@ from app.models import Account, Email, Item, User
 def _resolve_user(session, spec: str) -> User:
     """按 --user 取值解析用户：先精确匹配 users.sub，再精确匹配 users.email。
 
-    找不到或邮箱歧义（find_user_by_spec 返回 None）时打印提示并以退出码 1
+    find_user_by_spec 对歧义邮箱返回 None（它的契约），这里补一次查询把
+    「同一邮箱对应多个用户」与「真没找到」区分开提示；两者都以退出码 1
     结束（用户需先登录网页才能被 CLI 管理）。
     """
     user = find_user_by_spec(session, spec)
     if user is None:
-        print(f"未找到用户 {spec}；该用户需要先登录一次网页，再用 users list 查看", file=sys.stderr)
+        dup = session.execute(select(User).where(User.email == spec)).scalars().all()
+        if len(dup) > 1:
+            subs = ", ".join(u.sub for u in dup)
+            print(f"错误：邮箱 {spec} 对应多个用户，请改用 sub 精确指定：{subs}", file=sys.stderr)
+        else:
+            print(f"未找到用户 {spec}；该用户需要先登录一次网页，再用 users list 查看", file=sys.stderr)
         sys.exit(1)
     return user
 
