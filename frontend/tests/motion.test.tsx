@@ -148,7 +148,7 @@ describe('useMorphDialog 状态机', () => {
 
 describe('rowSx', () => {
   it('reduced + leaving：只有收起的网格样式，不含 transition 与 animation', () => {
-    const sx = rowSx(0, true, true) as Record<string, unknown>;
+    const sx = rowSx(0, true, true, true) as Record<string, unknown>;
     expect(sx).not.toHaveProperty('transition');
     expect(sx).not.toHaveProperty('animation');
     expect(sx.gridTemplateRows).toBe('0fr');
@@ -157,7 +157,7 @@ describe('rowSx', () => {
   });
 
   it('正常入场：grid 行容器 + 入场 animation', () => {
-    const sx = rowSx(0, false, false) as Record<string, unknown>;
+    const sx = rowSx(0, false, false, true) as Record<string, unknown>;
     expect(sx.display).toBe('grid');
     expect(sx.gridTemplateRows).toBe('1fr');
     expect(sx.gridTemplateColumns).toBe('minmax(0, 1fr)');
@@ -166,8 +166,25 @@ describe('rowSx', () => {
 
   it('stagger：index 2 的 animationDelay 大于 index 0', () => {
     const delay = (index: number) =>
-      parseInt(String((rowSx(index, false, false) as Record<string, unknown>).animationDelay), 10);
+      parseInt(String((rowSx(index, false, false, true) as Record<string, unknown>).animationDelay), 10);
     expect(delay(2)).toBeGreaterThan(delay(0));
+  });
+
+  it('enter 为 false（命中缓存，列表已就位）：无 animation / animationDelay，但保留 grid 与离场 transition', () => {
+    const sx = rowSx(0, false, false, false) as Record<string, unknown>;
+    expect(sx).not.toHaveProperty('animation');
+    expect(sx).not.toHaveProperty('animationDelay');
+    expect(sx).not.toHaveProperty('@keyframes rtk-enter-up');
+    expect(sx.display).toBe('grid');
+    expect(sx.gridTemplateColumns).toBe('minmax(0, 1fr)');
+    expect(sx.transition).toContain('grid-template-rows');
+  });
+
+  it('enter 为 true 但 leaving：同样不挂 animation（离场与入场动画会互相覆盖 transform）', () => {
+    const sx = rowSx(0, true, false, true) as Record<string, unknown>;
+    expect(sx).not.toHaveProperty('animation');
+    expect(sx.gridTemplateRows).toBe('0fr');
+    expect(sx.transition).toContain('grid-template-rows');
   });
 });
 
