@@ -21,7 +21,7 @@
 - **日历订阅**：每个用户一条带密钥的 iCalendar 订阅链接，有截止日的未完成任务以全天事件出现在系统日历里，完成后自动消失，截止日当天 10:00 提醒。iPhone 可一键 `webcal://` 订阅。
 - **iPhone 提醒事项同步**：在 iOS 提醒事项里添加 CalDAV 账户，任务以「RakkoTasks」列表出现，在任意 iPhone 上勾选、新建、修改都会同步回来。设置页一键开通。
 - **原邮件查看**：在任务里直接看原邮件，HTML 经服务端消毒并在沙箱 iframe 中渲染，远程图片默认不加载。
-- **多用户**：通过自建的 Phainon 鉴权服务登录，每个用户只看到自己的邮箱、邮件与任务。
+- **多用户**：通过自建的 Phainon 鉴权服务登录，每个用户在设置页自行接入自己的邮箱，只看到自己的邮箱、邮件与任务。
 - **PWA**：可添加到手机主屏，深浅色跟随系统。
 
 ## 工作原理
@@ -35,7 +35,7 @@
                                     iCalendar 订阅 / AI 搜索
 ```
 
-- `backend/`：FastAPI 应用、同步 worker、LLM 管线、命令行管理工具（添加邮箱、重分类等）。
+- `backend/`：FastAPI 应用、同步 worker、LLM 管线、命令行管理工具（邮箱接入的运维兜底；重分类、重建详情等）。
 - `frontend/`：React + TypeScript 单页应用，构建产物由后端同源托管。
 - `deploy/`：Docker Compose 与 Cloudflare Tunnel 的生产部署。
 - 全部架构与设计决策见 [docs/DESIGN.md](docs/DESIGN.md)。
@@ -55,12 +55,11 @@ LLM 会阅读不可信的邮件正文，因此存在提示注入的风险。Rakk
 1. 填配置：`cp deploy/.env.example .env`，填写 `LLM_API_KEY`、`TUNNEL_TOKEN` 等项。
 2. 启动：`docker compose -f deploy/docker-compose.yml up -d --build`
    （web + worker + cloudflared 三个服务，公网经隧道走 HTTPS）。
-3. 首次接入邮箱：先在网页上登录一次（后端自动建用户记录），再用
-   `docker compose -f deploy/docker-compose.yml run --rm web python -m app.cli users list`
-   查到自己的 sub，然后 `python -m app.cli accounts add --user <sub> --kind gmail --name Gmail --email you@gmail.com`
-   添加 Gmail（按提示交互式输入应用专用密码）；Outlook 账户分别执行
-   `accounts connect --user <sub> <email>` 完成设备码授权。完整步骤见
-   [deploy/README.md](deploy/README.md) 第 6 节。
+3. 接入邮箱：登录网页（后端自动创建用户记录）→ 设置 → 邮箱账户 → 添加邮箱：
+   Gmail 填在 Google 账号里生成的应用专用密码；Outlook / Microsoft 365 走
+   「生成授权链接 → 新标签页登录并完成 MFA → 把停在空白页的地址粘回」向导，
+   全程无需终端。首轮同步在下一轮定时任务开始（最多 15 分钟），回补最近 7 天。
+   完整步骤见 [deploy/README.md](deploy/README.md) 第 6 节；CLI 仅作运维兜底保留。
 
 ### 本地开发
 
@@ -83,7 +82,8 @@ RakkoTasks 站在许多开源项目的肩膀上。以下按用途列出，感谢
 向微软注册的公共客户端。这与 Thunderbird 自身访问 IMAP 时所用的是同一个标识，
 也是目前个人用户不注册 Azure 应用就能用 OAuth2 访问 Outlook IMAP 的通行做法。
 RakkoTasks 不包含 Thunderbird 的任何代码；如果你希望使用自己注册的 Azure 应用，
-可以在添加账户时用 `--client-id` 覆盖。Thunderbird 以 MPL 2.0 许可发布。
+可在网页添加向导的「高级」里填该 client_id（CLI 则用 `--client-id` 覆盖）。
+Thunderbird 以 MPL 2.0 许可发布。
 
 ### 后端
 
