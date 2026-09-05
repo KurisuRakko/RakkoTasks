@@ -4,6 +4,8 @@
 // 渲染保留换行；AppBar 提供「编辑」（ItemEditor + PATCH）与「删除」（确认后 DELETE），
 // 成功后经 onChanged/onDeleted 通知父组件同步列表。
 // 移动端全屏、桌面端限宽（md）；paper 挂 VT_NAMES.sheet，与来源列表行做容器变换。
+// md 起经 columnDialogSx 与内容列重合（同宽、居中于主内容区），列表行长成对话框时
+// 容器只在纵向生长，不再露出空白条。
 
 import { useEffect, useState } from 'react';
 import AppBar from '@mui/material/AppBar';
@@ -43,6 +45,7 @@ import {
 } from '../lib/api';
 import { copyText } from '../lib/clipboard';
 import { formatDueDate } from '../lib/grouping';
+import { columnDialogSx } from '../lib/layout';
 import type { AccountInfo, Email, Item, ItemFields, RelatedEmail } from '../types';
 import EmailViewer from './EmailViewer';
 import ItemEditor from './ItemEditor';
@@ -178,6 +181,7 @@ export default function ItemDialog({ item, onClose, onChanged, onDeleted }: Prop
       fullScreen={fullScreen}
       maxWidth="md"
       fullWidth
+      sx={columnDialogSx}
       {...dialogTransitionProps()}
       slotProps={{
         paper: { sx: { viewTransitionName: VT_NAMES.sheet } },

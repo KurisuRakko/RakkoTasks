@@ -1,4 +1,6 @@
 // ItemEditor：新建/编辑手动条目的编辑器对话框（移动端全屏、桌面端限宽）。
+// md 起居中于主内容区（mainAreaDialogSx）：编辑器从悬浮按钮长出而非列表行，宽度保持
+// sm、不与内容列对齐，只做居中这一半，避免同屏两个对话框一个对齐列、一个对齐视口。
 // 编辑框是普通多行文本框：第一行 = 标题（1~128 字，必填），其余行 = 详情；
 // 另有分类 chip 单选（radiogroup/radio）与原生 date input 截止日期（不引日期库）。
 // 不做富文本/所见即所得；保存动作与提示交给父组件（TasksPage 添加 / ItemDialog 编辑）。
@@ -23,6 +25,7 @@ import ClearIcon from '@mui/icons-material/Clear';
 import { CATEGORIES } from '../types';
 import type { Category, ItemFields } from '../types';
 import { dialogTransitionProps } from './DialogTransition';
+import { mainAreaDialogSx } from '../lib/layout';
 
 /** 标题上限（与后端 POST/PATCH 契约一致：去首尾空白后 1~128 字符） */
 const MAX_TITLE_LENGTH = 128;
@@ -83,6 +86,7 @@ export default function ItemEditor({
       fullScreen={fullScreen}
       maxWidth="sm"
       fullWidth
+      sx={mainAreaDialogSx}
       {...dialogTransitionProps()}
       slotProps={{
         // 不传 viewTransitionName 时不给 paper 设共享名（内部编辑不做容器变换）
