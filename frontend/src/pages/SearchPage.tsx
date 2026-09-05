@@ -1,7 +1,8 @@
 // AI 搜索页：多行问题输入 → agentic 全库检索（180s 超时）→ Markdown 回答 + 引用邮件列表。
 // 会话内保留上一次问答结果（模块级缓存，页面刷新前不丢）。
 // 页面级 AppBar 由 AppShell 统一渲染；本页只保留「原邮件」Dialog 内部的 AppBar。
-// 引用列表项与「原邮件」Dialog paper 共用 VT_NAMES.sheet 做容器变换（点哪条引用哪条长成原邮件）。
+// 引用列表项与「原邮件」Dialog paper 共用 VT_NAMES.sheet 做容器变换（点哪条引用哪条长成原邮件）；
+// md 起该 Dialog 与内容列重合（columnDialogSx），从引用行长成时容器只在纵向生长。
 
 import { useState } from 'react';
 import Alert from '@mui/material/Alert';
@@ -23,6 +24,7 @@ import TextField from '@mui/material/TextField';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import { useTheme } from '@mui/material/styles';
 import { search } from '../lib/api';
+import { columnDialogSx } from '../lib/layout';
 import type { SearchCitation, SearchResponse } from '../types';
 import EmailViewer from '../components/EmailViewer';
 import SafeMarkdown from '../components/SafeMarkdown';
@@ -128,6 +130,7 @@ export default function SearchPage() {
           fullScreen={fullScreen}
           maxWidth="md"
           fullWidth
+          sx={columnDialogSx}
           {...dialogTransitionProps()}
           slotProps={{
             paper: { sx: { viewTransitionName: VT_NAMES.sheet } },

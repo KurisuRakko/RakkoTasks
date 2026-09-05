@@ -1,5 +1,7 @@
 // 应用壳：桌面常驻抽屉 + 移动底栏 + 统一 AppBar（标题随路由）+ 路由出口。
-// 导航项全部来自 lib/nav 单一数据源；AppBar 不限宽，内容区限宽 840px 居中。
+// 导航项全部来自 lib/nav 单一数据源；AppBar 不限宽，内容区限宽居中。
+// 抽屉宽（DRAWER_WIDTH）与内容列宽（CONTENT_MAX_WIDTH）收在 lib/layout 单一来源，
+// 从列表行长出来的详情对话框与内容列共用同一宽度（columnDialogSx）。
 // 壳层三件套（AppBar / 底栏 / 抽屉）不直接挂 view-transition-name，只打
 // data-vt-shell 标记（见 lib/view-transition 的 shellAttr）；何时持名由样式层按
 // <html data-vt> 的转场种类决定——换页（route-*）时下发名字作共享元素交叉淡化、
@@ -25,6 +27,7 @@ import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import { useTransitionNavigate } from '../lib/motion';
+import { CONTENT_MAX_WIDTH, DRAWER_WIDTH } from '../lib/layout';
 import { NAV_ITEMS, navIndexOf } from '../lib/nav';
 import { shellAttr, VT_NAMES } from '../lib/view-transition';
 import RouteTransition from './RouteTransition';
@@ -32,9 +35,6 @@ import TasksPage from '../pages/TasksPage';
 import SearchPage from '../pages/SearchPage';
 import DonePage from '../pages/DonePage';
 import SettingsPage from '../pages/SettingsPage';
-
-/** 桌面抽屉宽度 */
-export const DRAWER_WIDTH = 240;
 
 /** AppBar 标题：顺序与 NAV_ITEMS 索引对齐，末尾一位给设置页（索引 -1） */
 const TITLES = ['RakkoTasks', 'AI 搜索', '已完成', '设置'] as const;
@@ -124,7 +124,7 @@ export default function AppShell() {
             )}
           </Toolbar>
         </AppBar>
-        <Box sx={{ maxWidth: 840, mx: 'auto', width: '100%' }}>
+        <Box sx={{ maxWidth: CONTENT_MAX_WIDTH, mx: 'auto', width: '100%' }}>
           <RouteTransition>
             <Routes>
               <Route path="/" element={<TasksPage />} />
