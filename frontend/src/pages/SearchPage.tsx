@@ -1,9 +1,9 @@
 // AI 搜索页：多行问题输入 → agentic 全库检索（180s 超时）→ Markdown 回答 + 引用邮件列表。
 // 会话内保留上一次问答结果（模块级缓存，页面刷新前不丢）。
 // 页面级 AppBar 由 AppShell 统一渲染；本页只保留「原邮件」Dialog 内部的 AppBar。
+// 引用列表项与「原邮件」Dialog paper 共用 VT_NAMES.sheet 做容器变换（点哪条引用哪条长成原邮件）。
 
-import type { ReactElement } from 'react';
-import { forwardRef, useState } from 'react';
+import { useState } from 'react';
 import Alert from '@mui/material/Alert';
 import AppBar from '@mui/material/AppBar';
 import Box from '@mui/material/Box';
@@ -17,7 +17,6 @@ import List from '@mui/material/List';
 import ListItemButton from '@mui/material/ListItemButton';
 import ListItemText from '@mui/material/ListItemText';
 import SearchIcon from '@mui/icons-material/Search';
-import Slide from '@mui/material/Slide';
 import Toolbar from '@mui/material/Toolbar';
 import Typography from '@mui/material/Typography';
 import TextField from '@mui/material/TextField';
@@ -27,22 +26,20 @@ import { search } from '../lib/api';
 import type { SearchCitation, SearchResponse } from '../types';
 import EmailViewer from '../components/EmailViewer';
 import SafeMarkdown from '../components/SafeMarkdown';
-import type { TransitionProps } from '@mui/material/transitions';
+import { useMorphDialog } from '../lib/motion';
+import { VT_NAMES } from '../lib/view-transition';
+import { dialogTransitionProps } from '../components/DialogTransition';
 
 // 模块级缓存：路由切换不丢，浏览器刷新才丢
 let lastResultCache: SearchResponse | null = null;
-
-// 模块级 Slide 过渡组件：避免在渲染函数体内内联定义导致 Dialog 每次渲染重挂载
-const SlideUp = forwardRef<HTMLDivElement, TransitionProps & { children: ReactElement }>(
-  (props, ref) => <Slide direction="up" ref={ref} {...props} />,
-);
 
 export default function SearchPage() {
   const [question, setQuestion] = useState('');
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<SearchResponse | null>(lastResultCache);
-  const [viewing, setViewing] = useState<SearchCitation | null>(null);
+  // 原邮件容器变换：current 非空即对话框打开；对话框需条件渲染，VT 要求新态里已在 DOM
+  const { current, open, close, sourceName } = useMorphDialog<SearchCitation>((c) => c.email_id);
 
   const theme = useTheme();
   // 移动端全屏、桌面端限宽对话框
@@ -108,7 +105,8 @@ export default function SearchPage() {
                     <ListItemButton
                       key={c.email_id}
                       divider
-                      onClick={() => setViewing(c)}
+                      onClick={() => open(c)}
+                      sx={{ viewTransitionName: sourceName(c.email_id) }}
                     >
                       <ListItemText
                         primary={c.subject}
@@ -123,33 +121,35 @@ export default function SearchPage() {
           </Box>
         )}
       </Box>
-      <Dialog
-        fullScreen={fullScreen}
-        maxWidth="md"
-        fullWidth
-        TransitionComponent={SlideUp}
-        open={viewing !== null}
-        onClose={() => setViewing(null)}
-      >
-        <AppBar position="static" elevation={0}>
-          <Toolbar>
-            <IconButton
-              edge="start"
-              color="inherit"
-              onClick={() => setViewing(null)}
-              aria-label="关闭"
-            >
-              <CloseIcon />
-            </IconButton>
-            <Typography variant="h6" sx={{ ml: 1 }} noWrap>
-              原邮件
-            </Typography>
-          </Toolbar>
-        </AppBar>
-        <Box sx={{ px: 2, py: 2 }}>
-          {viewing && <EmailViewer emailId={viewing.email_id} />}
-        </Box>
-      </Dialog>
+      {/* 条件渲染而非常驻 + open 切换：View Transition 需要新态里对话框已在 DOM，
+          容器变换才拍得到 paper 的目标位置 */}
+      {current && (
+        <Dialog
+          fullScreen={fullScreen}
+          maxWidth="md"
+          fullWidth
+          {...dialogTransitionProps()}
+          slotProps={{
+            paper: { sx: { viewTransitionName: VT_NAMES.sheet } },
+          }}
+          open
+          onClose={close}
+        >
+          <AppBar position="static" elevation={0}>
+            <Toolbar>
+              <IconButton edge="start" color="inherit" onClick={close} aria-label="关闭">
+                <CloseIcon />
+              </IconButton>
+              <Typography variant="h6" sx={{ ml: 1 }} noWrap>
+                原邮件
+              </Typography>
+            </Toolbar>
+          </AppBar>
+          <Box sx={{ px: 2, py: 2 }}>
+            <EmailViewer emailId={current.email_id} />
+          </Box>
+        </Dialog>
+      )}
     </Box>
   );
 }

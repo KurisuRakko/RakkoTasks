@@ -1,8 +1,11 @@
 // TasksPage 测试：high 条目渲染「重要」Chip，normal/low 条目不渲染；「重要」组标题出现。
+// 另覆盖容器变换与 portal 相关行为：悬浮按钮挂在 body 下（不被路由转场盒子的
+// transform 困住）、勾选推进 LEAVE_DURATION 后发 PATCH done 且条目从列表消失。
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import TasksPage from '../src/pages/TasksPage';
+import { LEAVE_DURATION } from '../src/lib/motion';
 import type { Item } from '../src/types';
 
 function makeItem(partial: Partial<Item>): Item {
@@ -167,5 +170,51 @@ describe('TasksPage 手动添加', () => {
     // 新条目出现在列表中，并提示「已添加」
     expect(await screen.findByText('买牛奶')).toBeTruthy();
     expect(await screen.findByText('已添加')).toBeTruthy();
+  });
+});
+
+describe('TasksPage 容器变换与 portal', () => {
+  it('「添加任务」悬浮按钮的 parentElement 是 document.body（portal 生效）', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => json({ items: [] })));
+
+    render(<TasksPage />);
+
+    const fab = await screen.findByRole('button', { name: '添加任务' });
+    expect(fab.parentElement).toBe(document.body);
+  });
+
+  it('勾选条目后推进 LEAVE_DURATION：PATCH {"status":"done"} 且条目从列表消失', async () => {
+    const fetchMock = vi.fn(async (url: string | URL, init?: RequestInit) => {
+      const u = String(url);
+      if (init?.method === 'PATCH' && u === '/api/items/1') return json({});
+      if (u.startsWith('/api/items')) return json({ items: ITEMS });
+      return json({}, 404);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<TasksPage />);
+    await screen.findByText('重要任务');
+
+    vi.useFakeTimers();
+    try {
+      const row = screen.getByText('重要任务').closest('li') as HTMLElement;
+      expect(row).not.toBeNull();
+      fireEvent.click(within(row).getByRole('checkbox'));
+
+      // 离场动画结束（LEAVE_DURATION）后条目才移除并 PATCH done
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(LEAVE_DURATION);
+      });
+
+      const patchCall = fetchMock.mock.calls.find(
+        ([, init]) => init?.method === 'PATCH',
+      ) as [string, RequestInit] | undefined;
+      expect(patchCall).toBeDefined();
+      expect(patchCall![0]).toBe('/api/items/1');
+      expect(JSON.parse(String(patchCall![1].body))).toEqual({ status: 'done' });
+      expect(screen.queryByText('重要任务')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -2,16 +2,16 @@
 // 编辑框是普通多行文本框：第一行 = 标题（1~128 字，必填），其余行 = 详情；
 // 另有分类 chip 单选（radiogroup/radio）与原生 date input 截止日期（不引日期库）。
 // 不做富文本/所见即所得；保存动作与提示交给父组件（TasksPage 添加 / ItemDialog 编辑）。
+// viewTransitionName：容器变换时让 Dialog paper 顶替来源元素的名字（来源元素同时让名）；
+// 不传则 paper 不带共享名（ItemDialog 内部编辑场景不参与容器变换）。
 
-import type { ReactElement } from 'react';
-import { forwardRef, useState } from 'react';
+import { useState } from 'react';
 import AppBar from '@mui/material/AppBar';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Chip from '@mui/material/Chip';
 import Dialog from '@mui/material/Dialog';
 import IconButton from '@mui/material/IconButton';
-import Slide from '@mui/material/Slide';
 import Stack from '@mui/material/Stack';
 import TextField from '@mui/material/TextField';
 import Toolbar from '@mui/material/Toolbar';
@@ -22,7 +22,7 @@ import CloseIcon from '@mui/icons-material/Close';
 import ClearIcon from '@mui/icons-material/Clear';
 import { CATEGORIES } from '../types';
 import type { Category, ItemFields } from '../types';
-import type { TransitionProps } from '@mui/material/transitions';
+import { dialogTransitionProps } from './DialogTransition';
 
 /** 标题上限（与后端 POST/PATCH 契约一致：去首尾空白后 1~128 字符） */
 const MAX_TITLE_LENGTH = 128;
@@ -36,11 +36,6 @@ export function parseEditorText(text: string): { title: string; summary: string 
   return { title: first.trim(), summary: rest.join('\n').trim() };
 }
 
-// 模块级 Slide 过渡组件：避免在渲染函数体内内联定义导致 Dialog 每次渲染重挂载
-const SlideUp = forwardRef<HTMLDivElement, TransitionProps & { children: ReactElement }>(
-  (props, ref) => <Slide direction="up" ref={ref} {...props} />,
-);
-
 interface Props {
   /** 对话框标题：「添加任务」或「编辑任务」 */
   heading: string;
@@ -49,9 +44,18 @@ interface Props {
   submitting: boolean;
   onSubmit: (fields: ItemFields) => void;
   onClose: () => void;
+  /** 容器变换共享名：传给 Dialog paper；缺省不设置（内部编辑场景） */
+  viewTransitionName?: string;
 }
 
-export default function ItemEditor({ heading, initial, submitting, onSubmit, onClose }: Props) {
+export default function ItemEditor({
+  heading,
+  initial,
+  submitting,
+  onSubmit,
+  onClose,
+  viewTransitionName,
+}: Props) {
   // 初始文本：编辑时标题与详情各自 trim 过，用单个换行拼回编辑器
   const [text, setText] = useState(
     initial ? [initial.title, initial.summary].filter(Boolean).join('\n') : '',
@@ -79,7 +83,11 @@ export default function ItemEditor({ heading, initial, submitting, onSubmit, onC
       fullScreen={fullScreen}
       maxWidth="sm"
       fullWidth
-      TransitionComponent={SlideUp}
+      {...dialogTransitionProps()}
+      slotProps={{
+        // 不传 viewTransitionName 时不给 paper 设共享名（内部编辑不做容器变换）
+        paper: { sx: viewTransitionName ? { viewTransitionName } : undefined },
+      }}
       open
       onClose={onClose}
     >

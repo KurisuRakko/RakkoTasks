@@ -7,6 +7,7 @@ import { useMemo } from 'react';
 import { alpha, createTheme, lighten } from '@mui/material/styles';
 import type { Shadows, ThemeOptions } from '@mui/material/styles';
 import { useThemeMode } from './lib/theme-mode';
+import { viewTransitionStyles } from './motion-styles';
 import {
   ACCENT,
   BORDER,
@@ -117,10 +118,13 @@ function buildThemeOptions(mode: Mode): ThemeOptions {
     },
     components: {
       MuiCssBaseline: {
-        styleOverrides: {
+        // 基线字号行高之外，View Transitions 的全局 keyframes 与 ::view-transition-* 规则
+        // 也从这里注入：styleOverrides 的返回值会整段作为全局样式下发
+        styleOverrides: (themeParam) => ({
           html: { fontSize: 14 },
           body: { letterSpacing: '0.01em' },
-        },
+          ...viewTransitionStyles(themeParam),
+        }),
       },
       // AppBar 不再是 accent 大色块（accent 覆盖面 ≤5% 纪律）：paper 背景 + 下边框分层
       MuiAppBar: {
@@ -182,9 +186,38 @@ function buildThemeOptions(mode: Mode): ThemeOptions {
         },
       },
       MuiTouchRipple: {
+        // 水波终态停在 pressed 状态层 12%（MUI 默认 0.3 偏重），且进场淡入幅度
+        // 收窄到 hover→pressed 之间，避免波峰闪白
         styleOverrides: {
           ripple: {
-            '&.MuiTouchRipple-rippleVisible': { animationDuration: `${MOTION.ripple}ms` },
+            '&.MuiTouchRipple-rippleVisible': {
+              opacity: STATE_OPACITY.pressed,
+              animationName: 'rtk-ripple-enter',
+              animationDuration: `${MOTION.ripple}ms`,
+              animationTimingFunction: MOTION.easeStandard,
+            },
+            '& .MuiTouchRipple-childLeaving': { animationDuration: `${MOTION.ripple}ms` },
+            '@keyframes rtk-ripple-enter': {
+              from: { transform: 'scale(0)', opacity: STATE_OPACITY.hover },
+              to: { transform: 'scale(1)', opacity: STATE_OPACITY.pressed },
+            },
+          },
+        },
+      },
+      MuiCheckbox: {
+        // 勾选瞬间图标做一次小 pop，反馈选中动作；系统偏好减动效时去掉
+        styleOverrides: {
+          root: {
+            '&.Mui-checked .MuiSvgIcon-root': {
+              animation: `rtk-check-pop ${MOTION.state}ms ${MOTION.easeStandard}`,
+            },
+            '@keyframes rtk-check-pop': {
+              from: { transform: 'scale(0.8)' },
+              to: { transform: 'scale(1)' },
+            },
+            '@media (prefers-reduced-motion: reduce)': {
+              '&.Mui-checked .MuiSvgIcon-root': { animation: 'none' },
+            },
           },
         },
       },
