@@ -6,7 +6,7 @@ import { flushSync } from 'react-dom';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { MOTION } from '../rakko-tokens';
-import { navIndexOf } from './nav';
+import { routeDirection } from './nav';
 import { runViewTransition, VT_NAMES } from './view-transition';
 import type { SxProps } from '@mui/material';
 import type { Theme } from '@mui/material/styles';
@@ -94,9 +94,9 @@ export function rowSx(
 }
 
 /**
- * 带方向的路由跳转：按导航索引判定前进/后退，交给 View Transitions 做共享轴转场。
- * 设置页（索引 -1）视为「更深一层」——进去算前进、出来算后退。
- * 目标与当前路径相同时不导航，避免原地触发一次无意义的转场。
+ * 带方向的路由跳转：方向判定收在 lib/nav 的 routeDirection（设置组内按路径深度），
+ * 交给 View Transitions 做共享轴转场。目标与当前路径相同时不导航，避免原地
+ * 触发一次无意义的转场。
  */
 export function useTransitionNavigate(): (to: string) => void {
   const navigate = useNavigate();
@@ -105,9 +105,7 @@ export function useTransitionNavigate(): (to: string) => void {
   return useCallback(
     (to: string) => {
       if (to === location.pathname) return;
-      const from = navIndexOf(location.pathname);
-      const next = navIndexOf(to);
-      const forward = next === -1 || (from !== -1 && next > from);
+      const forward = routeDirection(location.pathname, to) === 'forward';
       void runViewTransition(
         forward ? 'route-forward' : 'route-back',
         () => navigate(to),

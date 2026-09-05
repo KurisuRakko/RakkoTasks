@@ -40,13 +40,35 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
-/** 统一 stub fetch：任务页返回空列表；进入设置页时 /api/status 按 StatusResponse 形状给 */
-function renderShell() {
+/**
+ * 统一 stub fetch：任务页返回空列表；进入设置页时 /api/status 按 StatusResponse 形状给。
+ * 注意任务页空态会在条目为空时多查一次 /api/status：返回带账户（与「没有待办任务」
+ * 文案对应），不带账户会显示「还没有接入邮箱」引导。
+ */
+function renderShell(initial = '/') {
   vi.stubGlobal(
     'fetch',
     vi.fn(async (input: RequestInfo | URL) => {
       const u = String(input);
-      if (u.includes('/api/status')) return json({ accounts: [], pending_llm: 0 });
+      if (u.includes('/api/status')) {
+        return json({
+          accounts: [
+            {
+              id: 1,
+              name: 'Gmail',
+              kind: 'gmail',
+              email: 'you@gmail.com',
+              status: 'ok',
+              enabled: true,
+              has_credentials: true,
+              ms_client_id: null,
+              last_sync_at: null,
+              last_error: null,
+            },
+          ],
+          pending_llm: 0,
+        });
+      }
       if (u.includes('/api/items')) return json({ items: [] });
       return json({}, 404);
     }),
@@ -54,7 +76,7 @@ function renderShell() {
   return render(
     <ThemeModeProvider>
       <ThemeProvider theme={createTheme()}>
-        <MemoryRouter initialEntries={['/']} useTransitions={false}>
+        <MemoryRouter initialEntries={[initial]} useTransitions={false}>
           <AppShell />
         </MemoryRouter>
       </ThemeProvider>
@@ -125,5 +147,31 @@ describe('AppShell 设置入口与壳层标记', () => {
     expect(await within(bar).findByText('设置')).toBeTruthy();
     // 设置页没有导航位，AppBar 按钮随之消失
     expect(within(bar).queryByRole('button', { name: '设置' })).toBeNull();
+  });
+
+  it('移动端 /settings/accounts/new：标题为邮箱账户且有返回按钮，点击返回设置页', async () => {
+    renderShell('/settings/accounts/new');
+
+    const bar = appBar();
+    // 邮箱账户子页标题不再是「设置」
+    expect(await within(bar).findByText('邮箱账户')).toBeTruthy();
+    // 返回箭头在 AppBar 内且可点，方向导航去 /settings
+    const back = within(bar).getByRole('button', { name: '返回' });
+    expect(back).toBeTruthy();
+    fireEvent.click(back);
+
+    // 回到设置页：标题变回「设置」、返回箭头消失（子页专属）
+    expect(await within(bar).findByText('设置')).toBeTruthy();
+    expect(within(bar).queryByRole('button', { name: '返回' })).toBeNull();
+  });
+
+  it('桌面端访问 /settings/accounts/new：重定向回 /settings（桌面只用 Dialog）', async () => {
+    installDesktopMedia();
+    renderShell('/settings/accounts/new');
+
+    // 页面级 <Navigate replace>：标题与列表都落在设置页
+    const bar = appBar();
+    expect(await within(bar).findByText('设置')).toBeTruthy();
+    expect(await screen.findByText('邮箱账户')).toBeTruthy();
   });
 });

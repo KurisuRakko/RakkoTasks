@@ -12,7 +12,7 @@
 import { useRef } from 'react';
 import Box from '@mui/material/Box';
 import { useLocation } from 'react-router-dom';
-import { navIndexOf } from '../lib/nav';
+import { routeDirection } from '../lib/nav';
 import { supportsViewTransitions } from '../lib/view-transition';
 import { usePrefersReducedMotion } from '../lib/motion';
 import { MOTION, SHARED_AXIS_OFFSET_PX } from '../rakko-tokens';
@@ -35,17 +35,18 @@ const FROM_LEFT_KEYFRAMES = {
 export default function RouteTransition({ children }: { children: ReactNode }) {
   const location = useLocation();
   const reduced = usePrefersReducedMotion();
-  const prevIndex = useRef(navIndexOf(location.pathname));
-  const index = navIndexOf(location.pathname);
+  // 记上一段路径而非索引：方向按 routeDirection 判（设置组内按路径深度）
+  const prevPath = useRef(location.pathname);
+  const path = location.pathname;
 
   // 支持 View Transitions 时彻底让位：不加任何包裹与动画（见文件头注释）
   if (supportsViewTransitions()) return children;
 
   // 回退路径（无 View Transitions 的浏览器）：
-  // /settings（-1）统一按「从右进入」；从 settings 返回（prev 为 -1）按「从左进入」
-  const fromRight = index === -1 || (prevIndex.current !== -1 && index > prevIndex.current);
-  const moving = index !== prevIndex.current;
-  prevIndex.current = index;
+  // 方向与 useTransitionNavigate 同一来源（routeDirection）；只做入场动画
+  const fromRight = routeDirection(prevPath.current, path) === 'forward';
+  const moving = path !== prevPath.current;
+  prevPath.current = path;
 
   const sx = reduced || !moving ? {} : fromRight
     ? {
