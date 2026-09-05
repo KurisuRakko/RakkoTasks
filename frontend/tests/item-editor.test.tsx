@@ -114,3 +114,17 @@ describe('ItemEditor 渲染', () => {
     expect(screen.getByRole('button', { name: '保存' })).toBeDisabled();
   });
 });
+
+describe('ItemEditor 居中于主内容区的样式', () => {
+  it('md 起容器让出抽屉宽度，paper 不封顶内容列宽（保持 sm）', () => {
+    renderEditor();
+
+    // 直接核对 style 文本：mainAreaDialogSx 只让 .MuiDialog-container 让出
+    // 抽屉宽（240px），paper 不设内容列宽（840px）——编辑器保持 maxWidth="sm"
+    const cssText = Array.from(document.querySelectorAll('style'))
+      .map((s) => s.textContent ?? '')
+      .join('\n');
+    expect(cssText).toContain('padding-left:240px');
+    expect(cssText).not.toContain('max-width:840px');
+  });
+});

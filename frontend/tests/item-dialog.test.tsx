@@ -274,3 +274,22 @@ describe('ItemDialog 容器变换共享名', () => {
     expect(vtSelector).toBeDefined();
   });
 });
+
+describe('ItemDialog 与内容列重合的样式', () => {
+  it('md 起对话框与内容列重合的样式规则已注入', async () => {
+    vi.stubGlobal('fetch', makeFetchMock());
+
+    render(<ItemDialog item={makeItem({})} onClose={vi.fn()} />);
+    await screen.findByText('退款来源');
+
+    // sx 生成的是媒体查询内的容器/paper 规则（jsdom 无法求值计算样式），
+    // 直接核对 style 文本：md 断点（900px）下容器让出抽屉宽（240px）、
+    // paper 去横向边距、封顶内容列宽（840px）
+    const cssText = Array.from(document.querySelectorAll('style'))
+      .map((s) => s.textContent ?? '')
+      .join('\n');
+    expect(cssText).toContain('@media (min-width:900px)');
+    expect(cssText).toContain('padding-left:240px');
+    expect(cssText).toContain('max-width:840px');
+  });
+});

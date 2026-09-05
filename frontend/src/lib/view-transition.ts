@@ -29,6 +29,24 @@ export const VT_NAMES = {
   navDrawer: 'rtk-nav-drawer',
 } as const;
 
+/**
+ * 壳层（AppBar / 底栏 / 抽屉）与悬浮按钮的持名标记属性：元素上只写
+ * data-vt-shell="<VT_NAMES 里的名字>"，不直接写 view-transition-name。
+ *
+ * 何时真正持名由样式层（motion-styles）按 <html data-vt> 的种类决定：
+ * - 换页（route-*）：壳层与悬浮按钮全部持名，各自交叉淡化、保持静止；
+ * - 打开 / 关闭详情（expand / collapse）：一律不持名——它们必须留在 root 快照里，
+ *   才能被 Dialog 遮罩一起压暗；若单独成组就会浮在遮罩之上，直到转场结束瞬间才被
+ *   压暗，看起来就是遮罩「闪一下」；
+ * - 悬浮按钮另在 expand-fab / collapse-fab 时持名（它自己形变成编辑器）。
+ */
+export const VT_SHELL_ATTR = 'data-vt-shell';
+
+/** 给壳层元素打标记用的 JSX 属性对象：{...shellAttr(VT_NAMES.appBar)} */
+export function shellAttr(name: string): { [VT_SHELL_ATTR]: string } {
+  return { [VT_SHELL_ATTR]: name };
+}
+
 /** <html> 上的方向标记属性名 */
 export const VT_ATTR = 'data-vt';
 

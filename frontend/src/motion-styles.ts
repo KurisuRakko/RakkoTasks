@@ -1,12 +1,12 @@
-// View Transitions 全局样式层：换页共享轴（场景 A）、容器变换（场景 B/C）、
-// 壳层与 FAB 的 fade-through，外加 reduced-motion 总闸。
+// View Transitions 全局样式层：换页共享轴（场景 A）、容器变换（场景 B/C），
+// 以及壳层与 FAB 的持名时机与交叉淡化节奏，外加 reduced-motion 总闸。
 // 全部规则经 MuiCssBaseline 的 styleOverrides 注入全局；转场方向标记 data-vt
 // 由 lib/view-transition 的 runViewTransition 在转场期间写到 <html> 上。
 // 时长、位移、元素名一律引用 token 与接线层常量，杜绝样式与运行时刻字面量分叉。
 
 import type { Theme } from '@mui/material/styles';
 import { MOTION, RADIUS, SHARED_AXIS_OFFSET_PX } from './rakko-tokens';
-import { VT_NAMES } from './lib/view-transition';
+import { VT_NAMES, VT_SHELL_ATTR } from './lib/view-transition';
 
 /** FAB 直径 56px 的一半——FAB 是完全圆形，角半径即半径（Dialog 打开圆角 morph 的起点） */
 const FAB_RADIUS_PX = 28;
@@ -23,6 +23,10 @@ const KF = {
   fabIn: 'rtk-fab-in',
   radiusExpand: 'rtk-radius-expand',
   radiusCollapse: 'rtk-radius-collapse',
+  surfaceIn: 'rtk-surface-in',
+  surfaceOut: 'rtk-surface-out',
+  fabSurfaceIn: 'rtk-fab-surface-in',
+  fabSurfaceOut: 'rtk-fab-surface-out',
 } as const;
 
 /**
@@ -41,14 +45,9 @@ function vtPseudo(kind: 'old' | 'new' | 'group', name: string): string {
 export function viewTransitionStyles(theme: Theme): Record<string, unknown> {
   const sheet = VT_NAMES.sheet;
   const fab = VT_NAMES.fab;
-
-  // 换页时壳层三件套：与路由内容同名的快照只出现在一侧，整体做淡出/淡入
-  const shells = [VT_NAMES.appBar, VT_NAMES.bottomNav, VT_NAMES.navDrawer]
-    .map((n) => `:root[data-vt^="route-"]${vtPseudo('old', n)}`)
-    .join(', ');
-  const shellsNew = [VT_NAMES.appBar, VT_NAMES.bottomNav, VT_NAMES.navDrawer]
-    .map((n) => `:root[data-vt^="route-"]${vtPseudo('new', n)}`)
-    .join(', ');
+  const appBar = VT_NAMES.appBar;
+  const bottomNav = VT_NAMES.bottomNav;
+  const navDrawer = VT_NAMES.navDrawer;
 
   // 容器变换里 sheet/fab 各自的旧/新快照基础样式（圆角、尺寸插值打底）
   const pairNames = [sheet, fab]
@@ -60,7 +59,8 @@ export function viewTransitionStyles(theme: Theme): Record<string, unknown> {
 
   // 容器变换里正在形变的那个共享元素的旧/新快照选择器。
   // dir 精确到具体元素（expand → sheet、expand-fab → fab），因为一次转场里只有形变的
-  // 那个该淡入淡出；同名但未变化的元素另有「保持静止」的规则兜住。
+  // 那个该淡入淡出；其余同名元素（例如详情开关下的 FAB）因段 (b) 不持名，留在 root 快照
+  // 里跟遮罩一起被压暗，不需要额外的「保持静止」规则。
   const dim = (kind: 'old' | 'new', dir: 'expand' | 'collapse', name: string) =>
     `:root[data-vt="${dir}"]${vtPseudo(kind, name)}`;
   const dimFab = (kind: 'old' | 'new', dir: 'expand' | 'collapse') =>
@@ -116,11 +116,41 @@ export function viewTransitionStyles(theme: Theme): Record<string, unknown> {
       from: { borderRadius: `${RADIUS.dialog}px` },
       to: { borderRadius: `${FAB_RADIUS_PX}px` },
     },
-
-    // (b) 根层交叉淡化默认 mix-blend-mode 会把两张不透明页面混出发灰，改回正常叠放
-    '::view-transition-old(root), ::view-transition-new(root)': {
-      mixBlendMode: 'normal',
+    // 容器变换期间 image-pair 的纸面色打底：快照不再缩放后盖不满长大的容器，
+    // 露出的部分要有纸面色，否则会透出底下被遮罩压暗的页面。sheet 从透明淡入纸色
+    // （跟随 old 淡出的 90ms）；FAB 从 primary.main 淡入纸色（跟随整段时长），关闭反向。
+    [`@keyframes ${KF.surfaceIn}`]: {
+      from: { backgroundColor: 'transparent' },
+      to: { backgroundColor: theme.palette.background.paper },
     },
+    [`@keyframes ${KF.surfaceOut}`]: {
+      from: { backgroundColor: theme.palette.background.paper },
+      to: { backgroundColor: 'transparent' },
+    },
+    [`@keyframes ${KF.fabSurfaceIn}`]: {
+      from: { backgroundColor: theme.palette.primary.main },
+      to: { backgroundColor: theme.palette.background.paper },
+    },
+    [`@keyframes ${KF.fabSurfaceOut}`]: {
+      from: { backgroundColor: theme.palette.background.paper },
+      to: { backgroundColor: theme.palette.primary.main },
+    },
+
+    // (b) 持名时机：壳层与 FAB 只在换页（route-*）时持有 view-transition-name，各自成组
+    // 交叉淡化；打开/关闭详情（expand / collapse）一律不持名、留在 root 快照里——单独成组
+    // 会画在 root 之上，转场期间不被 Dialog 遮罩压暗，直到转场结束切回真实 DOM 的瞬间才被
+    // 盖住，看起来就是遮罩「闪一下」。FAB 另在 expand-fab / collapse-fab（自己形变）时持名。
+    // view-transition-name 在 startViewTransition 拍旧快照前已生效：接线层先写 data-vt 方向
+    // 标记、再启动转场，因此新旧两侧快照都能按这里的规则分组。
+    [`:root[data-vt^="route-"] [${VT_SHELL_ATTR}="${appBar}"]`]: { viewTransitionName: appBar },
+    [`:root[data-vt^="route-"] [${VT_SHELL_ATTR}="${bottomNav}"]`]: { viewTransitionName: bottomNav },
+    [`:root[data-vt^="route-"] [${VT_SHELL_ATTR}="${navDrawer}"]`]: { viewTransitionName: navDrawer },
+    [`:root[data-vt^="route-"] [${VT_SHELL_ATTR}="${fab}"]`]: { viewTransitionName: fab },
+    [`:root[data-vt="expand-fab"] [${VT_SHELL_ATTR}="${fab}"],
+      :root[data-vt="collapse-fab"] [${VT_SHELL_ATTR}="${fab}"]`]:
+      {
+        viewTransitionName: fab,
+      },
 
     // (c) 场景 A：路由共享轴。方向由 data-vt 区分，前进/后退各一组
     ':root[data-vt="route-forward"]::view-transition-old(root)': {
@@ -136,14 +166,18 @@ export function viewTransitionStyles(theme: Theme): Record<string, unknown> {
       animation: `${KF.axisInBack} ${MOTION.large}ms ${ease} both`,
     },
 
-    // (d) 壳层 fade-through：标题与选中态随快照淡出淡入，而不是硬切。
-    // 新快照在旧快照淡出之后才进场，总时长仍是 large。
-    [shells]: {
-      animation: `${KF.fadeOut} ${MOTION.fadeOut}ms ${ease} both`,
-    },
-    [shellsNew]: {
-      animation: `${KF.fadeIn} ${MOTION.large - MOTION.fadeOut}ms ${ease} ${MOTION.fadeOut}ms both`,
-    },
+    // (d) 换页时壳层的交叉淡化：壳层前后两态几乎一样（只有标题文字 / 选中态在变），保留
+    // UA 默认的 plus-lighter 交叉淡化——相同像素完全静止，变化像素平滑过渡，不该再安排
+    // 「先 90ms 淡出、再淡入」的顺序淡化（那会让壳层中途全透明，整屏闪成底色）。这里只把
+    // group 的时长从 UA 默认 250ms 对齐到内容轴移的 large，各壳层的旧/新快照动画时长随
+    // 自己的 group 继承，交叉淡化的节奏与内容轴移一致。
+    [`:root[data-vt^="route-"]${vtPseudo('group', appBar)},
+      :root[data-vt^="route-"]${vtPseudo('group', bottomNav)},
+      :root[data-vt^="route-"]${vtPseudo('group', navDrawer)}`]:
+      {
+        animationDuration: `${MOTION.large}ms`,
+        animationTimingFunction: ease,
+      },
 
     // (e) FAB 只存在于一侧时用 :only-child 命中，同样按 fade-through 时序
     [`:root[data-vt^="route-"]${vtPseudo('old', fab)}:only-child`]: {
@@ -153,7 +187,12 @@ export function viewTransitionStyles(theme: Theme): Record<string, unknown> {
       animation: `${KF.fabIn} ${MOTION.large - MOTION.fadeOut}ms ${ease} ${MOTION.fadeOut}ms both`,
     },
 
-    // (f) 场景 B/C：容器变换。快照打底防止拉伸变形与半透明叠加发灰
+    // (f) 场景 B/C：容器变换。快照以 object-fit: none 保持原尺寸、左上锚定——容器变换的
+    // 正确形态是「容器长大、内容不缩放」：若让快照填满容器，80px 高的行快照会被放大十余倍
+    // 去铺满整个对话框，关闭时再看着它从巨大缩回原尺寸。快照超出容器部分由 image-pair 裁掉
+    // （overflow: clip）；快照层改走 normal：image-pair 现在带不透明纸面色（surfaceIn /
+    // fabSurfaceIn），plus-lighter 会把快照加在纸色上整体过曝；而 old 先 90ms 淡出、new 再
+    // 淡入、互不重叠，改 normal 不损失交叉插值。
     [pairNames]: {
       isolation: 'auto',
       overflow: 'clip',
@@ -162,7 +201,7 @@ export function viewTransitionStyles(theme: Theme): Record<string, unknown> {
       mixBlendMode: 'normal',
       display: 'block',
       height: '100%',
-      objectFit: 'cover',
+      objectFit: 'none',
       objectPosition: 'top left',
     },
     // group 的动画时长决定尺寸/位置插值节奏，expand 用 large、collapse 用 largeExit
@@ -176,12 +215,25 @@ export function viewTransitionStyles(theme: Theme): Record<string, unknown> {
         animationDuration: `${MOTION.largeExit}ms`,
         animationTimingFunction: ease,
       },
-    // 打开/关闭详情时悬浮按钮原地不动：两侧快照都不加动画，叠放即原样，不闪
-    [`:root[data-vt="expand"]${vtPseudo('old', fab)}, :root[data-vt="expand"]${vtPseudo('new', fab)},
-      :root[data-vt="collapse"]${vtPseudo('old', fab)}, :root[data-vt="collapse"]${vtPseudo('new', fab)}`]:
+    // 打开/关闭详情时 root 的交叉淡化默认 250ms，与容器变换的 300 / 250ms 不同步；
+    // 遮罩的明暗节奏由此与对话框收放错开——old/new(root) 的时长从 group(root) 继承，这里
+    // 按方向对齐到容器时长（遮罩压在 root 快照上，壳层与 FAB 因段 (b) 不持名也在其中）。
+    [`:root[data-vt="expand"]${vtPseudo('group', 'root')}, :root[data-vt="expand-fab"]${vtPseudo('group', 'root')}`]:
       {
-        animation: 'none',
+        animationDuration: `${MOTION.large}ms`,
       },
+    [`:root[data-vt="collapse"]${vtPseudo('group', 'root')}, :root[data-vt="collapse-fab"]${vtPseudo('group', 'root')}`]:
+      {
+        animationDuration: `${MOTION.largeExit}ms`,
+      },
+    // 快照不再缩放后盖不满长大的容器：image-pair 补纸面色动画，露出的部分不透出底下页面。
+    // sheet 在 old 淡出的 90ms 内从透明补上纸色；关闭时在收尾 90ms 从纸色淡出、让位给真实 DOM
+    [`:root[data-vt="expand"]::view-transition-image-pair(${sheet})`]: {
+      animation: `${KF.surfaceIn} ${MOTION.fadeOut}ms ${ease} both`,
+    },
+    [`:root[data-vt="collapse"]::view-transition-image-pair(${sheet})`]: {
+      animation: `${KF.surfaceOut} ${MOTION.fadeOut}ms ${ease} ${MOTION.largeExit - MOTION.fadeOut}ms both`,
+    },
     [`${dim('old', 'expand', sheet)}, ${dimFab('old', 'expand')}`]: {
       animation: `${KF.fadeOut} ${MOTION.fadeOut}ms ${ease} both`,
     },
@@ -198,12 +250,14 @@ export function viewTransitionStyles(theme: Theme): Record<string, unknown> {
     [`:root[data-vt="collapse"]${vtPseudo('old', sheet)}:only-child`]: {
       animation: `${KF.fabOut} ${MOTION.largeExit}ms ${ease} both`,
     },
-    // FAB 的圆角 morph 只作用于 image-pair（快照合成层），跟随容器时长
+    // FAB 形变成编辑器：圆角 morph 与表面色都作用于 image-pair（快照合成层），两段动画
+    // 逗号分隔同跑，跟随容器时长：底色从 primary.main 淡成纸色（关闭时反向，便于形变期间
+    // 接住不缩放的快照露出部分）
     [`:root[data-vt="expand-fab"]::view-transition-image-pair(${fab})`]: {
-      animation: `${KF.radiusExpand} ${MOTION.large}ms ${ease} both`,
+      animation: `${KF.radiusExpand} ${MOTION.large}ms ${ease} both, ${KF.fabSurfaceIn} ${MOTION.large}ms ${ease} both`,
     },
     [`:root[data-vt="collapse-fab"]::view-transition-image-pair(${fab})`]: {
-      animation: `${KF.radiusCollapse} ${MOTION.largeExit}ms ${ease} both`,
+      animation: `${KF.radiusCollapse} ${MOTION.largeExit}ms ${ease} both, ${KF.fabSurfaceOut} ${MOTION.largeExit}ms ${ease} both`,
     },
     // sheet（Dialog）圆角：移动端全屏无圆角，md 起是带 Dialog 圆角的浮层
     [`::view-transition-image-pair(${sheet})`]: {
