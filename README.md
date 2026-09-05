@@ -37,7 +37,8 @@ hundreds of messages. RakkoTasks digs them out, orders them, and waits for you.
 - **Original email view.** Read the original email inside the task. HTML is sanitised on the
   server and rendered in a sandboxed iframe; remote images are blocked by default.
 - **Multi-user.** Sign-in is handled by Phainon, the author's own authentication service. Each
-  user sees only their own mailboxes, emails and tasks.
+  user connects their own mailboxes from the Settings page and sees only their own mailboxes,
+  emails and tasks.
 - **PWA.** Add it to your home screen; light and dark themes follow the system.
 
 ## How it works
@@ -52,7 +53,7 @@ Mailboxes (IMAP) ──► worker (periodic sync) ──► SQLite (WAL + FTS5)
 ```
 
 - `backend/`: FastAPI application, sync worker, LLM pipeline and the command-line admin tool
-  (add mailboxes, reclassify, and so on).
+  (mailbox setup as an ops fallback; reclassify, regen-details, and so on).
 - `frontend/`: React + TypeScript single-page app; the build output is served by the backend on
   the same origin.
 - `deploy/`: production deployment with Docker Compose and Cloudflare Tunnel.
@@ -78,14 +79,12 @@ walkthrough are in [deploy/README.md](deploy/README.md) (Chinese).
 2. Start: `docker compose -f deploy/docker-compose.yml up -d --build`
    (three services: web, worker and cloudflared; public traffic reaches the app over HTTPS
    through the tunnel).
-3. Connect mailboxes: sign in once on the web app so the backend creates your user record, then
-   look up your subject id with
-   `docker compose -f deploy/docker-compose.yml run --rm web python -m app.cli users list`.
-   Add Gmail with
-   `python -m app.cli accounts add --user <sub> --kind gmail --name Gmail --email you@gmail.com`
-   (you will be prompted for the app password), and connect each Outlook account with
-   `accounts connect --user <sub> <email>` to complete the OAuth device-code flow. Full details are
-   in section 6 of [deploy/README.md](deploy/README.md).
+3. Connect mailboxes: sign in once on the web app, then Settings → Mail accounts → Add
+   mailbox — Gmail takes the app password you generate in your Google account; Outlook /
+   Microsoft 365 runs a generate-link → sign-in → paste-the-address wizard. No terminal
+   involved. The first sync starts at the next scheduled run (within 15 minutes) and
+   backfills the most recent 7 days. Details are in section 6 of
+   [deploy/README.md](deploy/README.md); the CLI remains only as an operator fallback.
 
 ### Local development
 
@@ -109,8 +108,9 @@ When connecting Outlook / Microsoft 365 mailboxes, the default Microsoft OAuth c
 [Mozilla Thunderbird](https://www.thunderbird.net/) registered with Microsoft. It is the same
 identifier Thunderbird itself uses for IMAP access, and it is the established way for an
 individual to reach Outlook IMAP over OAuth2 without registering an Azure application.
-RakkoTasks contains no Thunderbird code. If you prefer your own Azure app registration, pass
-`--client-id` when adding the account. Thunderbird is released under the MPL 2.0.
+RakkoTasks contains no Thunderbird code. If you prefer your own Azure app registration, enter
+its client id in the add-mailbox wizard's Advanced section (or pass `--client-id` on the CLI).
+Thunderbird is released under the MPL 2.0.
 
 ### Backend
 
