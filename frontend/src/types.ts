@@ -67,17 +67,45 @@ export type AccountKind = 'gmail' | 'microsoft';
 /** 账户状态 */
 export type AccountStatusValue = 'ok' | 'error' | 'pending';
 
-/** 状态页账户卡片数据（accounts 表） */
+/** 账户卡片数据（/api/status 与 /api/accounts* 共用同一序列化，accounts 表） */
 export interface AccountInfo {
   id: number;
   name: string;
   kind: AccountKind;
   email: string;
   status: AccountStatusValue;
-  /** false 表示已被 CLI 停用，不再同步 */
+  /** false 表示已停用，不再同步 */
   enabled: boolean;
+  /** Gmail 已存应用专用密码 / 微软已拿到 token：响应永远不含凭据本体，只有这个布尔 */
+  has_credentials: boolean;
+  /** 微软账户的自定义 OAuth client_id（默认 Thunderbird 公共客户端时为 null） */
+  ms_client_id: string | null;
   last_sync_at: string | null;
   last_error: string | null;
+}
+
+/** POST /api/accounts 请求体：kind=gmail 时 app_password 必填，microsoft 忽略该字段 */
+export interface AccountCreate {
+  name: string;
+  kind: AccountKind;
+  email: string;
+  app_password?: string;
+  ms_client_id?: string;
+}
+
+/** PATCH /api/accounts/{id} 请求体：app_password 只对 gmail 开放 */
+export interface AccountPatch {
+  name?: string;
+  app_password?: string;
+  enabled?: boolean;
+}
+
+/** 微软授权失败细分（POST auth-code 的 auth_failed 附带的 kind） */
+export type AuthFailedKind = 'expired' | 'declined' | 'admin_required' | 'other';
+
+/** GET /api/accounts 返回体（信封） */
+export interface AccountsResponse {
+  accounts: AccountInfo[];
 }
 
 /** GET /api/status 返回体 */

@@ -10,6 +10,7 @@
 
 import { useLocation, Navigate, Route, Routes } from 'react-router-dom';
 import AppBar from '@mui/material/AppBar';
+import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import BottomNavigation from '@mui/material/BottomNavigation';
 import BottomNavigationAction from '@mui/material/BottomNavigationAction';
 import Box from '@mui/material/Box';
@@ -35,12 +36,25 @@ import TasksPage from '../pages/TasksPage';
 import SearchPage from '../pages/SearchPage';
 import DonePage from '../pages/DonePage';
 import SettingsPage from '../pages/SettingsPage';
+import { AccountDetailPage, AccountNewPage, AccountRemovePage } from '../pages/AccountPages';
 
-/** AppBar 标题：顺序与 NAV_ITEMS 索引对齐，末尾一位给设置页（索引 -1） */
-const TITLES = ['RakkoTasks', 'AI 搜索', '已完成', '设置'] as const;
+/** AppBar 标题：顺序与 NAV_ITEMS 索引对齐；设置组（索引 -1）读末尾一位 */
+const TITLES = ['RakkoTasks', 'AI 搜索', '已完成'] as const;
 
-function titleFor(navIndex: number): string {
-  return navIndex === -1 ? TITLES[3] : TITLES[navIndex];
+/** 路径以 /settings/accounts 开头即邮箱账户子页（标题 + 返回箭头共用此判断） */
+function isAccountPath(pathname: string): boolean {
+  return pathname.startsWith('/settings/accounts');
+}
+
+/** 账户子页的返回目标：new 与 :id 回 /settings，:id/remove 回 /settings/accounts/:id */
+function accountParent(pathname: string): string {
+  return pathname.endsWith('/remove') ? pathname.slice(0, -'/remove'.length) : '/settings';
+}
+
+function titleFor(pathname: string): string {
+  if (isAccountPath(pathname)) return '邮箱账户';
+  const navIndex = navIndexOf(pathname);
+  return navIndex === -1 ? '设置' : TITLES[navIndex];
 }
 
 export default function AppShell() {
@@ -113,8 +127,21 @@ export default function AppShell() {
         {/* AppBar 是换页转场共享元素：只打 data-vt-shell 标记，名字由样式层按转场种类下发 */}
         <AppBar position="sticky" elevation={0} {...shellAttr(VT_NAMES.appBar)}>
           <Toolbar>
+            {/* 邮箱账户子页（仅移动端可达）：返回箭头回父路径；桌面端这些路径
+                由页面内 <Navigate> 重定向回 /settings，AppBar 只放标题 */}
+            {isAccountPath(location.pathname) && !desktop && (
+              <IconButton
+                edge="start"
+                color="inherit"
+                aria-label="返回"
+                onClick={() => go(accountParent(location.pathname))}
+                sx={{ mr: 1 }}
+              >
+                <ArrowBackIcon />
+              </IconButton>
+            )}
             <Typography variant="h6" noWrap sx={{ flexGrow: 1 }}>
-              {titleFor(navIndex)}
+              {titleFor(location.pathname)}
             </Typography>
             {/* 移动端入口：桌面端（md 起）抽屉左下角已有「设置」项，这里不重复放 */}
             {navIndex !== -1 && !desktop && (
@@ -131,6 +158,10 @@ export default function AppShell() {
               <Route path="/search" element={<SearchPage />} />
               <Route path="/done" element={<DonePage />} />
               <Route path="/settings" element={<SettingsPage />} />
+              {/* 邮箱账户子页（移动端）：添加向导 / 账户详情 / 移除二选一；桌面用 Dialog，页面内重定向 */}
+              <Route path="/settings/accounts/new" element={<AccountNewPage />} />
+              <Route path="/settings/accounts/:id" element={<AccountDetailPage />} />
+              <Route path="/settings/accounts/:id/remove" element={<AccountRemovePage />} />
               {/* 旧书签 /status 兼容：重定向到设置页 */}
               <Route path="/status" element={<Navigate to="/settings" replace />} />
               <Route path="*" element={<Navigate to="/" replace />} />

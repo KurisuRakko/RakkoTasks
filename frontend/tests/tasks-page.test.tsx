@@ -5,11 +5,12 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import TasksPage from '../src/pages/TasksPage';
 import { resetLists } from '../src/lib/list-cache';
 import { LEAVE_DURATION } from '../src/lib/motion';
 import { VT_SHELL_ATTR, VT_NAMES } from '../src/lib/view-transition';
-import type { Item } from '../src/types';
+import type { AccountInfo, Item } from '../src/types';
 
 function makeItem(partial: Partial<Item>): Item {
   return {
@@ -44,6 +45,31 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
+function makeAccount(partial: Partial<AccountInfo>): AccountInfo {
+  return {
+    id: 1,
+    name: 'Gmail',
+    kind: 'gmail',
+    email: 'you@gmail.com',
+    status: 'ok',
+    enabled: true,
+    has_credentials: true,
+    ms_client_id: null,
+    last_sync_at: null,
+    last_error: null,
+    ...partial,
+  };
+}
+
+/** TasksPage 内部会调用带方向导航的 hook（空态「前往设置接入」按钮），渲染需要 Router */
+function renderPage() {
+  return render(
+    <MemoryRouter useTransitions={false}>
+      <TasksPage />
+    </MemoryRouter>,
+  );
+}
+
 beforeEach(() => {
   localStorage.clear();
   // list-cache 是模块级缓存，跨用例残留会互相污染，每个用例从空缓存开始
@@ -60,7 +86,7 @@ describe('TasksPage 重要度标记', () => {
     const fetchMock = vi.fn(async () => json({ items: ITEMS }));
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<TasksPage />);
+    renderPage();
 
     expect(await screen.findByText('重要任务')).toBeTruthy();
     expect(await screen.findByText('普通任务')).toBeTruthy();
@@ -87,7 +113,7 @@ describe('TasksPage 重要度标记', () => {
     const fetchMock = vi.fn(async () => json({ items: ITEMS }));
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<TasksPage />);
+    renderPage();
 
     await screen.findByText('重要任务');
 
@@ -105,7 +131,7 @@ describe('今日新邮件蓝点', () => {
     const fetchMock = vi.fn(async () => json({ items }));
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<TasksPage />);
+    renderPage();
 
     await screen.findByText('今天的新条目');
 
@@ -128,7 +154,7 @@ describe('TasksPage 手动添加', () => {
   it('页面存在右下角「添加任务」悬浮按钮', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => json({ items: [] })));
 
-    render(<TasksPage />);
+    renderPage();
 
     expect(await screen.findByRole('button', { name: '添加任务' })).toBeTruthy();
   });
@@ -155,7 +181,7 @@ describe('TasksPage 手动添加', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<TasksPage />);
+    renderPage();
 
     fireEvent.click(await screen.findByRole('button', { name: '添加任务' }));
     const textarea = await screen.findByLabelText('任务内容');
@@ -186,7 +212,7 @@ describe('TasksPage 容器变换与 portal', () => {
   it('「添加任务」悬浮按钮的 parentElement 是 document.body（portal 生效）', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => json({ items: [] })));
 
-    render(<TasksPage />);
+    renderPage();
 
     const fab = await screen.findByRole('button', { name: '添加任务' });
     expect(fab.parentElement).toBe(document.body);
@@ -195,7 +221,7 @@ describe('TasksPage 容器变换与 portal', () => {
   it('悬浮按钮打 data-vt-shell 标记（持名由样式层按转场种类下发）', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => json({ items: [] })));
 
-    render(<TasksPage />);
+    renderPage();
 
     const fab = await screen.findByRole('button', { name: '添加任务' });
     expect(fab.getAttribute(VT_SHELL_ATTR)).toBe(VT_NAMES.fab);
@@ -210,7 +236,7 @@ describe('TasksPage 容器变换与 portal', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<TasksPage />);
+    renderPage();
     await screen.findByText('重要任务');
 
     vi.useFakeTimers();
@@ -241,15 +267,63 @@ describe('TasksPage 容器变换与 portal', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     // 首次挂载：先加载后渲染，数据落进模块级缓存
-    render(<TasksPage />);
+    renderPage();
     await screen.findByText('重要任务');
     cleanup();
 
     // 再次挂载（模拟切走再切回）：缓存命中，无加载圈、列表同步渲染
-    render(<TasksPage />);
+    renderPage();
     expect(screen.queryByRole('progressbar')).toBeNull();
     expect(screen.getByText('重要任务')).toBeTruthy();
     // 命中缓存仍会发起一次后台刷新
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+  });
+});
+
+describe('TasksPage 空态账户引导', () => {
+  it('条目为空且账户列表为空：先显示「没有待办任务」，账户探测返回后切换成引导', async () => {
+    // /api/status 用可控 promise：模拟「探测还没回来」的窗口，验证空态文案不依赖账户探测
+    let resolveStatus!: (v: Response) => void;
+    const statusPromise = new Promise<Response>((resolve) => {
+      resolveStatus = resolve;
+    });
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const u = String(input);
+      if (u.includes('/api/status')) return statusPromise;
+      return json({ items: [] });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    renderPage();
+
+    // 探测未返回：不打断原有「没有待办任务」文案
+    expect(await screen.findByText('没有待办任务')).toBeTruthy();
+    resolveStatus(json({ accounts: [], pending_llm: 0 }));
+
+    // 确认无账户后切换成设置引导，旧文案消失
+    expect(await screen.findByText('还没有接入邮箱')).toBeTruthy();
+    expect(screen.getByText(/邮件里的待办整理到这里/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: '前往设置接入' })).toBeTruthy();
+    expect(screen.queryByText('没有待办任务')).toBeNull();
+    // 只在列表为空时查一次 /api/status（后续刷新不再重复打）
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.filter(([u]) => String(u).includes('/api/status'))).toHaveLength(1),
+    );
+  });
+
+  it('条目为空但有账户：显示「没有待办任务」，不出现设置引导', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const u = String(input);
+      if (u.includes('/api/status')) {
+        return json({ accounts: [makeAccount({})], pending_llm: 0 });
+      }
+      return json({ items: [] });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    renderPage();
+
+    expect(await screen.findByText('没有待办任务')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '前往设置接入' })).toBeNull();
   });
 });
