@@ -9,6 +9,7 @@ from typing import Any, Callable
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.accounts import has_credentials
 from app.config import Settings, get_settings
 from app.detail import apply_detail, generate_item_detail
 from app.emailtext import email_plain_text
@@ -229,6 +230,11 @@ def run_once(
         # 只同步启用中的账户；enabled=0（软删除）的账户跳过，其邮件与任务保留
         accounts = session.execute(select(Account).where(Account.enabled.is_(True))).scalars().all()
         for account in accounts:
+            if not has_credentials(account):
+                # 刚添加/停用后尚未设置凭据（gmail 未录应用密码、微软未完成授权）的账户：
+                # 跳过不同步，也不标 error——连不上是预期状态，凭据就绪后下一轮自动开始回补
+                summary["accounts"][account.email] = {"status": "pending", "error": None}
+                continue
             imap = None
             try:
                 imap = imap_factory(account, settings)

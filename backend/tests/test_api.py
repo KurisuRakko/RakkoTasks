@@ -299,9 +299,12 @@ def test_status_endpoint(session_factory, monkeypatch):
     resp = client.get("/api/status")
     assert resp.status_code == 200
     data = resp.json()
+    # /api/status 与 /api/accounts* 共用 AccountInfo 序列化（DESIGN.md 第 6 节），
+    # 新增 has_credentials / ms_client_id 两个字段
     assert data["accounts"] == [
         {"id": acc_id, "name": "学校邮箱", "kind": "microsoft", "email": "a@example.com",
-         "status": "ok", "enabled": True, "last_sync_at": None, "last_error": None}
+         "status": "ok", "enabled": True, "has_credentials": False, "ms_client_id": None,
+         "last_sync_at": None, "last_error": None}
     ]
     # 每个账户都带整型 id，且与库中账户 id 一致
     assert all(isinstance(a["id"], int) for a in data["accounts"])
