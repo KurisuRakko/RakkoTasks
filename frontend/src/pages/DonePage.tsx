@@ -12,7 +12,7 @@ import ListItemText from '@mui/material/ListItemText';
 import Snackbar from '@mui/material/Snackbar';
 import Typography from '@mui/material/Typography';
 import { fetchItems, patchItem } from '../lib/api';
-import { enterSx, LEAVE_SX, usePrefersReducedMotion } from '../lib/motion';
+import { LEAVE_DURATION, rowSx, usePrefersReducedMotion } from '../lib/motion';
 import type { Item } from '../types';
 import ItemDialog from '../components/ItemDialog';
 
@@ -66,7 +66,7 @@ export default function DonePage() {
       const timer = window.setTimeout(() => {
         setItems((p) => p.filter((i) => i.id !== item.id));
         patchItem(item.id, { status: 'open' }).catch(() => restore(item));
-      }, reduced ? 0 : 260);
+      }, reduced ? 0 : LEAVE_DURATION);
       timers.current.push(timer);
     },
     [leavingIds, reduced, restore],
@@ -94,7 +94,7 @@ export default function DonePage() {
               <ListItem
                 key={item.id}
                 disablePadding
-                sx={leaving ? LEAVE_SX : enterSx(index, reduced)}
+                sx={rowSx(index, leaving, reduced)}
               >
                 <ListItemButton onClick={() => setEditing(item)}>
                   <Checkbox

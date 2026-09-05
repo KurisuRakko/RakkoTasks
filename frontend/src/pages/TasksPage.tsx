@@ -21,7 +21,7 @@ import Typography from '@mui/material/Typography';
 import AddIcon from '@mui/icons-material/Add';
 import { createItem, fetchItems, patchItem } from '../lib/api';
 import { formatDueDate, groupItems, isNewToday, isOverdue } from '../lib/grouping';
-import { enterSx, LEAVE_SX, usePrefersReducedMotion } from '../lib/motion';
+import { LEAVE_DURATION, rowSx, usePrefersReducedMotion } from '../lib/motion';
 import type { Category, Item, ItemFields } from '../types';
 import CategoryChips from '../components/CategoryChips';
 import ItemDialog from '../components/ItemDialog';
@@ -59,7 +59,7 @@ function GroupSection({
           <ListItem
             key={item.id}
             disablePadding
-            sx={leaving ? LEAVE_SX : enterSx(index, reduced)}
+            sx={rowSx(index, leaving, reduced)}
           >
             <ListItemButton onClick={() => onOpen(item)}>
               <Box sx={{ width: 12, display: 'flex', justifyContent: 'center', flexShrink: 0 }}>
@@ -190,7 +190,7 @@ export default function TasksPage() {
           setOpenItems((p) => (p.some((i) => i.id === item.id) ? p : [item, ...p]));
           setSnack('操作失败，已恢复');
         });
-      }, reduced ? 0 : 260);
+      }, reduced ? 0 : LEAVE_DURATION);
       timers.current.push(timer);
     },
     [leavingIds, reduced],
