@@ -14,6 +14,7 @@ import {
   MOTION,
   NEUTRAL_DARK,
   NEUTRAL_LIGHT,
+  STATE_OPACITY,
   TYPE_SCALE,
   WHISPER_SHADOW,
 } from '../src/rakko-tokens';
@@ -90,6 +91,41 @@ describe('Rakko Design token 主题', () => {
     expect(theme.transitions.duration.leavingScreen).toBe(180);
     expect(theme.transitions.duration.shortest).toBe(160);
     expect(theme.transitions.easing.easeInOut).toBe(MOTION.easeStandard);
+  });
+
+  it('MOTION 大转场契约：large 300 / largeExit 250 / fadeOut 90', () => {
+    expect(MOTION.large).toBe(300);
+    expect(MOTION.largeExit).toBe(250);
+    expect(MOTION.fadeOut).toBe(90);
+  });
+
+  it('MuiCssBaseline styleOverrides 是函数，且同时下发 html 与 View Transitions 全局规则', () => {
+    const theme = themeOf('light');
+    const cssBaseline = theme.components?.MuiCssBaseline;
+    expect(cssBaseline).toBeDefined();
+    const overrides = cssBaseline!.styleOverrides;
+    expect(typeof overrides).toBe('function');
+    const styles = (overrides as (t: typeof theme) => Record<string, unknown>)(theme);
+    expect(styles.html).toEqual({ fontSize: 14 });
+    expect(styles.body).toEqual({ letterSpacing: '0.01em' });
+    expect(Object.keys(styles).some((k) => k.startsWith('::view-transition'))).toBe(true);
+  });
+
+  it('水波 ripple 可见态终态透明度对齐 pressed 状态层', () => {
+    const theme = themeOf('light');
+    const ripple = theme.components?.MuiTouchRipple?.styleOverrides?.ripple as
+      | Record<string, unknown>
+      | undefined;
+    expect(ripple).toBeDefined();
+    const visible = ripple!['&.MuiTouchRipple-rippleVisible'] as { opacity?: number };
+    expect(visible.opacity).toBe(STATE_OPACITY.pressed);
+  });
+
+  it('MuiCheckbox 有勾选 pop 动画覆盖（含 rtk-check-pop）', () => {
+    const theme = themeOf('light');
+    const checkbox = theme.components?.MuiCheckbox;
+    expect(checkbox).toBeDefined();
+    expect(JSON.stringify(checkbox!.styleOverrides)).toContain('rtk-check-pop');
   });
 
   it('AppBar defaultProps color=default 生效（MuiAppBar-colorDefault 类存在）', () => {
