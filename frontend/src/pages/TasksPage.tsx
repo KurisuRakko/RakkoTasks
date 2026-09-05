@@ -291,13 +291,10 @@ export default function TasksPage() {
             onOpen={open}
             sourceName={sourceName}
           />
-          {/* 空态：条目加载完成且为空时，按「有没有接入邮箱」给两种引导 */}
-          {(items ?? []).length === 0 && accountsExist !== null && (
-            accountsExist ? (
-              <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', py: 6 }}>
-                没有待办任务
-              </Typography>
-            ) : (
+          {/* 空态：条目为空时立刻给「没有待办任务」（不等账户探测），只有确认没接入邮箱
+              才切换成引导块——有账户/探测失败/探测中都不打断原有文案 */}
+          {(items ?? []).length === 0 &&
+            (accountsExist === false ? (
               <Stack alignItems="center" spacing={0.5} sx={{ py: 6, px: 2 }}>
                 <Typography variant="body1">还没有接入邮箱</Typography>
                 <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center' }}>
@@ -307,8 +304,11 @@ export default function TasksPage() {
                   前往设置接入
                 </Button>
               </Stack>
-            )
-          )}
+            ) : (
+              <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', py: 6 }}>
+                没有待办任务
+              </Typography>
+            ))}
         </>
       )}
       {current && (

@@ -281,21 +281,29 @@ describe('TasksPage 容器变换与 portal', () => {
 });
 
 describe('TasksPage 空态账户引导', () => {
-  it('条目为空且账户列表为空：显示「还没有接入邮箱」与「前往设置接入」按钮', async () => {
+  it('条目为空且账户列表为空：先显示「没有待办任务」，账户探测返回后切换成引导', async () => {
+    // /api/status 用可控 promise：模拟「探测还没回来」的窗口，验证空态文案不依赖账户探测
+    let resolveStatus!: (v: Response) => void;
+    const statusPromise = new Promise<Response>((resolve) => {
+      resolveStatus = resolve;
+    });
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const u = String(input);
-      if (u.includes('/api/status')) return json({ accounts: [], pending_llm: 0 });
+      if (u.includes('/api/status')) return statusPromise;
       return json({ items: [] });
     });
     vi.stubGlobal('fetch', fetchMock);
 
     renderPage();
 
+    // 探测未返回：不打断原有「没有待办任务」文案
+    expect(await screen.findByText('没有待办任务')).toBeTruthy();
+    resolveStatus(json({ accounts: [], pending_llm: 0 }));
+
+    // 确认无账户后切换成设置引导，旧文案消失
     expect(await screen.findByText('还没有接入邮箱')).toBeTruthy();
     expect(screen.getByText(/邮件里的待办整理到这里/)).toBeTruthy();
-    const cta = screen.getByRole('button', { name: '前往设置接入' });
-    expect(cta).toBeTruthy();
-    // 无账户空态下不显示「没有待办任务」
+    expect(screen.getByRole('button', { name: '前往设置接入' })).toBeTruthy();
     expect(screen.queryByText('没有待办任务')).toBeNull();
     // 只在列表为空时查一次 /api/status（后续刷新不再重复打）
     await waitFor(() =>

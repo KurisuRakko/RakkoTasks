@@ -108,6 +108,26 @@ describe('AccountWizard Gmail 路径', () => {
     // 没有跳完成页，下一步按钮还在
     expect(screen.getByRole('button', { name: '下一步' })).toBeTruthy();
   });
+
+  it('Gmail 未填应用专用密码：「下一步」disabled 且有「请填写应用专用密码」提示', async () => {
+    renderWizard();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Gmail' }));
+    fireEvent.click(screen.getByRole('button', { name: '下一步' }));
+    // 名称邮箱填好也不放行——客户端就拦空密码，不靠后端绕一圈
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: '我的 Gmail' } });
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'me@gmail.com' } });
+    const next = screen.getByRole('button', { name: '下一步' }) as HTMLButtonElement;
+    expect(next.disabled).toBe(true);
+    expect(screen.getByText('请填写应用专用密码')).toBeTruthy();
+
+    // 填上密码后放行
+    fireEvent.change(screen.getByLabelText('应用专用密码'), {
+      target: { value: 'abcd efgh ijkl mnop' },
+    });
+    expect((screen.getByRole('button', { name: '下一步' }) as HTMLButtonElement).disabled).toBe(false);
+    expect(api.createAccountMock).not.toHaveBeenCalled();
+  });
 });
 
 describe('AccountWizard 微软路径', () => {

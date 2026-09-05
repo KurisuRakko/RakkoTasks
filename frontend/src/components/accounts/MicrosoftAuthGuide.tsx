@@ -15,6 +15,7 @@ import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import { requestMsAuthUrl, submitMsAuthCode } from '../../lib/api';
 import { copyText } from '../../lib/clipboard';
+import { apiErrorFields } from './meta';
 import type { AccountInfo } from '../../types';
 
 interface Props {
@@ -67,11 +68,11 @@ export default function MicrosoftAuthGuide({ accountId, onAuthorized }: Props) {
     submitMsAuthCode(accountId, response)
       .then((a) => onAuthorized(a))
       .catch((err: unknown) => {
-        const e = err as { code?: string; kind?: string; detail?: string };
-        if (e.code === 'no_pending_flow') {
+        const { code, kind, detail } = apiErrorFields(err);
+        if (code === 'no_pending_flow') {
           resetToGenerate('授权流程已失效，请重新生成链接');
-        } else if (e.code === 'auth_failed') {
-          switch (e.kind) {
+        } else if (code === 'auth_failed') {
+          switch (kind) {
             case 'expired':
               resetToGenerate('授权已过期，请重新生成链接');
               break;
@@ -85,7 +86,7 @@ export default function MicrosoftAuthGuide({ accountId, onAuthorized }: Props) {
               break;
             default:
               // other：后端 detail 有更具体的原因时展示它
-              setError(e.detail ?? '授权失败，请稍后再试');
+              setError(detail ?? '授权失败，请稍后再试');
           }
         } else {
           setError('授权失败，请稍后再试');

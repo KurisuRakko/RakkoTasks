@@ -25,7 +25,7 @@ import useMediaQuery from '@mui/material/useMediaQuery';
 import { useTheme } from '@mui/material/styles';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import { createAccount } from '../../lib/api';
-import { defaultNameFor } from './meta';
+import { apiErrorFields, defaultNameFor } from './meta';
 import MicrosoftAuthGuide from './MicrosoftAuthGuide';
 import type { AccountInfo, AccountKind } from '../../types';
 
@@ -49,9 +49,10 @@ const KIND_OPTIONS: readonly KindOption[] = [
   },
 ];
 
-/** POST /api/accounts 的错误码 → 中文；未列出的码给兜底文案 */
+/** POST /api/accounts 的错误码 → 中文；未列出的码给兜底文案（password_required 只剩服务端兜底，
+ *  客户端在下一步已拦截空密码） */
 function createErrorMessage(err: unknown): string {
-  const code = (err as { code?: string }).code;
+  const { code } = apiErrorFields(err);
   switch (code) {
     case 'account_exists':
       return '这个邮箱已经添加过了';
@@ -124,8 +125,12 @@ export default function AccountWizard({ onDone, onCancel }: Props) {
 
   const nameInvalid = name.trim() === '';
   const emailInvalid = !email.trim().includes('@');
+  // Gmail 的应用专用密码在客户端就拦空值（密码框有红字提示，见第 2 步），不靠后端绕一圈
+  const passwordMissing = kind === 'gmail' && appPassword.trim() === '';
   const nextDisabled =
-    activeStep === 0 ? kind === null : nameInvalid || emailInvalid || submitting;
+    activeStep === 0
+      ? kind === null
+      : nameInvalid || emailInvalid || passwordMissing || submitting;
 
   return (
     <Box>
@@ -223,6 +228,8 @@ export default function AccountWizard({ onDone, onCancel }: Props) {
                   fullWidth
                   value={appPassword}
                   onChange={(e) => setAppPassword(e.target.value)}
+                  error={passwordMissing}
+                  helperText={passwordMissing ? '请填写应用专用密码' : undefined}
                   inputProps={{ autoComplete: 'off' }}
                 />
                 <Typography variant="body2" color="text.secondary">

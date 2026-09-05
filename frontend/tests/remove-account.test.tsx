@@ -99,6 +99,31 @@ describe('RemoveAccountChoice', () => {
     expect(api.patchAccountMock).not.toHaveBeenCalled();
   });
 
+  it('彻底删除：邮箱大小写不敏感，全大写输入同样放行', async () => {
+    api.deleteAccountMock.mockResolvedValue(undefined);
+    const onDeleted = vi.fn();
+    render(
+      <RemoveAccountChoice
+        account={ACCOUNT}
+        onDisabled={vi.fn()}
+        onDeleted={onDeleted}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '彻底删除' }));
+    const input = screen.getByLabelText('输入邮箱地址以确认彻底删除') as HTMLInputElement;
+    // 邮箱地址不区分大小写：全大写写法与账户邮箱一致，不该被卡住
+    fireEvent.change(input, { target: { value: 'YOU@GMAIL.COM' } });
+    const confirm = screen.getByRole('button', { name: '确认彻底删除' }) as HTMLButtonElement;
+    expect(confirm.disabled).toBe(false);
+    fireEvent.click(confirm);
+
+    await waitFor(() => expect(api.deleteAccountMock).toHaveBeenCalledTimes(1));
+    expect(api.deleteAccountMock).toHaveBeenCalledWith(7);
+    await waitFor(() => expect(onDeleted).toHaveBeenCalledTimes(1));
+  });
+
   it('已停用账户进入：「停用」选项禁用并提示「已停用」', () => {
     renderChoice({ ...ACCOUNT, enabled: false, status: 'pending' });
 

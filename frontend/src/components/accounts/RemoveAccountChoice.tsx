@@ -58,7 +58,9 @@ export default function RemoveAccountChoice({ account, onDisabled, onDeleted, on
   const [error, setError] = useState<string | null>(null);
 
   const alreadyDisabled = !account.enabled;
-  const emailMatches = typedEmail.trim() === account.email;
+  // 邮箱地址本身不区分大小写：两边统一小写比较，手输大写不该被卡住
+  const emailMatches =
+    typedEmail.trim().toLowerCase() === account.email.trim().toLowerCase();
 
   const handleConfirm = () => {
     if (busy) return;

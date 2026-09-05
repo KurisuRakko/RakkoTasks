@@ -28,3 +28,22 @@ export function statusChipMeta(
         : { label: '待授权', color: 'warning' };
   }
 }
+
+/**
+ * 从任意 throw 值里安全取业务错误字段：ApiError 的运行时形状是 {code, kind?, detail?}，
+ * 但 mock / 网关错误可能是普通 Error 或其它对象。只认 string 字段，非对象返回空对象，
+ * 调用方据此映射中文文案，不再各自 as 一把。
+ */
+export function apiErrorFields(err: unknown): {
+  code?: string;
+  kind?: string;
+  detail?: string;
+} {
+  if (typeof err !== 'object' || err === null) return {};
+  const e = err as { code?: unknown; kind?: unknown; detail?: unknown };
+  const out: { code?: string; kind?: string; detail?: string } = {};
+  if (typeof e.code === 'string') out.code = e.code;
+  if (typeof e.kind === 'string') out.kind = e.kind;
+  if (typeof e.detail === 'string') out.detail = e.detail;
+  return out;
+}

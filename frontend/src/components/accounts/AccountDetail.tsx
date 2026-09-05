@@ -1,9 +1,12 @@
 // 账户详情（桌面 Dialog / 移动端路由页共用）：
 // 顶部账户标识（含状态 Chip）；可改名称；Gmail 折叠区换应用专用密码；微软「重新授权」
-// 展开微软授权引导；停用账户可「启用」（无凭据时提示先补凭据）；底部危险区进入移除二选一。
+// 展开微软授权引导；停用账户只留「启用」（启用后无凭据时提示先补凭据），凭据操作在停用
+// 状态下隐藏（改了没有意义，也避免与「启用」并列造成先后困惑）；底部危险区进入移除二选一。
 // 表单提交中按钮 disabled + 进度；错误一律 Alert，成功反馈用瞬时 Snackbar（与全站一致）。
+// 本组件不把 prop 拷进 state：父组件经 onChanged 持有最新账户并用 key/路由重挂载，
+// 直接读 account prop 即是最新值（表单本地 state 只有 name 草稿与开关类）。
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import Alert from '@mui/material/Alert';
 import Avatar from '@mui/material/Avatar';
 import Box from '@mui/material/Box';
@@ -18,7 +21,7 @@ import Stack from '@mui/material/Stack';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import { patchAccount } from '../../lib/api';
-import { statusChipMeta } from './meta';
+import { apiErrorFields, statusChipMeta } from './meta';
 import MicrosoftAuthGuide from './MicrosoftAuthGuide';
 import type { AccountInfo } from '../../types';
 
@@ -32,14 +35,13 @@ interface Props {
 
 /** patch 失败的中文提示；密码类错误区分「必填」 */
 function patchErrorMessage(err: unknown, password: boolean): string {
-  const code = (err as { code?: string }).code;
+  const { code } = apiErrorFields(err);
   if (password && code === 'password_required') return '请填写应用专用密码';
   if (code === 'invalid_kind') return '该操作对这个类型的账户不可用';
   return '保存失败，请稍后再试';
 }
 
 export default function AccountDetail({ account, onChanged, onRemove }: Props) {
-  const [cur, setCur] = useState<AccountInfo>(account);
   const [name, setName] = useState(account.name);
   const [savingName, setSavingName] = useState(false);
   const [passwordOpen, setPasswordOpen] = useState(false);
@@ -51,35 +53,24 @@ export default function AccountDetail({ account, onChanged, onRemove }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [snack, setSnack] = useState<string | null>(null);
 
-  // 父组件（对话框内容切换 / 保存回流）可能换 account 对象：跟着最新值走
-  useEffect(() => {
-    setCur(account);
-    setName(account.name);
-    setError(null);
-    setNotice(null);
-  }, [account]);
+  const microsoft = account.kind === 'microsoft';
+  const chip = statusChipMeta(account);
+  // 停用态：凭据操作全部隐藏，只留名称 / 启用 / 危险区（见文件头注释）
+  const showCredentials = account.enabled;
 
-  const microsoft = cur.kind === 'microsoft';
-  const chip = statusChipMeta(cur);
-
-  const applyPatch = (
-    resp: AccountInfo,
-    successMsg: string,
-    extras?: { notice?: string; authOpen?: boolean },
-  ) => {
-    setCur(resp);
+  /** 保存成功后的公共收尾：notice 只在本次操作带引导时设置，其余操作清掉旧引导 */
+  const applyPatch = (resp: AccountInfo, successMsg: string, noticeMsg?: string) => {
     onChanged(resp);
     setSnack(successMsg);
-    if (extras?.notice) setNotice(extras.notice);
-    if (extras?.authOpen === false) setAuthOpen(false);
+    setNotice(noticeMsg ?? null);
   };
 
   const handleSaveName = () => {
     const trimmed = name.trim();
-    if (trimmed === '' || trimmed === cur.name || savingName) return;
+    if (trimmed === '' || trimmed === account.name || savingName) return;
     setSavingName(true);
     setError(null);
-    patchAccount(cur.id, { name: trimmed })
+    patchAccount(account.id, { name: trimmed })
       .then((resp) => {
         setName(resp.name);
         applyPatch(resp, '已保存');
@@ -89,10 +80,11 @@ export default function AccountDetail({ account, onChanged, onRemove }: Props) {
   };
 
   const handleSavePassword = () => {
-    if (appPassword.trim() === '' || savingPassword) return;
+    const pwd = appPassword.trim();
+    if (pwd === '' || savingPassword) return;
     setSavingPassword(true);
     setError(null);
-    patchAccount(cur.id, { app_password: appPassword })
+    patchAccount(account.id, { app_password: pwd })
       .then((resp) => {
         setAppPassword('');
         setPasswordOpen(false);
@@ -106,16 +98,18 @@ export default function AccountDetail({ account, onChanged, onRemove }: Props) {
     if (enabling) return;
     setEnabling(true);
     setError(null);
-    patchAccount(cur.id, { enabled: true })
+    patchAccount(account.id, { enabled: true })
       .then((resp) => {
         // 停用会清空凭据：启用后没凭据要提示先补（Gmail 应用专用密码 / 微软重新授权）
-        applyPatch(resp, '已启用', {
-          notice: resp.has_credentials
+        applyPatch(
+          resp,
+          '已启用',
+          resp.has_credentials
             ? undefined
             : microsoft
               ? '账户已启用，但还没有登录凭据：请用「重新授权」完成授权后才会开始同步。'
               : '账户已启用，但还没有登录凭据：请在下方「更换应用专用密码」里填好密码。',
-        });
+        );
       })
       .catch(() => setError('启用失败，请稍后再试'))
       .finally(() => setEnabling(false));
@@ -136,16 +130,16 @@ export default function AccountDetail({ account, onChanged, onRemove }: Props) {
 
       {/* 顶部账户标识 */}
       <Stack direction="row" spacing={1.5} alignItems="center" sx={{ mb: 2 }}>
-        <Avatar>{cur.kind === 'gmail' ? 'G' : 'O'}</Avatar>
+        <Avatar>{account.kind === 'gmail' ? 'G' : 'O'}</Avatar>
         <Box sx={{ flexGrow: 1, minWidth: 0 }}>
           <Stack direction="row" spacing={1} alignItems="center">
             <Typography variant="subtitle1" noWrap>
-              {cur.name}
+              {account.name}
             </Typography>
             <Chip label={chip.label} size="small" color={chip.color} variant="outlined" />
           </Stack>
           <Typography variant="body2" color="text.secondary" noWrap>
-            {cur.email}
+            {account.email}
           </Typography>
         </Box>
       </Stack>
@@ -165,13 +159,13 @@ export default function AccountDetail({ account, onChanged, onRemove }: Props) {
         <Button
           variant="contained"
           onClick={handleSaveName}
-          disabled={name.trim() === '' || name.trim() === cur.name || savingName}
+          disabled={name.trim() === '' || name.trim() === account.name || savingName}
         >
           {savingName ? <CircularProgress size={18} color="inherit" /> : '保存名称'}
         </Button>
       </Stack>
 
-      {cur.kind === 'gmail' ? (
+      {showCredentials && account.kind === 'gmail' && (
         <>
           {/* Gmail：更换应用专用密码（折叠） */}
           <Button
@@ -191,6 +185,10 @@ export default function AccountDetail({ account, onChanged, onRemove }: Props) {
                 fullWidth
                 value={appPassword}
                 onChange={(e) => setAppPassword(e.target.value)}
+                error={appPassword !== '' && appPassword.trim() === ''}
+                helperText={
+                  appPassword !== '' && appPassword.trim() === '' ? '请填写应用专用密码' : undefined
+                }
                 inputProps={{ autoComplete: 'off' }}
               />
               <Typography variant="body2" color="text.secondary">
@@ -207,15 +205,18 @@ export default function AccountDetail({ account, onChanged, onRemove }: Props) {
             </Stack>
           </Collapse>
         </>
-      ) : (
+      )}
+
+      {showCredentials && account.kind === 'microsoft' && (
         <>
           {/* 微软：重新授权（展开授权引导，成功后关闭） */}
           {authOpen ? (
             <Box sx={{ mt: 1.5 }}>
               <MicrosoftAuthGuide
-                accountId={cur.id}
+                accountId={account.id}
                 onAuthorized={(resp) => {
-                  applyPatch(resp, '授权完成', { authOpen: false });
+                  setAuthOpen(false);
+                  applyPatch(resp, '授权完成');
                 }}
               />
             </Box>
@@ -228,7 +229,7 @@ export default function AccountDetail({ account, onChanged, onRemove }: Props) {
       )}
 
       {/* 停用账户：启用入口（停用会清空凭据，启用后通常需要补凭据） */}
-      {!cur.enabled && (
+      {!account.enabled && (
         <Stack direction="row" spacing={1.5} alignItems="center" sx={{ mt: 2 }}>
           <Typography variant="body2" color="text.secondary" sx={{ flexGrow: 1 }}>
             该账户已停用，邮件与任务都保留着。
@@ -241,12 +242,7 @@ export default function AccountDetail({ account, onChanged, onRemove }: Props) {
 
       {/* 危险区 */}
       <Divider sx={{ my: 2 }} />
-      <Button
-        variant="outlined"
-        color="error"
-        startIcon={<DeleteOutlineIcon />}
-        onClick={onRemove}
-      >
+      <Button variant="outlined" color="error" startIcon={<DeleteOutlineIcon />} onClick={onRemove}>
         移除账户…
       </Button>
 
