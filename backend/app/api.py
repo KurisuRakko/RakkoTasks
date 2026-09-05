@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.auth import CurrentUser, require_auth
 from app.calendar import build_ics
+from app.caldav import register_caldav
 from app.caldav.auth import generate_app_password, hash_app_password
 from app.config import Settings, get_settings
 from app.db import init_db, make_engine, make_session_factory
@@ -431,6 +432,10 @@ def create_app(
             ],
             "pending_llm": pending_llm,
         }
+
+    # CalDAV（iPhone 提醒事项）：必须在 SPA fallback 之前注册，否则 /caldav/ 会被 GET 兜底吞掉；
+    # 失败鉴权每来源每分钟 30 次
+    register_caldav(app, settings, RateLimiter(30, 60.0))
 
     # 静态托管：settings.frontend_dist 非空时用它，否则回退启发式路径；目录存在才挂 SPA fallback
     dist_str = settings.frontend_dist

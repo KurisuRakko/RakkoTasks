@@ -1,6 +1,8 @@
-"""CalDAV（iPhone 提醒事项同步）：本任务只打地基——Basic 鉴权与应用密码
-（auth.py）与 VTODO 解析/序列化纯函数（vtodo.py）。
+"""CalDAV（iPhone 提醒事项同步）：Basic 鉴权与应用密码（auth）、VTODO 解析/序列化
+（vtodo）、集合数据访问（store）、XML 收发（xmlio）、HTTP 路由（router）。
 
-HTTP 路由（PROPFIND/REPORT/GET/PUT/DELETE 处理器）与 XML 组装在下一任务，
-届时本包会导出 register_caldav(app, session_factory, settings)。
+对外只暴露 register_caldav：在 create_app 里、SPA fallback 之前挂载。
 """
+from app.caldav.router import register_caldav
+
+__all__ = ["register_caldav"]
