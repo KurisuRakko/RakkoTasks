@@ -4,6 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import ItemDialog from '../src/components/ItemDialog';
+import { VT_NAMES } from '../src/lib/view-transition';
 import type { Item } from '../src/types';
 
 function makeItem(partial: Partial<Item>): Item {
@@ -248,5 +249,28 @@ describe('ItemDialog 手动条目（email_id 为 null）', () => {
       expect(onDeleted).toHaveBeenCalledWith(7);
       expect(onClose).toHaveBeenCalled();
     });
+  });
+});
+
+describe('ItemDialog 容器变换共享名', () => {
+  it('对话框 paper 的样式规则带 viewTransitionName: VT_NAMES.sheet', async () => {
+    vi.stubGlobal('fetch', makeFetchMock());
+
+    render(<ItemDialog item={makeItem({})} onClose={vi.fn()} />);
+    await screen.findByText('退款来源');
+
+    const paper = document.querySelector('.MuiDialog-paper') as HTMLElement | null;
+    expect(paper).not.toBeNull();
+    // sx 经 emotion 生成类名规则（jsdom 无法求值计算样式），
+    // 直接核对：paper 上存在某 emotion 类，其规则体含 view-transition-name: rtk-sheet
+    const cssText = Array.from(document.querySelectorAll('style'))
+      .map((s) => s.textContent ?? '')
+      .join('\n');
+    const vtSelector = Array.from(paper!.classList).find((c) =>
+      new RegExp(`\\.${c}[^{]*\\{[^}]*view-transition-name\\s*:\\s*${VT_NAMES.sheet}`).test(
+        cssText,
+      ),
+    );
+    expect(vtSelector).toBeDefined();
   });
 });
