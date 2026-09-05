@@ -19,6 +19,7 @@ import IconButton from '@mui/material/IconButton';
 import List from '@mui/material/List';
 import ListItem from '@mui/material/ListItem';
 import ListItemText from '@mui/material/ListItemText';
+import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import Skeleton from '@mui/material/Skeleton';
 import Snackbar from '@mui/material/Snackbar';
@@ -28,9 +29,12 @@ import ToggleButton from '@mui/material/ToggleButton';
 import ToggleButtonGroup from '@mui/material/ToggleButtonGroup';
 import Typography from '@mui/material/Typography';
 import {
+  caldavTarget,
   calendarUrls,
+  fetchCaldavInfo,
   fetchCalendarToken,
   fetchStatus,
+  generateCaldavPassword,
   rotateCalendarToken,
 } from '../lib/api';
 import { copyText } from '../lib/clipboard';
@@ -40,7 +44,7 @@ import { logout, startLogin } from '../lib/phainon';
 import { useSession } from '../lib/session';
 import { useThemeMode } from '../lib/theme-mode';
 import { timeAgo } from '../lib/time';
-import type { StatusResponse } from '../types';
+import type { CaldavInfo, StatusResponse } from '../types';
 
 export default function SettingsPage() {
   const [status, setStatus] = useState<StatusResponse | null>(null);
@@ -53,6 +57,13 @@ export default function SettingsPage() {
   const [rotateOpen, setRotateOpen] = useState(false);
   const [rotating, setRotating] = useState(false);
   const [snack, setSnack] = useState<string | null>(null);
+  // 提醒事项同步（CalDAV）：连接信息 + 一次性同步密码（仅存内存，不持久化）
+  const [dav, setDav] = useState<CaldavInfo | null>(null);
+  const [davLoading, setDavLoading] = useState(true);
+  const [davError, setDavError] = useState(false);
+  const [davPassword, setDavPassword] = useState<string | null>(null);
+  const [davRotateOpen, setDavRotateOpen] = useState(false);
+  const [davGenerating, setDavGenerating] = useState(false);
   const { mode, setMode } = useThemeMode();
   const me = useSession();
   const reduced = usePrefersReducedMotion();
@@ -96,6 +107,24 @@ export default function SettingsPage() {
     };
   }, []);
 
+  // 挂载时取提醒事项同步配置（与日历令牌请求并列、互不影响）
+  useEffect(() => {
+    let alive = true;
+    fetchCaldavInfo()
+      .then((info) => {
+        if (alive) setDav(info);
+      })
+      .catch(() => {
+        if (alive) setDavError(true);
+      })
+      .finally(() => {
+        if (alive) setDavLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   const urls = token ? calendarUrls(token) : null;
 
   const handleCopyLink = () => {
@@ -119,6 +148,46 @@ export default function SettingsPage() {
         setSnack('重新生成失败');
       })
       .finally(() => setRotating(false));
+  };
+
+  const davTarget = dav ? caldavTarget(dav.path) : null;
+
+  const handleCopyServer = () => {
+    if (!davTarget) return;
+    copyText(() => Promise.resolve(davTarget.host))
+      .then(() => setSnack('已复制'))
+      .catch(() => setSnack('复制失败'));
+  };
+
+  const handleCopyUsername = () => {
+    if (!dav) return;
+    copyText(() => Promise.resolve(dav.username))
+      .then(() => setSnack('已复制'))
+      .catch(() => setSnack('复制失败'));
+  };
+
+  const handleCopyPassword = () => {
+    if (!davPassword) return;
+    copyText(() => Promise.resolve(davPassword))
+      .then(() => setSnack('已复制'))
+      .catch(() => setSnack('复制失败'));
+  };
+
+  /** 生成（或重新生成）同步密码：成功后只展示一次；后端保证旧密码立即失效 */
+  const handleGenerateDavPassword = () => {
+    setDavGenerating(true);
+    generateCaldavPassword()
+      .then((pw) => {
+        setDavPassword(pw);
+        setDav((d) => (d ? { ...d, configured: true } : d));
+        setDavRotateOpen(false);
+        setSnack('已生成');
+      })
+      .catch(() => {
+        setDavRotateOpen(false);
+        setSnack('生成失败');
+      })
+      .finally(() => setDavGenerating(false));
   };
 
   const displayName = me ? (me.user.name ?? me.user.email ?? me.user.sub) : '未知用户';
@@ -269,6 +338,87 @@ export default function SettingsPage() {
 
       <Divider sx={{ my: 2 }} />
 
+      {/* 提醒事项同步：iPhone「提醒事项」经 CalDAV 同步的开通入口（服务器/用户名 + 一次性密码） */}
+      <Box sx={{ px: 2 }}>
+        <Typography variant="overline">提醒事项同步</Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+          把任务同步到 iPhone「提醒事项」App：在手机上勾选、新建、修改都会回到这里。手机上新建的任务归入「个人」分类。
+        </Typography>
+        {davLoading ? (
+          <Skeleton variant="text" />
+        ) : davError ? (
+          <Alert severity="error">加载提醒事项同步配置失败</Alert>
+        ) : dav && davTarget ? (
+          <>
+            <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
+              <TextField
+                fullWidth
+                size="small"
+                value={davTarget.host}
+                InputProps={{ readOnly: true }}
+                inputProps={{ 'aria-label': '服务器' }}
+              />
+              <IconButton size="small" aria-label="复制服务器" onClick={handleCopyServer}>
+                <ContentCopyIcon fontSize="small" />
+              </IconButton>
+            </Stack>
+            <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
+              <TextField
+                fullWidth
+                size="small"
+                value={dav.username}
+                InputProps={{ readOnly: true }}
+                inputProps={{ 'aria-label': '用户名' }}
+              />
+              <IconButton size="small" aria-label="复制用户名" onClick={handleCopyUsername}>
+                <ContentCopyIcon fontSize="small" />
+              </IconButton>
+            </Stack>
+            {dav.configured ? (
+              <Button variant="outlined" color="warning" onClick={() => setDavRotateOpen(true)}>
+                重新生成密码
+              </Button>
+            ) : !davPassword ? (
+              <Button variant="contained" onClick={handleGenerateDavPassword}>
+                生成同步密码
+              </Button>
+            ) : null}
+            {davPassword && (
+              <>
+                <Alert severity="warning" sx={{ mt: 1 }}>
+                  此密码只显示一次，离开本页后无法再查看；遗失请重新生成。
+                </Alert>
+                <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1 }}>
+                  <TextField
+                    fullWidth
+                    size="small"
+                    value={davPassword}
+                    InputProps={{ readOnly: true }}
+                    inputProps={{ 'aria-label': '同步密码' }}
+                  />
+                  <IconButton size="small" aria-label="复制密码" onClick={handleCopyPassword}>
+                    <ContentCopyIcon fontSize="small" />
+                  </IconButton>
+                </Stack>
+              </>
+            )}
+            <List dense sx={{ mt: 1 }}>
+              <ListItem sx={{ px: 0 }}>
+                <ListItemText primary="1. 打开 iPhone「设置」→「应用」→「提醒事项」→「提醒事项账户」→「添加账户」→「其他」→「添加 CalDAV 账户」" />
+              </ListItem>
+              <ListItem sx={{ px: 0 }}>
+                <ListItemText primary="2. 服务器填上面的「服务器」，用户名、密码填上面的值，描述随意，点「下一步」并存储。" />
+              </ListItem>
+              <ListItem sx={{ px: 0 }}>
+                <ListItemText primary="3. 打开「提醒事项」App，会出现名为「RakkoTasks」的列表。同步频率由系统「获取新数据」设置决定。" />
+              </ListItem>
+            </List>
+          </>
+        ) : null}
+      </Box>
+
+      <Divider sx={{ my: 2 }} />
+
       {/* 账户：显示登录者 + 退出登录（回到登录流程） */}
       <Box sx={{ px: 2 }}>
         <Typography variant="overline">账户</Typography>
@@ -311,6 +461,26 @@ export default function SettingsPage() {
             取消
           </Button>
           <Button color="error" onClick={handleRotate} disabled={rotating}>
+            确认
+          </Button>
+        </DialogActions>
+      </Dialog>
+      {/* 重新生成同步密码确认：旧密码立即失效，已配置的 iPhone 需要重新填写 */}
+      <Dialog
+        open={davRotateOpen}
+        onClose={davGenerating ? undefined : () => setDavRotateOpen(false)}
+      >
+        <DialogTitle>重新生成同步密码</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            重新生成后旧密码立即失效，已配置的 iPhone 需要重新填写密码。
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDavRotateOpen(false)} disabled={davGenerating}>
+            取消
+          </Button>
+          <Button color="error" onClick={handleGenerateDavPassword} disabled={davGenerating}>
             确认
           </Button>
         </DialogActions>

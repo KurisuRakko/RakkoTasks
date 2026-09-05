@@ -28,7 +28,7 @@ _CALENDAR_HEADER = [
 ]
 
 
-def _escape_text(value: str) -> str:
+def escape_text(value: str) -> str:
     """RFC 5545 TEXT 值转义：反斜杠、分号、逗号、换行（回车先归一化掉）。"""
     return (
         value.replace("\r\n", "\n")
@@ -40,7 +40,7 @@ def _escape_text(value: str) -> str:
     )
 
 
-def _fold(text: str) -> list[str]:
+def fold(text: str) -> list[str]:
     """把一条内容行折成若干 ≤75 字节的段（按 UTF-8 字节数计）。
 
     折点只在字符边界上：逐字符累加其 UTF-8 字节数，绝不在多字节字符
@@ -64,9 +64,9 @@ def _fold(text: str) -> list[str]:
     return segments
 
 
-def _property(name: str, value: str) -> list[str]:
+def content_line(name: str, value: str) -> list[str]:
     """组装一条属性并折行：返回物理行（续行已带前缀空格）。"""
-    segments = _fold(f"{name}:{value}")
+    segments = fold(f"{name}:{value}")
     out = [segments[0]]
     for seg in segments[1:]:
         out.append(_CONTINUATION_PREFIX + seg)
@@ -89,20 +89,20 @@ def build_ics(items: Iterable[Item], now: datetime) -> str:
         start = d.strftime("%Y%m%d")
         end = (d + timedelta(days=1)).strftime("%Y%m%d")
         summary = (f"[重要] {item.title}" if item.importance == "high" else item.title)
-        escaped_summary = _escape_text(summary)
+        escaped_summary = escape_text(summary)
         lines.append("BEGIN:VEVENT")
-        lines.extend(_property("UID", f"item-{item.id}@rakkotasks"))
-        lines.extend(_property("DTSTAMP", stamp))
-        lines.extend(_property("DTSTART;VALUE=DATE", start))
-        lines.extend(_property("DTEND;VALUE=DATE", end))
-        lines.extend(_property("SUMMARY", escaped_summary))
+        lines.extend(content_line("UID", f"item-{item.id}@rakkotasks"))
+        lines.extend(content_line("DTSTAMP", stamp))
+        lines.extend(content_line("DTSTART;VALUE=DATE", start))
+        lines.extend(content_line("DTEND;VALUE=DATE", end))
+        lines.extend(content_line("SUMMARY", escaped_summary))
         if item.summary:
-            lines.extend(_property("DESCRIPTION", _escape_text(item.summary)))
-        lines.extend(_property("CATEGORIES", _escape_text(item.category)))
+            lines.extend(content_line("DESCRIPTION", escape_text(item.summary)))
+        lines.extend(content_line("CATEGORIES", escape_text(item.category)))
         lines.append("BEGIN:VALARM")
-        lines.extend(_property("ACTION", "DISPLAY"))
-        lines.extend(_property("DESCRIPTION", escaped_summary))
-        lines.extend(_property("TRIGGER;RELATED=START", "PT10H"))
+        lines.extend(content_line("ACTION", "DISPLAY"))
+        lines.extend(content_line("DESCRIPTION", escaped_summary))
+        lines.extend(content_line("TRIGGER;RELATED=START", "PT10H"))
         lines.append("END:VALARM")
         lines.append("END:VEVENT")
     lines.append("END:VCALENDAR")

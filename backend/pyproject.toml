@@ -16,6 +16,7 @@ dependencies = [
     "nh3",
     "openai>=1.40",
     "httpx",
+    "tzdata",
 ]
 
 [project.optional-dependencies]
@@ -25,8 +26,8 @@ dev = [
     "respx",
 ]
 
-[tool.setuptools]
-packages = ["app", "app.imap"]
+[tool.setuptools.packages.find]
+include = ["app*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -151,7 +151,7 @@ AI 搜索同一套 `search_emails` / `read_emails`）：若邮件涉及来历不
 ## 5. 数据模型（SQLite，WAL）
 
 ```
-users(sub, email, name, calendar_token|null（订阅密钥，见下）, created_at, last_seen_at)
+users(sub, email, name, calendar_token|null（订阅密钥，见下）, caldav_password_hash|null（CalDAV 应用密码 sha256，见第 11 节）, created_at, last_seen_at)
 accounts(id, user_sub→users, name, kind gmail|microsoft, email, ms_client_id,
          app_password, enabled, token_cache, uidvalidity, last_uid,
          last_sync_at, last_error, status ok|error|pending)
@@ -164,9 +164,16 @@ items(id, email_id→emails UNIQUE|null（null=手动条目，无源邮件）, u
       title, summary, category, due_date date|null,
       importance high|normal|low, actionable bool, status open|done, detail_md|null,
       related_json|null（关联邮件 JSON 数组 [{"email_id": int, "reason": str}]）,
-      created_at, done_at|null)
+      created_at, done_at|null,
+      caldav_uid|null（32 位大写 hex UID）, caldav_name|null（客户端文件名 ≠ UID 时才非空）,
+      caldav_ics|null（客户端最近一次 PUT 的原始 VCALENDAR 文本，透传载体）,
+      updated_at|null（ORM onupdate 维护，内容 ETag 的时间来源））
       user_sub 建索引（手动条目没有邮件链，归属直接落在条目上）
 ```
+
+- CalDAV 资源名 = `coalesce(caldav_name, caldav_uid)`：iPhone 侧寻址、ctag 排序都
+  用它；`updated_at` 由 ORM `onupdate` 在每次变更时自动刷新，是内容 ETag 的时间来源
+  （见第 11.7 节）。
 
 - `items.importance` 等后续新增列通过 `init_db` 的**就地 ALTER 迁移**：`create_all` 不会给已存在的
   表加列，启动时 `_ensure_columns` 用 `PRAGMA table_info` 检查缺失列并
@@ -180,13 +187,23 @@ items(id, email_id→emails UNIQUE|null（null=手动条目，无源邮件）, u
 - `users.calendar_token`：日历订阅密钥（`/api/calendar/{token}.ics`），链接即凭据；
   旧库由 `_ensure_columns` 补普通列（ADD COLUMN 加不了 UNIQUE，新建库才有 UNIQUE 约束），
   泄露即用 rotate 换新。
+- `users.caldav_password_hash`：CalDAV Basic 鉴权的应用密码 sha256 hex，NULL = 未开通；
+  明文只在开通/轮换的响应里出现一次（见第 11.3 节）。旧库同样由 `_ensure_columns`
+  就地补普通列。
+- `items.caldav_uid / caldav_name / caldav_ics / updated_at`：CalDAV 身份与透传列，
+  与 `users.caldav_password_hash` 一并由 `init_db` 迁移补齐；新列对既有行全为 NULL，
+  由 `_backfill_caldav_identity` 两条幂等 UPDATE 回填（只碰仍为 NULL 的行，重复启动
+  安全；`_migrate_items_manual` 重建表后新列也靠它）：
+  `UPDATE items SET caldav_uid = upper(hex(randomblob(16))) WHERE caldav_uid IS NULL`
+  与 `UPDATE items SET updated_at = created_at WHERE updated_at IS NULL`。
 - `accounts.app_password`：Gmail 应用专用密码，明文存库，任何 API 都不会返回它。
 - `accounts.enabled`：软删除标记，CLI `accounts remove` 置 false（停用并清除凭据、
   不再同步），已抓取的邮件与已生成的任务保留。
 - 多用户隔离：items 直接持有 `user_sub`（手动条目无邮件可推导）；emails 仍经
   `emails.account_id → accounts.user_sub` 推导，所有查询都以当前登录者 sub 过滤。
 
-## 6. REST API（/api/* 除 /api/health 与 /api/calendar/{token}.ics 外全部 Bearer 鉴权）
+## 6. REST API（鉴权：除 /api/health 与 /api/calendar/{token}.ics 外，/api/* 全部走 Bearer；
+CalDAV 路径 /caldav/* 与 /.well-known/caldav 不在其列——走 HTTP Basic + 应用密码，见第 11 节）
 
 ```
 GET  /api/health                    公开存活探针
@@ -208,6 +225,12 @@ POST /api/search                    {"question"} → {"answer_md", "citations":[
 GET  /api/status                    各账户健康（含 enabled 停用标记）+ 上次同步时间 + LLM 待处理数
 GET  /api/calendar                  → {"token"}；尚无令牌时生成并落库（鉴权）
 POST /api/calendar/rotate           无条件生成新令牌并覆盖（鉴权）；旧订阅链接立即失效
+GET  /api/caldav                    CalDAV 接入信息（鉴权）：→ {"username": 邮箱或 sub,
+                                    "path": "/caldav/", "configured": bool}。GET 不生成应用密码——
+                                    密码明文只显示一次，只能由下面这个 POST 显式产生
+POST /api/caldav/password           无条件重新生成 CalDAV 应用密码并覆盖，旧密码立即失效
+                                    （鉴权）：→ {"password"}，明文只在本次响应出现一次，
+                                    之后库里只存 sha256 hex
 GET  /api/calendar/{token}.ics      公开（令牌即凭据，不需要 Bearer）：该用户 status=open 且
                                     due_date 非空（含手动条目）的全部条目 → 全天事件 iCalendar，
                                     每条带当天 10:00 提醒（TRIGGER;RELATED=START:PT10H，相对触发，
@@ -225,6 +248,11 @@ GET  /api/calendar/{token}.ics      公开（令牌即凭据，不需要 Bearer�
 鉴权中间件：取 Bearer → `GET {PHAINON_API_BASE}/auth/priestess/oidc/me`
 （转发同一 Bearer，附 `Origin: {FRONTEND_ORIGIN}`）→ 200 且 `app_id == PHAINON_APP_ID`
 即放行（无白名单）；首次访问自动创建用户记录；对 token 哈希做 60s 内存缓存；否则 401。
+
+CalDAV 例外：`/caldav/*` 与 `/.well-known/caldav` 不走上述 Bearer 中间件——iOS 提醒事项
+不会发 Bearer，走 HTTP Basic + 应用密码（用户名 = 邮箱或 sub，密码由
+`POST /api/caldav/password` 生成），鉴权细节见第 11 节；`/api/caldav` 与
+`/api/caldav/password` 本身属 REST，仍走 Bearer。
 
 ## 7. 原邮件展示（安全红线）
 
@@ -265,3 +293,190 @@ GET  /api/calendar/{token}.ics      公开（令牌即凭据，不需要 Bearer�
 
 英文界面；手动添加/编辑任务；发件人静音规则；勾选回写邮箱已读；除 INBOX 外的文件夹；
 附件下载；推送通知；网页端管理邮箱账户（只走 CLI）；用户审批流程。
+
+## 11. CalDAV（iPhone 提醒事项同步）
+
+### 11.1 目标与客户端接入
+
+服务端实现最小 CalDAV 日历服务器（RFC 4918 / RFC 4791），只服务 VTODO，让 iOS
+「提醒事项」把本系统清单当作一个 CalDAV 账户直接读写：在任意 iPhone 上新建任务、
+勾选完成、删除（划掉）、改标题/日期/重要度都会同步回服务端；反之网页端的改动也会
+在 iPhone 下一轮同步时出现。服务器侧由 `backend/app/caldav/` 实现
+（router.py / store.py / vtodo.py / auth.py / errors.py / xmlio.py），路由挂在 FastAPI
+主应用上，复用同一 SQLite 与数据模型。
+
+开通与接入路径：
+
+- 网页「设置」页：`GET /api/caldav` 返回 `username`（邮箱或 sub）与 `path`
+  （`/caldav/`）；`POST /api/caldav/password` 生成应用密码（明文只显示这一次，11.3 节）。
+- iPhone：设置 → 日历/提醒事项 → 账户 → 添加账户 → 其他 → 添加 CalDAV 账户，
+  服务器填 `https://<主机>/caldav/`，用户名/密码用上一步的值。该账户只含一个
+  VTODO 集合，因此在 iPhone 上以「RakkoTasks」列表出现在提醒事项里。
+- 同步频率不由服务器决定：CalDAV 没有推送，iPhone 按自身的「获取新数据」调度
+  轮询服务器（见 11.11 已知行为）。
+
+### 11.2 URL 布局与路由挂载
+
+五个 DAV 资源（常量 `ROOT_HREF` / `PRINCIPAL_HREF` / `HOME_HREF` / `COLLECTION_HREF`
++ 对象模式），外加一个发现入口：
+
+```
+/.well-known/caldav                    发现入口 → 301 到 /caldav/
+/caldav/                                ROOT（支持集/根集合）
+/caldav/principals/me/                  PRINCIPAL（当前用户主体）
+/caldav/calendars/me/                   HOME（日历主集）
+/caldav/calendars/me/tasks/             COLLECTION：唯一 VTODO 集合「RakkoTasks」
+/caldav/calendars/me/tasks/{stem}.ics   OBJECT：单个任务（寻址见 11.4）
+```
+
+- 用户段固定为字面量 `me`：身份完全由 Basic 鉴权决定（11.3 节），不放进 URL、
+  也就不会进访问日志；跨用户的资源查询一律 404（与 REST 侧 IDOR 策略一致）。
+- 路径按段精确匹配（`resolve`）：尾斜杠可有可无，其它形状一律 404。
+- 挂载时机：`register_caldav` 在 SPA fallback 之前注册 catch-all 路由，否则 GET
+  会被兜底吞成 index.html、其它方法被吞成 405；这些路由 `include_in_schema=False`，
+  不进 OpenAPI 文档。
+- 错误通道：本路径下一切错误经 `DavError` 输出纯文本或 XML，**永不出现 JSON**——
+  iOS 会把 JSON 响应判成「服务器错误」，整个账户同步失败。
+
+### 11.3 鉴权：HTTP Basic + 应用密码
+
+- iOS 提醒事项不做 Bearer，鉴权走 Basic：`Authorization: Basic base64(user:pass)`。
+  `auth.py` 严格 base64 解码、按首个冒号切分（密码可含冒号）、用户名按 sub 或邮箱
+  精确找用户（`find_user_by_spec`，邮箱对应多行时拒绝，避免歧义）。
+- 失败回 401，带质询头 `WWW-Authenticate: Basic realm="RakkoTasks", charset="UTF-8"`
+  （`REALM_HEADER`）——iOS 靠它学会携带凭据重试。
+- 应用密码：`secrets.token_urlsafe(24)` 生成的 32 字符高熵令牌（`generate_app_password`），
+  库里只存单轮 sha256 hex（`users.caldav_password_hash`），不存明文、任何日志/异常
+  路径都不打印密码。为什么单轮 sha256 而非慢哈希：强度来自随机令牌的熵本身（不是
+  用户自选弱口令），且 iPhone 每轮同步会对每个资源反复发请求，鉴权必须廉价。
+- 生成与轮换：明文只在 `POST /api/caldav/password` 的响应里出现一次；无条件重新
+  POST 即轮换——覆盖 hash、旧密码立即失效（旧订阅的 iOS 账户需重输一次密码）。
+  `GET /api/caldav` 只读不生成。
+- 失败限流：鉴权失败按来源计数（`client_key`：CF-Connecting-IP → X-Forwarded-For
+  首段 → 直连地址 → unknown），`RateLimiter(30, 60.0)` 即每来源每分钟最多 30 次
+  失败尝试；超限回 429 + `Retry-After: 60`，阻止对应用密码的在线爆破。
+
+### 11.4 资源模型：单集合、保留窗口与寻址
+
+- 单集合、单所有者：每个用户只有一个固定集合「RakkoTasks」
+  （`/caldav/calendars/me/tasks/`），不支持新建/改名列表（见 11.10）。
+- 成员枚举（`store.list_members`）：`status=open` 的全部 + `status=done` 且
+  `done_at` 落在最近 `caldav_done_retention_days`（默认 30）天内的；`done_at` 为
+  NULL 的已完成行按「久远」排除。保留窗口只作用于枚举（PROPFIND Depth:1、
+  calendar-query、ctag）；按名寻址单个对象不受窗口限制——完成超过 30 天的条目
+  只要网页端还在，按 URL 仍可取。
+- 寻址：对象资源名 stem = 客户端 PUT 时起的文件名（`caldav_name`），客户端没另起
+  文件名时就是 UID（`caldav_uid`）。落库唯一寻址规则 `coalesce(caldav_name,
+  caldav_uid) = stem`（`find_by_stem`）；PUT 解析出的 UID 命中另一文件名下的已有
+  条目时按 `find_by_uid` 转挂（同一对象换了文件名/重复 PUT 旧名）。
+- iPhone 新建的任务没有分类信息可依（单列表），固定归入「个人」、importance=normal、
+  actionable=true，且无源邮件（`email_id` 为 null，等同手动条目）。
+
+### 11.5 字段映射：VTODO ↔ items
+
+序列化方向 `serialize`（库 → 客户端）；解析方向 `read_fields`（客户端 → 库）：
+
+| 库字段 | 序列化 → VTODO | 解析 ← VTODO |
+|---|---|---|
+| title | `SUMMARY`（escape 后覆盖） | `SUMMARY` → `normalize_title` |
+| summary | `DESCRIPTION`（空则不输出） | `DESCRIPTION` → `normalize_summary` |
+| due_date | `DUE;VALUE=DATE`（YYYYMMDD，见下） | `DUE` → 日期（见下） |
+| status | `STATUS:NEEDS-ACTION` / `STATUS:COMPLETED`；完成另输出 `PERCENT-COMPLETE:100`，`done_at` 非空再输出 `COMPLETED` | `STATUS ∈ {COMPLETED, CANCELLED}` 或 `PERCENT-COMPLETE == 100` 或存在 `COMPLETED` 即算完成；`COMPLETED` 值作 `done_at`（畸形则丢弃时刻） |
+| importance | `PRIORITY:1`（high）/ `PRIORITY:9`（low）；normal 不输出 | `PRIORITY` 1–4 → high、6–9 → low、0/5/缺失/非法 → normal |
+| category | `CATEGORIES`（服务端单写） | `CATEGORIES` 一律忽略——服务端分类来自 REST/规则侧，不被客户端覆盖 |
+| caldav_uid | `UID` | `UID` → `caldav_uid`（客户端给了 UID 就用客户端的） |
+
+`DUE` 四种形态（`_due_from_value`，解析与透传比较共用同一规则、同一时区）：
+
+1. `VALUE=DATE` 或裸 8 位数字 `YYYYMMDD`：字面日期；
+2. DATE-TIME 不带 Z（浮动时间或带 TZID）：取字面日期——那是客户端的本地时间，
+   时区由客户端负责，服务端不换算；
+3. 以 `Z` 结尾的 UTC 时刻：经 `Settings.local_timezone`（默认 Australia/Sydney）换算
+   成当地日期——服务端以此确定「客户端当时所在的那个本地日」；
+4. 其它形态：载荷非法 → 拒收（403 valid-calendar-data）。
+
+时区为什么必须用配置项而不是 UTC：读取 PUT 与比较透传体用的是同一套反算规则、
+同一时区；若两侧时区不一致，同一个 Z 时刻会算出两个日期，导致客户端设的截止时刻
+与闹钟在每轮同步被误删（见 11.6 时间簇）。
+
+### 11.6 PUT/DELETE 语义、可编辑规则与透传体
+
+- 可编辑规则（`store.apply_put`）：**邮件条目（`email_id` 非空）只接受状态**——
+  标题/摘要/截止日/重要度的改动被静默忽略；**手动条目接受标题/摘要/截止日/重要度/状态**
+  全部五个字段。两者都会更新 CalDAV 身份列（`caldav_uid`/`caldav_name`）与透传体。
+- 被忽略的字段不报错：请求正常完成（新建 201 / 更新 204），被忽略的字段名记入
+  日志——客户端下一轮同步会看到服务端值「还原」，这比 4xx 让那条提醒永远同步失败
+  要好。网页端 REST 仍是邮件条目修改的唯一入口（PATCH 400 not_editable 策略不变）。
+- DELETE 语义（`store.apply_delete`）：手动条目真删（行删除）；邮件条目按产品决策
+  **视为完成**（`set_status done`）——iPhone 上把一条来自邮件的提醒划掉/删除 = 做完了，
+  邮件原文与历史仍保留在网页端。DELETE/PUT 都先做 If-Match/If-None-Match 校验
+  （RFC 7232），不符回 412。
+- 透传体（`items.caldav_ics`）：每次 PUT 把客户端正文原样存下；有透传体时
+  `serialize` 不改写客户端的布局与折行，只做两件事：
+  1. 服务端「拥有」的属性（`_OWNED_NAMES`：UID/DTSTAMP/CREATED/LAST-MODIFIED/SUMMARY/
+     DESCRIPTION/STATUS/PERCENT-COMPLETE/COMPLETED/PRIORITY/CATEGORIES）在主 VTODO
+     里原位替换或插入；
+  2. 其余属性行（VALARM、X-APPLE-*、LOCATION、URL、VTIMEZONE……）按原始 raw 行
+     逐行原样输出。
+  为什么保留客户端原文：闹钟、附加字段这类客户端私有数据不进数据模型，服务端一旦
+  用自己的知识重写，就会在每轮同步把它们删掉；只有「覆盖服务端拥有的、透传其余的」
+  才能双向不丢数据。
+- 时间簇（`_CLUSTER_NAMES`：DTSTART/DUE/DURATION/RRULE/RDATE/EXDATE）：`DUE` 与
+  语义上绑定的整组日期/重复行作为一个整体处理。透传体 `DUE` 按 11.5 规则算出的日期
+  等于库内 `due_date` → 整簇原样保留；不相等（例如网页端改了手动条目的日期）→
+  删除整簇（含顶层带 `RECURRENCE-ID` 的重复实例组件），再按 `due_date` 只写一行
+  `DUE;VALUE=DATE`。为什么整簇处理：只改 DUE 会留下仍锚在旧 DTSTART 上的闹钟与
+  重复规则，产生自相矛盾的载荷；整簇替换是最小的一致解。副作用见 11.11。
+
+### 11.7 ETag / ctag 与「序列化不许 now()」约束
+
+- 内容 ETag（`vtodo.etag_for`）：`'"' + sha256(body) 前 32 位 hex + '"'`。字节相同
+  → ETag 相同，与客户端是否改过无关。
+- 对象 `getetag` = 该内容 ETag；`getlastmodified`、序列化里的 DTSTAMP/CREATED/
+  LAST-MODIFIED 都派生自库内时间戳（`updated_at` → `created_at`），`updated_at` 由
+  ORM `onupdate` 每次变更自动刷新。
+- **硬约束：`serialize()` 任何位置不允许出现 `datetime.now()`**——DTSTAMP 一变内容
+  就变、ETag 就变，iPhone 会误以为有更新而无限重下。条目不变 → 字节不变 → ETag
+  不变。
+- ctag（集合变更标记，`store.ctag`）：成员按资源名排序后对 `(stem, etag)` 表取
+  sha256、截前 32 位 hex。增删改任一成员都会变、纯读不变；iPhone 凭它决定是否要
+  重新拉全量。
+
+### 11.8 方法契约
+
+| 方法 | 行为 |
+|---|---|
+| OPTIONS | 200；`DAV: 1, 3, access-control, calendar-access`；`Allow` 只列真正实现的八个方法（OPTIONS, GET, HEAD, PROPFIND, REPORT, PUT, DELETE, PROPPATCH） |
+| PROPFIND | 五种资源皆可；Depth 0/1（infinity → 403 `<d:propfind-finite-depth/>`）；207 multistatus；集合 Depth:1 枚举成员对象；HOME Depth:1 附带集合本体 |
+| REPORT | 仅限集合（其它目标 → 403 `<d:supported-report/>`）；`calendar-query`（comp-filter=VTODO → 枚举成员）与 `calendar-multiget`（按 href 逐个 `find_by_stem`，不存在的项单列 404）；其余报告类型 → 403 |
+| GET / HEAD | 仅限对象（其它目标 405）；`text/calendar` 体 + ETag 头，HEAD 空体 |
+| PUT | 仅限对象；解析失败 → 403 `<c:valid-calendar-data/>`；先按 stem、再按解析出的 UID 找既有条目（改名/重复 PUT）；成功后 201（新建）/ 204（更新）+ ETag |
+| DELETE | 仅限对象；手动真删 / 邮件条目置完成（11.6）；204 |
+| PROPPATCH | 207，所有属性一律 forbidden（属性表服务端单写，客户端改不动） |
+| MKCALENDAR / MKCOL | 403「不支持新建日历集合：列表集合是固定的」 |
+| 其余（MOVE/COPY/LOCK/UNLOCK/ACL/POST/PATCH…） | 405 + `Allow` 头 |
+
+### 11.9 请求体上限
+
+`XML_BODY_LIMIT = 1 MiB`：PUT 之外所有请求体上限（Content-Length 声明值与实收
+长度都查）；`PUT_BODY_LIMIT = 256 KiB`：PUT 专用。超限回 413 payload too large。
+
+### 11.10 非目标
+
+- 不做 sync-collection（多设备离线修改的合并/冲突仲裁）；
+- 不支持 RRULE/重复任务（只处理主 VTODO；带 RECURRENCE-ID 的实例只随时间簇整体
+  保留或删除，不解析不生成）；
+- 不支持子任务、在 iPhone 上新建列表/分类（集合固定、新任务归「个人」）；
+- 不做 scheduling（无 ATTENDEE/邀请往来）；CalDAV 被当作本清单的只读镜像加回写
+  通道，不做日历事件、不做闹钟的服务端存储（闹钟随客户端原文透传）。
+
+### 11.11 已知行为
+
+- reclassify 会删除目标邮件关联的条目并在下一轮按新规则重建，重建条目带新的
+  `caldav_uid` 与资源名：iPhone 上该提醒表现为先消失、随后以新身份重新出现
+  （列表短暂抖动）。属预期，不丢数据。
+- 网页端改手动条目的日期会清掉手机上设的闹钟：due_date 变化 → 透传体时间簇被
+  整体重写（11.6），以旧 DTSTART/DUE 为锚的客户端闹钟随之失效。这是时间簇规则的
+  正确副作用，不是 bug。
+- 同步不是实时的：iPhone 按「获取新数据」调度轮询（含手动下拉刷新），网页端改动
+  不会立即推送到达手机；手机端到网页端的延迟同理。

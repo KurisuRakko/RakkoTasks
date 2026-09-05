@@ -5,7 +5,7 @@ import json
 import logging
 import secrets
 from collections.abc import Iterator
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
@@ -18,17 +18,18 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.auth import CurrentUser, require_auth
 from app.calendar import build_ics
+from app.caldav import register_caldav
+from app.caldav.auth import generate_app_password, hash_app_password
 from app.config import Settings, get_settings
 from app.db import init_db, make_engine, make_session_factory
 from app.detail import apply_detail, build_export_text, generate_item_detail, resolve_related
+from app.itemrules import CATEGORIES, ItemFieldError, set_status, validate_item_fields
 from app.models import Account, Email, Item, User
 from app.ratelimit import RateLimiter
 from app.sanitizer import build_email_document
 from app.search import run_search
 
 logger = logging.getLogger("rakkotasks.api")
-
-CATEGORIES = ("学业", "工作", "个人", "账单", "其他")
 
 
 class ItemCreate(BaseModel):
@@ -75,26 +76,6 @@ def _owned_item(db: Session, item_id: int, user_sub: str) -> Item | None:
     ).scalars().first()
 
 
-def _validate_item_fields(title: str, summary: str, category: str, due_date: str | None) -> date | None:
-    """手动条目字段校验（POST 与 PATCH 共用）：非法抛 400 错误码；返回解析后的 date 或 None。"""
-    title = title.strip()
-    if not title or len(title) > 128:
-        raise HTTPException(status_code=400, detail={"code": "bad_title"})
-    if len(summary or "") > 5000:
-        raise HTTPException(status_code=400, detail={"code": "bad_summary"})
-    if category not in CATEGORIES:
-        raise HTTPException(status_code=400, detail={"code": "bad_category"})
-    if due_date is None:
-        return None
-    try:
-        parsed = date.fromisoformat(due_date)
-    except ValueError:
-        raise HTTPException(status_code=400, detail={"code": "bad_due_date"}) from None
-    if parsed.isoformat() != due_date:  # fromisoformat 容忍带时间/偏移的串，这里只收 YYYY-MM-DD
-        raise HTTPException(status_code=400, detail={"code": "bad_due_date"})
-    return parsed
-
-
 def _owned_email(db: Session, email_id: int, user_sub: str) -> Email | None:
     """按归属链 Email→Account 取属于该用户的邮件；不属于返回 None（对外按 404 处理）。"""
     return db.execute(
@@ -127,8 +108,9 @@ def create_app(
 
     @app.exception_handler(HTTPException)
     async def _http_exception_handler(_request, exc: HTTPException):
-        # 401 按任务书返回裸 JSON {"code": "unauthorized"}，其余错误同样只回 detail
-        return JSONResponse(status_code=exc.status_code, content=exc.detail)
+        # 401 按任务书返回裸 JSON {"code": "unauthorized"}，其余错误同样只回 detail；
+        # headers（如 WWW-Authenticate）必须透传，否则客户端拿不到质询参数
+        return JSONResponse(status_code=exc.status_code, content=exc.detail, headers=exc.headers)
 
     app.add_middleware(
         CORSMiddleware,
@@ -147,8 +129,8 @@ def create_app(
         resp.headers.setdefault("X-Frame-Options", "DENY")
         resp.headers.setdefault("Referrer-Policy", "same-origin")
         resp.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
-        if request.url.path.startswith("/api/"):
-            # 邮件内容不允许进任何缓存
+        if request.url.path.startswith(("/api/", "/caldav")):
+            # 邮件内容与 CalDAV 凭据态不允许进任何缓存
             resp.headers["Cache-Control"] = "no-store"
         return resp
 
@@ -179,7 +161,10 @@ def create_app(
         body: ItemCreate, user: CurrentUser = Depends(require_auth), db: Session = Depends(_get_db)
     ) -> dict:
         """新建手动条目（无源邮件，email_id 为 null）：importance/actionable 固定、status=open。"""
-        due = _validate_item_fields(body.title, body.summary, body.category, body.due_date)
+        try:
+            due = validate_item_fields(body.title, body.summary, body.category, body.due_date)
+        except ItemFieldError as e:
+            raise HTTPException(status_code=400, detail={"code": e.code}) from None
         item = Item(
             user_sub=user.sub,
             email_id=None,
@@ -211,8 +196,7 @@ def create_app(
         if "status" in fields:
             if body.status not in ("done", "open"):
                 raise HTTPException(status_code=400, detail={"code": "bad_status"})
-            item.status = body.status
-            item.done_at = datetime.now() if body.status == "done" else None
+            set_status(item, body.status, now=datetime.now())
         if editable:
             # 未给出的字段用现值合并后整体校验一次（校验语义与 POST 一致）
             title = body.title if "title" in fields else item.title
@@ -223,7 +207,10 @@ def create_app(
                 if "due_date" in fields
                 else (item.due_date.isoformat() if item.due_date else None)
             )
-            due = _validate_item_fields(title, summary, category, due_raw)
+            try:
+                due = validate_item_fields(title, summary, category, due_raw)
+            except ItemFieldError as e:
+                raise HTTPException(status_code=400, detail={"code": e.code}) from None
             item.title = title.strip()
             item.summary = summary
             item.category = category
@@ -309,6 +296,40 @@ def create_app(
         u.calendar_token = secrets.token_urlsafe(32)
         db.commit()
         return {"token": u.calendar_token}
+
+    @app.get("/api/caldav")
+    def get_caldav_status(
+        user: CurrentUser = Depends(require_auth), db: Session = Depends(_get_db)
+    ) -> dict:
+        """CalDAV 同步的接入信息（username/path/是否已配置）。
+
+        GET 不自动生成应用密码：密码只显示一次，只能由显式 POST
+        /api/caldav/password 产生——被动生成会让密码永远到不了用户手里。
+        本端点及密码端点响应都不含 hash 本身。
+        """
+        u = db.get(User, user.sub)
+        if u is None:
+            u = User(sub=user.sub)
+            db.add(u)
+        return {
+            "username": u.email or u.sub,
+            "path": "/caldav/",
+            "configured": u.caldav_password_hash is not None,
+        }
+
+    @app.post("/api/caldav/password")
+    def create_caldav_password(
+        user: CurrentUser = Depends(require_auth), db: Session = Depends(_get_db)
+    ) -> dict:
+        """无条件重新生成 CalDAV 应用密码（旧密码立即失效），明文只在本次响应出现一次。"""
+        u = db.get(User, user.sub)
+        if u is None:
+            u = User(sub=user.sub)
+            db.add(u)
+        pw = generate_app_password()
+        u.caldav_password_hash = hash_app_password(pw)
+        db.commit()
+        return {"password": pw}
 
     @app.get("/api/calendar/{token}.ics")
     def calendar_ics(token: str, db: Session = Depends(_get_db)) -> Response:
@@ -411,6 +432,10 @@ def create_app(
             ],
             "pending_llm": pending_llm,
         }
+
+    # CalDAV（iPhone 提醒事项）：必须在 SPA fallback 之前注册，否则 /caldav/ 会被 GET 兜底吞掉；
+    # 失败鉴权每来源每分钟 30 次
+    register_caldav(app, settings, RateLimiter(30, 60.0))
 
     # 静态托管：settings.frontend_dist 非空时用它，否则回退启发式路径；目录存在才挂 SPA fallback
     dist_str = settings.frontend_dist

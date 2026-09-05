@@ -77,9 +77,14 @@ _COLUMN_ALTERS: dict[str, dict[str, str]] = {
     "items": {
         "importance": "TEXT NOT NULL DEFAULT 'normal'",
         "related_json": "TEXT",
+        "caldav_uid": "TEXT",
+        "caldav_name": "TEXT",
+        "caldav_ics": "TEXT",
+        "updated_at": "DATETIME",
     },
     "users": {
         "calendar_token": "TEXT",
+        "caldav_password_hash": "TEXT",
     },
 }
 
@@ -156,11 +161,30 @@ def _migrate_items_manual(engine: Engine) -> None:
             cur.close()
 
 
+def _backfill_caldav_identity(engine: Engine) -> None:
+    """回填 items 的 CalDAV 身份列（caldav_uid / updated_at）。
+
+    为什么回填：新列对既有行都是 NULL，而 CalDAV 资源名/ETag 依赖这两列，
+    不补齐会让存量条目无法在集合里稳定寻址。为什么用 SQL 不用 Python 逐行
+    循环：全表两条 UPDATE 就完成，且 randomblob 在 SQLite 内部生成，不经
+    ORM 无默认值可绕。为什么幂等：只 UPDATE 仍为 NULL 的行，已有身份的行
+    第二次运行不被触碰。为什么并发安全：两条 UPDATE 同处一个 engine.begin()
+    写事务，SQLite 写事务串行，多进程同时启动也不会互相覆盖。
+    注意：_migrate_items_manual 重建表后新列全是 NULL，靠紧随其后的本回填补齐。
+    """
+    with engine.begin() as conn:
+        conn.execute(
+            text("UPDATE items SET caldav_uid = upper(hex(randomblob(16))) WHERE caldav_uid IS NULL")
+        )
+        conn.execute(text("UPDATE items SET updated_at = created_at WHERE updated_at IS NULL"))
+
+
 def init_db(engine: Engine) -> None:
     """建普通表（含 accounts/emails/items）与 FTS5 虚表 + 触发器；对旧库就地补列。"""
     Base.metadata.create_all(engine)
     _ensure_columns(engine)
     _migrate_items_manual(engine)
+    _backfill_caldav_identity(engine)
     with engine.begin() as conn:
         conn.execute(text(FTS_SCHEMA))
         for sql in FTS_TRIGGERS:

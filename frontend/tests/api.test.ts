@@ -109,3 +109,46 @@ describe('fetchItems', () => {
     expect(result).toEqual([]);
   });
 });
+
+describe('fetchCaldavInfo', () => {
+  it('GET /api/caldav，带 Bearer，解析 username/path/configured 三字段', async () => {
+    const fetchMock = vi.fn(async (_url: string | URL, _init?: RequestInit) =>
+      json({ username: 'a@x.com', path: '/caldav/', configured: false }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await api.fetchCaldavInfo();
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit | undefined];
+    expect(url).toBe('/api/caldav');
+    expect((init?.headers as Record<string, string>).Authorization).toBe('Bearer test-token');
+    expect(result.username).toBe('a@x.com');
+    expect(result.path).toBe('/caldav/');
+    expect(result.configured).toBe(false);
+  });
+});
+
+describe('generateCaldavPassword', () => {
+  it('POST /api/caldav/password，带 Bearer，返回 data.password', async () => {
+    const fetchMock = vi.fn(async (_url: string | URL, _init?: RequestInit) =>
+      json({ password: 'p'.repeat(32) }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await api.generateCaldavPassword();
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit | undefined];
+    expect(url).toBe('/api/caldav/password');
+    expect(init?.method).toBe('POST');
+    expect((init?.headers as Record<string, string>).Authorization).toBe('Bearer test-token');
+    expect(result).toBe('p'.repeat(32));
+  });
+});
+
+describe('caldavTarget', () => {
+  it('API_BASE_URL 为空时 host 取 window.location.host，url 以 /caldav/ 结尾', () => {
+    const target = api.caldavTarget('/caldav/');
+    expect(target.host).toBe(window.location.host);
+    expect(target.url).toBe(`${window.location.origin}/caldav/`);
+  });
+});

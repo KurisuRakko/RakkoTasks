@@ -112,6 +112,15 @@ export interface CalendarTokenResponse {
   token: string;
 }
 
+/** GET /api/caldav 返回体：iPhone 提醒事项经 CalDAV 同步所需的连接信息 */
+export interface CaldavInfo {
+  username: string;
+  /** CalDAV 根路径，固定 "/caldav/" */
+  path: string;
+  /** 是否已生成过同步密码 */
+  configured: boolean;
+}
+
 /** Phainon /me 返回体 */
 export interface PhainonMe {
   app_id: string;

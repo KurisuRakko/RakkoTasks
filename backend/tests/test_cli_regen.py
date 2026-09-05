@@ -163,3 +163,29 @@ def test_regen_details_unknown_account_exits_2(tmp_path):
         cli._cmd_regen_details(args, settings)
     assert exc.value.code == 2
     assert _item_of(settings, "user-A").detail_md == "**A**"
+
+
+def test_resolve_user_ambiguous_email_exits_with_hint(tmp_path, capsys):
+    """同一邮箱对应多个用户：打印歧义提示（列出各 sub）并以退出码 1 结束，不改数据。"""
+    settings = _settings(tmp_path)
+    init_db(make_engine(settings.database_path))
+    with _sf(settings)() as s:
+        s.add_all(
+            [
+                User(sub="user-A", email="dup@example.com"),
+                User(sub="user-B", email="dup@example.com"),
+            ]
+        )
+        s.commit()
+    args = argparse.Namespace(user="dup@example.com", account=None, yes=True)
+    with pytest.raises(SystemExit) as exc:
+        cli._cmd_regen_details(args, settings)
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "对应多个用户" in err
+    assert "请改用 sub 精确指定" in err
+    assert "user-A" in err and "user-B" in err
+    assert "未找到用户" not in err  # 歧义不能被误导成“未找到”
+
+    with _sf(settings)() as s:
+        assert len(s.execute(select(User)).scalars().all()) == 2  # 未做任何修改

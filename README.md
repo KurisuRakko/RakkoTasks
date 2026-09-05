@@ -33,6 +33,7 @@ hundreds of messages. RakkoTasks digs them out, orders them, and waits for you.
 - **Calendar subscription.** Each user gets a tokenised iCalendar feed. Open tasks with a due
   date appear as all-day events in your system calendar, vanish when completed, and remind you
   at 10:00 on the due date. On iPhone the feed can be added with one tap via `webcal://`.
+- **iPhone Reminders sync.** Add the server as a CalDAV account in iOS Reminders: tasks appear as a "RakkoTasks" list, and completing, creating or editing on any iPhone syncs back. Set it up from the Settings page.
 - **Original email view.** Read the original email inside the task. HTML is sanitised on the
   server and rendered in a sandboxed iframe; remote images are blocked by default.
 - **Multi-user.** Sign-in is handled by Phainon, the author's own authentication service. Each

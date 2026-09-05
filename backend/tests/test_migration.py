@@ -2,13 +2,19 @@
 
 生产库存着邮箱 OAuth token cache，不允许删库重建，所以验证的是 ALTER 路径而非重建。
 另有 items 重建迁移（email_id 去 NOT NULL + user_sub 归属回填）与 users 补列测试。
+CalDAV 部分：items 四新列 / users.caldav_password_hash 补列与身份回填幂等。
 """
+import re
+from datetime import datetime
+
 import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.pool import StaticPool
 
 from app.db import init_db, make_session_factory
-from app.models import Account, Base, Email, User
+from app.models import Account, Base, Email, Item, User
+
+_HEX32 = re.compile(r"^[0-9A-F]{32}$")
 
 _OLD_ITEMS_DDL = """
 CREATE TABLE items (
@@ -237,3 +243,103 @@ def test_old_users_table_gets_calendar_token_column():
     assert "calendar_token" in _columns(engine, "users")
     init_db(engine)  # 幂等
     assert "calendar_token" in _columns(engine, "users")
+
+
+# ── CalDAV：items 四新列 + 身份回填，users.caldav_password_hash ──
+
+
+def test_old_db_gets_caldav_columns_and_backfill_idempotent():
+    """旧 items 表 init_db 后四新列都在；既有行回填 caldav_uid（32 位大写 hex、
+    互不相同）与 updated_at=created_at；二次 init_db 不改变已有值。"""
+    engine = _old_db_engine_seeded()
+    init_db(engine)
+    cols = _columns(engine, "items")
+    assert {"caldav_uid", "caldav_name", "caldav_ics", "updated_at"} <= cols
+
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text("SELECT id, caldav_uid, caldav_name, caldav_ics, updated_at, created_at FROM items ORDER BY id")
+        ).fetchall()
+    assert len(rows) == 2
+    uids = [r[1] for r in rows]
+    assert all(u is not None and _HEX32.match(u) for u in uids)
+    assert len(set(uids)) == 2  # 每行一个互不相同的 UID
+    assert all(r[2] is None and r[3] is None for r in rows)  # 透传列保持 NULL
+    assert all(r[4] == r[5] for r in rows)  # updated_at 回填等于 created_at
+
+    # 幂等：跑第二遍 init_db 不重填、不改值
+    init_db(engine)
+    with engine.connect() as conn:
+        rows2 = conn.execute(text("SELECT id, caldav_uid, updated_at FROM items ORDER BY id")).fetchall()
+    assert [(r[0], r[1], r[2]) for r in rows2] == [(r[0], r[1], r[4]) for r in rows]
+
+
+def test_migrated_rows_get_uid_after_table_rebuild():
+    """重建迁移路径（旧结构 items 无 caldav 列）后身份由紧随的回填补齐：新列不是 NULL。"""
+    engine = _old_db_engine_seeded()
+    init_db(engine)
+    with engine.connect() as conn:
+        n_null = conn.execute(
+            text("SELECT COUNT(*) FROM items WHERE caldav_uid IS NULL")
+        ).fetchone()[0]
+        assert n_null == 0
+
+
+def test_old_users_table_gets_caldav_password_hash_column():
+    """旧 users 表（无 caldav_password_hash 列）init_db 就地补列；再跑一次幂等。"""
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                CREATE TABLE users (
+                    sub TEXT NOT NULL PRIMARY KEY,
+                    email TEXT,
+                    name TEXT,
+                    calendar_token TEXT,
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    last_seen_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+        )
+        Base.metadata.create_all(conn)
+    assert "caldav_password_hash" not in _columns(engine, "users")
+
+    init_db(engine)
+    assert "caldav_password_hash" in _columns(engine, "users")
+    init_db(engine)  # 幂等
+    assert "caldav_password_hash" in _columns(engine, "users")
+
+
+def test_orm_new_item_auto_gets_caldav_uid_and_updated_at():
+    """ORM 新建 Item 自动获得 caldav_uid（32 位大写 hex，互不相同）；
+    不显式碰 updated_at 的 ORM 变更会触发 onupdate 刷新（ETag 来源）。"""
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    init_db(engine)
+    sf = make_session_factory(engine)
+    with sf() as s:
+        s.add(Item(user_sub="u1", title="甲", summary="", category="学业", status="open"))
+        s.add(Item(user_sub="u1", title="乙", summary="", category="工作", status="open"))
+        s.commit()
+        items = s.execute(text("SELECT caldav_uid FROM items ORDER BY id")).fetchall()
+    uids = [r[0] for r in items]
+    assert all(u is not None and _HEX32.match(u) for u in uids)
+    assert len(set(uids)) == 2
+
+    with sf() as s:
+        it = s.query(Item).first()  # noqa: S608 —— 测试直接取行即可
+        it.title = "改名"  # 只改业务字段：updated_at 未进 SET 子句 → onupdate 刷新
+        s.commit()
+        assert it.updated_at is not None
+        assert (datetime.now() - it.updated_at).total_seconds() < 10  # 刷新到了当下而非新建时刻
+        fresh = s.get(Item, it.id)
+        assert fresh.caldav_uid == uids[0]  # UID 一经生成不变
