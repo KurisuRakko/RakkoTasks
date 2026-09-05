@@ -32,7 +32,7 @@ docs/       本文档等
 | UNSW 学校邮箱 | IMAP `outlook.office365.com:993` | OAuth2 device code + XOAUTH2 |
 | 个人 Outlook | 同上 | 同上（微软已关闭个人账户密码式 IMAP） |
 | 公司 Outlook | 同上 | 同上 |
-| Gmail | IMAP `imap.gmail.com:993` | 应用专用密码（存库，CLI 交互式录入） |
+| Gmail | IMAP `imap.gmail.com:993` | 应用专用密码（网页设置页录入后存库；CLI 兜底） |
 
 - Microsoft OAuth：msal `PublicClientApplication`，authority `https://login.microsoftonline.com/common`，
   scope `https://outlook.office.com/IMAP.AccessAsUser.All`（OAuth 资源域名是 outlook.office.com，与 IMAP 主机名 outlook.office365.com 不同；msal 自动附带 offline_access）。
@@ -329,8 +329,8 @@ CalDAV 例外：`/caldav/*` 与 `/.well-known/caldav` 不走上述 Bearer 中间
 - compose 服务：`web`（uvicorn :8000）、`worker`（`python -m app.worker`，同镜像）、
   `cloudflared`（`TUNNEL_TOKEN` env；DNS 与隧道由使用者后配）。`./data` 挂载给 web 与 worker。
 - 全部配置走 env，提供 `.env.example`。邮箱凭据与用户白名单不再走 env：
-  `GMAIL_APP_PASSWORD` / `ALLOWED_SUBS` 已删除，Gmail 应用专用密码由 CLI
-  交互式录入存库，任何用户都可直接使用（无白名单）。
+  `GMAIL_APP_PASSWORD` / `ALLOWED_SUBS` 已删除，Gmail 应用专用密码由用户在网页
+  设置页录入存库（CLI 兜底），任何用户都可直接使用（无白名单）。
 
 ## 10. 非目标（v1 明确不做）
 
