@@ -1,11 +1,12 @@
 // TasksPage 测试：high 条目渲染「重要」Chip，normal/low 条目不渲染；「重要」组标题出现。
 // 另覆盖容器变换与 portal 相关行为：悬浮按钮挂在 body 下（不被路由转场盒子的
 // transform 困住）、打 data-vt-shell 标记、勾选推进 LEAVE_DURATION 后发 PATCH done
-// 且条目从列表消失。
+// 且条目从列表消失；切回页面命中模块级缓存（list-cache）时不再闪加载圈。
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import TasksPage from '../src/pages/TasksPage';
+import { resetLists } from '../src/lib/list-cache';
 import { LEAVE_DURATION } from '../src/lib/motion';
 import { VT_SHELL_ATTR, VT_NAMES } from '../src/lib/view-transition';
 import type { Item } from '../src/types';
@@ -45,6 +46,8 @@ function json(body: unknown, status = 200): Response {
 
 beforeEach(() => {
   localStorage.clear();
+  // list-cache 是模块级缓存，跨用例残留会互相污染，每个用例从空缓存开始
+  resetLists();
 });
 
 afterEach(() => {
@@ -231,5 +234,22 @@ describe('TasksPage 容器变换与 portal', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('切回页面命中缓存：第二次挂载不显示加载圈、同步渲染列表，且仍会后台重新请求', async () => {
+    const fetchMock = vi.fn(async () => json({ items: ITEMS }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    // 首次挂载：先加载后渲染，数据落进模块级缓存
+    render(<TasksPage />);
+    await screen.findByText('重要任务');
+    cleanup();
+
+    // 再次挂载（模拟切走再切回）：缓存命中，无加载圈、列表同步渲染
+    render(<TasksPage />);
+    expect(screen.queryByRole('progressbar')).toBeNull();
+    expect(screen.getByText('重要任务')).toBeTruthy();
+    // 命中缓存仍会发起一次后台刷新
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
   });
 });

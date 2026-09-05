@@ -51,8 +51,15 @@ export const LEAVE_DURATION = MOTION.largeExit;
  * 子元素必须 min-height:0 才会真正被压缩。这样下方条目平滑上移，
  * 而不是在条目被移除的瞬间跳上来。
  * 过渡属性逐项列出，不用 transition: all（会连带动画布局与浏览器私有属性）。
+ * enter 由调用方的 useCachedList.animateEnter 传入：入场 stagger 只在「这份列表
+ * 首次拿到数据」时跑一次；命中缓存直接挂载的列表就该位，不重放一遍入场。
  */
-export function rowSx(index: number, leaving: boolean, reduced: boolean): SxProps<Theme> {
+export function rowSx(
+  index: number,
+  leaving: boolean,
+  reduced: boolean,
+  enter: boolean,
+): SxProps<Theme> {
   const box = {
     display: 'grid',
     // MUI ListItem 根样式带 justify-content: flex-start，网格的隐式 auto 列会按
@@ -65,8 +72,11 @@ export function rowSx(index: number, leaving: boolean, reduced: boolean): SxProp
     '& > *': { minHeight: 0, overflow: 'hidden' },
   };
   if (reduced) return box;
+  // 入场动画只在「该列表首次拿到数据」且未离场时挂：两套动效同时作用于同一元素
+  // 会互相覆盖 transform；命中缓存（enter=false）时列表已就位，不重放入场。
+  const entering = enter && !leaving;
   return {
-    ...ENTER_UP_KEYFRAMES,
+    ...(entering ? ENTER_UP_KEYFRAMES : {}),
     ...box,
     transform: leaving ? 'translateX(12px)' : 'none',
     transition: [
@@ -74,13 +84,12 @@ export function rowSx(index: number, leaving: boolean, reduced: boolean): SxProp
       `opacity ${MOTION.exit}ms ${MOTION.easeStandard}`,
       `transform ${MOTION.exit}ms ${MOTION.easeStandard}`,
     ].join(', '),
-    // 入场动画只在未离场时挂：两套动效同时作用于同一元素会互相覆盖 transform
-    ...(leaving
-      ? {}
-      : {
+    ...(entering
+      ? {
           animation: `rtk-enter-up ${MOTION.enter}ms ${MOTION.easeStandard} both`,
           animationDelay: staggerDelay(index),
-        }),
+        }
+      : {}),
   };
 }
 

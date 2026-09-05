@@ -1,8 +1,10 @@
-// DonePage 测试：挂载拉取 done 列表并渲染两条；取消勾选发 PATCH open（离场动画后）。
+// DonePage 测试：挂载拉取 done 列表并渲染两条；取消勾选发 PATCH open（离场动画后）；
+// 切回页面命中模块级缓存（list-cache）时不闪加载圈、列表同步渲染。
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import DonePage from '../src/pages/DonePage';
+import { resetLists } from '../src/lib/list-cache';
 
 const ITEMS = [
   {
@@ -44,6 +46,8 @@ function json(body: unknown, status = 200): Response {
 
 beforeEach(() => {
   localStorage.clear();
+  // list-cache 是模块级缓存，跨用例残留会互相污染，每个用例从空缓存开始
+  resetLists();
 });
 
 afterEach(() => {
@@ -106,5 +110,24 @@ describe('DonePage', () => {
     const [url, init] = patchCall!;
     expect(url).toBe('/api/items/1');
     expect(JSON.parse(String(init.body))).toEqual({ status: 'open' });
+  });
+
+  it('切回页面命中缓存：第二次挂载不显示加载圈、同步渲染列表，且仍会后台重新请求', async () => {
+    const fetchMock = vi.fn(async (_url: string | URL, _init?: RequestInit) =>
+      json({ items: ITEMS }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    // 首次挂载：先加载后渲染，数据落进模块级缓存
+    render(<DonePage />);
+    await screen.findByText('任务一');
+    cleanup();
+
+    // 再次挂载（模拟切走再切回）：缓存命中，无加载圈、列表同步渲染
+    render(<DonePage />);
+    expect(screen.queryByRole('progressbar')).toBeNull();
+    expect(screen.getByText('任务一')).toBeTruthy();
+    // 命中缓存仍会发起一次后台刷新
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
   });
 });

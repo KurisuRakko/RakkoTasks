@@ -1,5 +1,8 @@
 // 任务页：分类筛选 + 按截止日期分组列表（今天/本周/无期限）。
-// 勾选 → 离场动画 → 移除并 PATCH done；已完成列表已拆到 /done，本页不再持有 done 数据。
+// 列表数据来自 list-cache 模块级缓存（唯一数据源）：挂载先显示缓存旧数据、后台
+// 静默刷新，不再每次先闪加载圈；勾选 → 离场动画 → moveItem 进 done 缓存并 PATCH。
+// 入场 stagger 只在「这份列表首次拿到数据」时跑（useCachedList.animateEnter），
+// 命中缓存直接就位不重放。已完成列表在 /done，本页不持有 done 数据。
 // 条目左侧小蓝点表示源邮件是今天发的，按日期自动过期，与查看/勾选状态无关。
 // 列表行与详情 Dialog 共用 VT_NAMES.sheet 做容器变换（点哪行哪行长成对话框）；
 // 右下角悬浮按钮经 portal 挂到 body——路由转场内层动画盒的 transform 会成为
@@ -25,6 +28,7 @@ import Typography from '@mui/material/Typography';
 import AddIcon from '@mui/icons-material/Add';
 import { createItem, fetchItems, patchItem } from '../lib/api';
 import { formatDueDate, groupItems, isNewToday, isOverdue } from '../lib/grouping';
+import { moveItem, openKey, removeItem, upsertOpenItem, useCachedList } from '../lib/list-cache';
 import { LEAVE_DURATION, rowSx, useMorphDialog, usePrefersReducedMotion } from '../lib/motion';
 import { runViewTransition, shellAttr, VT_NAMES } from '../lib/view-transition';
 import type { Category, Item, ItemFields } from '../types';
@@ -36,6 +40,7 @@ function GroupSection({
   title,
   items,
   today,
+  animateEnter,
   leavingIds,
   onToggle,
   onOpen,
@@ -44,6 +49,8 @@ function GroupSection({
   title: string;
   items: Item[];
   today: Date;
+  /** 该列表本次挂载是否首次拿到数据：true 才跑入场 stagger（见 motion.rowSx） */
+  animateEnter: boolean;
   leavingIds: number[];
   onToggle: (item: Item) => void;
   onOpen: (item: Item) => void;
@@ -68,7 +75,7 @@ function GroupSection({
             key={item.id}
             disablePadding
             sx={{
-              ...rowSx(index, leaving, reduced),
+              ...rowSx(index, leaving, reduced, animateEnter),
               viewTransitionName: sourceName(item.id),
             }}
           >
@@ -140,9 +147,6 @@ function GroupSection({
 
 export default function TasksPage() {
   const [category, setCategory] = useState<Category | null>(null);
-  const [openItems, setOpenItems] = useState<Item[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
   const [leavingIds, setLeavingIds] = useState<number[]>([]);
   const [addOpen, setAddOpen] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -154,15 +158,21 @@ export default function TasksPage() {
 
   const today = new Date();
 
-  // 保存新条目：成功插入本页列表头部（若当前分类筛选为空或命中新条目分类），失败保持编辑器打开
+  // 列表的唯一数据源是 list-cache：挂载命中缓存先展示旧数据、后台静默刷新，
+  // 未命中才先 loading；animateEnter 只在首次拿到数据的那次挂载为 true。
+  const fetcher = useCallback(
+    () => fetchItems({ status: 'open', category: category ?? undefined }),
+    [category],
+  );
+  const { items, loading, error, animateEnter } = useCachedList(openKey(category), fetcher);
+
+  // 保存新条目：成功写进缓存（分类匹配与否由缓存键决定），失败保持编辑器打开
   const handleCreate = useCallback(
     (fields: ItemFields) => {
       setCreating(true);
       createItem(fields)
         .then((item) => {
-          if (category === null || category === item.category) {
-            setOpenItems((p) => [item, ...p]);
-          }
+          upsertOpenItem(item);
           // 保存成功后编辑器关闭同样走容器变换，缩回悬浮按钮
           runViewTransition('collapse-fab', () => setAddOpen(false), reduced);
           setSnack('已添加');
@@ -170,31 +180,8 @@ export default function TasksPage() {
         .catch(() => setSnack('添加失败'))
         .finally(() => setCreating(false));
     },
-    [category, reduced],
+    [reduced],
   );
-
-  const loadOpen = useCallback(() => {
-    let alive = true;
-    setLoading(true);
-    setLoadError(null);
-    fetchItems({ status: 'open', category: category ?? undefined })
-      .then((items) => {
-        if (alive) setOpenItems(items);
-      })
-      .catch(() => {
-        if (alive) setLoadError('加载任务失败');
-      })
-      .finally(() => {
-        if (alive) setLoading(false);
-      });
-    return () => {
-      alive = false;
-    };
-  }, [category]);
-
-  useEffect(() => {
-    return loadOpen();
-  }, [loadOpen]);
 
   // 组件卸载时清掉所有离场动画定时器，避免卸载后 setState
   useEffect(() => {
@@ -203,17 +190,17 @@ export default function TasksPage() {
     };
   }, []);
 
-  // 勾选：先入 leaving（离场动画 260ms），动画结束后移除并 PATCH done；
-  // 请求失败则放回原列表并提示。反向恢复由 /done 负责，本页不做。
+  // 勾选：先入 leaving（离场动画 260ms），动画结束后移进 done 缓存并 PATCH；
+  // 请求失败则移回 open 缓存、放行该行并提示。反向恢复由 /done 负责，本页不做。
   const toggleItem = useCallback(
     (item: Item) => {
       if (leavingIds.includes(item.id)) return;
       setLeavingIds((p) => [...p, item.id]);
       const timer = window.setTimeout(() => {
-        setOpenItems((p) => p.filter((i) => i.id !== item.id));
+        moveItem(item, 'done');
         patchItem(item.id, { status: 'done' }).catch(() => {
           setLeavingIds((p) => p.filter((id) => id !== item.id));
-          setOpenItems((p) => (p.some((i) => i.id === item.id) ? p : [item, ...p]));
+          moveItem(item, 'open');
           setSnack('操作失败，已恢复');
         });
       }, reduced ? 0 : LEAVE_DURATION);
@@ -222,7 +209,7 @@ export default function TasksPage() {
     [leavingIds, reduced],
   );
 
-  const grouped = groupItems(openItems, today);
+  const grouped = groupItems(items ?? [], today);
 
   return (
     <Box>
@@ -231,9 +218,9 @@ export default function TasksPage() {
         <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}>
           <CircularProgress />
         </Box>
-      ) : loadError ? (
+      ) : error ? (
         <Alert severity="error" sx={{ mx: 2 }}>
-          {loadError}
+          加载任务失败
         </Alert>
       ) : (
         <>
@@ -241,6 +228,7 @@ export default function TasksPage() {
             title="今天"
             items={grouped.today}
             today={today}
+            animateEnter={animateEnter}
             leavingIds={leavingIds}
             onToggle={toggleItem}
             onOpen={open}
@@ -250,6 +238,7 @@ export default function TasksPage() {
             title="本周"
             items={grouped.thisWeek}
             today={today}
+            animateEnter={animateEnter}
             leavingIds={leavingIds}
             onToggle={toggleItem}
             onOpen={open}
@@ -259,6 +248,7 @@ export default function TasksPage() {
             title="重要"
             items={grouped.important}
             today={today}
+            animateEnter={animateEnter}
             leavingIds={leavingIds}
             onToggle={toggleItem}
             onOpen={open}
@@ -268,12 +258,13 @@ export default function TasksPage() {
             title="无期限"
             items={grouped.later}
             today={today}
+            animateEnter={animateEnter}
             leavingIds={leavingIds}
             onToggle={toggleItem}
             onOpen={open}
             sourceName={sourceName}
           />
-          {openItems.length === 0 && (
+          {(items ?? []).length === 0 && (
             <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', py: 6 }}>
               没有待办任务
             </Typography>
@@ -284,8 +275,8 @@ export default function TasksPage() {
         <ItemDialog
           item={current}
           onClose={close}
-          onChanged={(it) => setOpenItems((p) => p.map((i) => (i.id === it.id ? it : i)))}
-          onDeleted={(id) => setOpenItems((p) => p.filter((i) => i.id !== id))}
+          onChanged={(it) => upsertOpenItem(it)}
+          onDeleted={(id) => removeItem(id)}
         />
       )}
       {/*
