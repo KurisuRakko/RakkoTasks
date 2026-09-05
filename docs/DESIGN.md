@@ -42,11 +42,25 @@ docs/       本文档等
   Exchange Online 必须经预授权，会报 `AADSTS65002`，拿不到 IMAP token。UNSW 官方
   文档里用到 d3590ed6 的是 Evolution 一节，配的是 EWS 而非 IMAP；其 Thunderbird
   一节用的正是它内置的客户端 ID。msal 的 SerializableTokenCache 按账户序列化存入 DB。
-- 首次登录：CLI 触发 device code flow，终端打印 URL + 代码，人工在任意浏览器完成 MFA。
-- refresh token 失效：账户状态置 error，页面状态区显示，等待人工重跑 CLI。不做主动通知。
-- 账户由 CLI 管理：`add` / `connect` / `list` / `remove`，每个账户归属某个用户
-  （`--user <sub|邮箱>`）。Gmail 应用专用密码在 CLI 交互式录入（getpass，不回显、
-  不进 shell history），明文存库、永不经 API 返回；不再走环境变量。
+- **账户由用户在网页设置页自助管理**（2026-09-06 起；CLI 保留为运维兜底）：添加 /
+  重命名 / 改 Gmail 应用专用密码 / 重新授权微软 / 停用·启用 / 彻底删除，全部经
+  `/api/accounts*`（见第 6 节），按当前登录者隔离。Gmail 应用专用密码经 HTTPS 提交后
+  明文存库、永不经任何 API 返回；响应里只有 `has_credentials` 布尔。
+- 微软授权（网页）：授权码 + PKCE 流程，复用 `app/imap/mstoken.py` 的
+  `initiate_auth_code_flow` / `complete_auth_code_flow`。默认 client_id 是 Thunderbird 公共
+  客户端，其注册的重定向地址不是本站，所以**无法回跳到本站**，只能走「引导式两步」：
+  ① 服务端生成授权链接，用户在新标签页登录并完成 MFA；② 浏览器停在空白页
+  `login.microsoftonline.com/common/oauth2/nativeclient`，用户把地址栏完整 URL（或页面上的
+  授权码）粘贴回向导，服务端换 token 落库。flow 文件仍落在数据库同目录（web 容器挂有 /data）。
+  设备码流程只保留给 CLI（UNSW 等租户已禁用，网页不提供）。
+- 刚添加但尚未拿到凭据的账户（微软未完成授权）`status=pending`、`has_credentials=false`，
+  worker 跳过它不同步、也不把它改成 error；拿到凭据后下一轮开始首轮回补
+  （默认 `INITIAL_BACKFILL_DAYS=7`）。不做「授权完成立即同步」。
+- refresh token 失效：账户状态置 error，设置页显示错误并提供「重新授权」；不做主动通知。
+- 停用（enabled=0）：清空凭据、status 置 pending，保留邮件与任务，可重新启用（需重新设凭据）。
+  彻底删除：删除账户行、其全部邮件与由其邮件生成的任务（手动条目不受影响），不可恢复。
+- CLI（`python -m app.cli accounts add/connect/auth-url/auth-code/set-password/list/remove`，
+  `--user <sub|邮箱>`）与网页共用 `app/accounts.py` 服务层，语义一致。
 - 过滤规则调整后重跑历史邮件：`reclassify --user <sub|邮箱> [--account <邮箱>] [--last N] [--yes]`
   删除目标邮件关联的任务并把 LLM 状态重置为 pending，worker 下一轮同步按新规则重新分类；
   加 `--last N` 时每个账户只处理最近 N 封邮件（按发送时间倒序，无发送时间的排最后），其余不动。
@@ -223,6 +237,22 @@ GET  /api/items/{id}/export         导出条目 Markdown 纯文本（AI 见解 
 GET  /api/emails/{id}               元数据 + text_body + sanitized_html
 POST /api/search                    {"question"} → {"answer_md", "citations":[{email_id, subject, sent_at}]}
 GET  /api/status                    各账户健康（含 enabled 停用标记）+ 上次同步时间 + LLM 待处理数
+GET  /api/accounts                  → {"accounts":[AccountInfo]}，当前用户全部账户（含已停用），按 id 升序
+POST /api/accounts                  {"name","kind","email","app_password"?,"ms_client_id"?} → 201 AccountInfo
+                                    kind ∈ gmail|microsoft 否则 400 bad_kind；name 去空白后 1..128 否则 400 bad_name；
+                                    email 去空白后须含 @ 且 ≤256 否则 400 bad_email；kind=gmail 必须带非空
+                                    app_password 否则 400 password_required（microsoft 忽略该字段）；
+                                    同一用户下 (email, kind) 已存在（含已停用）→ 409 account_exists
+PATCH /api/accounts/{id}            {"name"?,"app_password"?,"enabled"?} → 200 AccountInfo；空请求体 400 bad_request；
+                                    app_password 只对 gmail 开放，其它 kind → 400 invalid_kind，空串 → 400 password_required，
+                                    成功后 status 置 pending、last_error 清空；enabled=false → 清空凭据、status 置 pending；
+                                    enabled=true → 只置位（凭据需另行设置）
+DELETE /api/accounts/{id}           彻底删除账户 + 其全部邮件 + 由其邮件生成的任务（手动条目不动）→ 204
+POST /api/accounts/{id}/auth-url    {"redirect_uri"?} → {"auth_uri"}；非 microsoft → 400 invalid_kind；
+                                    redirect_uri 只允许 mstoken.DEFAULT_REDIRECT_URI 或 urn:ietf:wg:oauth:2.0:oob，否则 400 bad_redirect
+POST /api/accounts/{id}/auth-code   {"auth_response"} → 200 AccountInfo（status=ok，凭据落库）；
+                                    无进行中流程 409 no_pending_flow；授权失败 400
+                                    {"code":"auth_failed","kind":"expired|declined|admin_required|other","detail":str}
 GET  /api/calendar                  → {"token"}；尚无令牌时生成并落库（鉴权）
 POST /api/calendar/rotate           无条件生成新令牌并覆盖（鉴权）；旧订阅链接立即失效
 GET  /api/caldav                    CalDAV 接入信息（鉴权）：→ {"username": 邮箱或 sub,
@@ -240,8 +270,10 @@ GET  /api/calendar/{token}.ics      公开（令牌即凭据，不需要 Bearer�
 - **多用户隔离**：所有端点只返回当前登录者自己的邮箱账户、邮件与任务；访问他人
   资源的越权请求一律返回 404 而非 403，不暴露资源 id 是否存在。手动条目没有邮件链，
   `user_sub` 直接挂在条目上；`/api/calendar/{token}.ics` 按令牌对应用户的 sub 过滤条目。
-- `/api/status` 的账户对象新增 `enabled: boolean`（CLI 停用后为 false，账户仍返回）；
-  任何 API 响应都不含 `app_password` / `token_cache`。
+- `AccountInfo`（`/api/accounts*` 与 `/api/status.accounts` 共用同一序列化函数）：
+  `{id, name, kind, email, status, enabled, has_credentials, ms_client_id, last_sync_at, last_error}`，
+  `has_credentials` = gmail 有 app_password / microsoft 有 token_cache。任何 API 响应都不含
+  `app_password` / `token_cache`。账户端点里 `{id}` 不属于当前用户一律 404 not_found。
 - 手动条目对象：`email_id: null`（前端据此区分手动/邮件条目），`email_subject` /
   `email_sender` / `email_sent_at` 为 null，`detail_md` 恒为 null、`related` 恒为 []。
 
@@ -275,7 +307,18 @@ CalDAV 例外：`/caldav/*` 与 `/.well-known/caldav` 不走上述 Bearer 中间
 - 条目详情（全屏 Dialog）：AI 详情（通常已预生成；未生成时首开现场生成，加载态）→ 底部「显示原邮件」展开 sandbox iframe
   → iframe 内「显示远程图片」开关。
 - 搜索页：问题输入 → 回答（Markdown 渲染）+ 引用邮件列表，点击打开邮件查看器。
-- 状态页：账户健康、上次同步、错误信息。
+- 设置页「邮箱账户」区：账户卡片（状态 Chip、凭据是否就绪、上次同步、错误）+「添加邮箱」。
+  容器按断点分流：桌面（md 起）用 Dialog（`mainAreaDialogSx`），移动端用独立路由页
+  `/settings/accounts/new`、`/settings/accounts/:id`、`/settings/accounts/:id/remove`，
+  进入从右滑入、返回向左滑出（View Transitions route-forward / route-back；设置组内按路径深度定方向）。
+  - 添加向导：① 选类型（Gmail / Outlook·Microsoft 365，学校与公司邮箱也选后者）→ ② 名称、邮箱；
+    Gmail 附应用专用密码输入与生成指引（Google 账号 → 安全性 → 两步验证 → 应用专用密码）；
+    微软可展开「高级」填自定义 client_id（默认 Thunderbird）→ ③ 微软授权引导：生成链接 →
+    新标签登录并完成 MFA → 浏览器停在空白页 → 把完整地址粘回 → 完成；auth_failed 按 kind 给
+    中文提示与重试 → ④ 完成页：说明「下一轮同步（最多 15 分钟）开始拉取最近 7 天邮件」。
+  - 账户详情：重命名、改密码（gmail）、重新授权（microsoft，复用步骤 ③）、停用/启用、移除。
+    移除二选一：停用（只删凭据，保留邮件与任务，可恢复）/ 彻底删除（连带邮件与任务，二次确认）。
+  - 任务页空态：条目为空且用户尚无账户时显示「还没有接入邮箱」+ 前往设置的按钮。
 - PWA：vite-plugin-pwa，manifest 名称 RakkoTasks，可添加到主屏幕。
 - 移动优先；MUI 默认主题即可，8dp 间距体系。
 
@@ -292,7 +335,7 @@ CalDAV 例外：`/caldav/*` 与 `/.well-known/caldav` 不走上述 Bearer 中间
 ## 10. 非目标（v1 明确不做）
 
 英文界面；手动添加/编辑任务；发件人静音规则；勾选回写邮箱已读；除 INBOX 外的文件夹；
-附件下载；推送通知；网页端管理邮箱账户（只走 CLI）；用户审批流程。
+附件下载；推送通知；用户审批流程；授权完成后立即触发同步（等下一轮）。
 
 ## 11. CalDAV（iPhone 提醒事项同步）
 
