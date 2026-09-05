@@ -8,6 +8,11 @@ import SettingsPage from '../src/pages/SettingsPage';
 import { ThemeModeProvider } from '../src/lib/theme-mode';
 import type { StatusResponse } from '../src/types';
 
+// SettingsPage 依赖 pwa-update（其注册逻辑只在浏览器生效），这里替换 checkForUpdate
+const { checkForUpdateMock } = vi.hoisted(() => ({ checkForUpdateMock: vi.fn() }));
+
+vi.mock('../src/lib/pwa-update', () => ({ checkForUpdate: checkForUpdateMock }));
+
 const STATUS: StatusResponse = {
   accounts: [
     {
@@ -191,5 +196,48 @@ describe('SettingsPage 提醒事项同步', () => {
     expect(await screen.findByText('加载提醒事项同步配置失败')).toBeTruthy();
     const link = (await screen.findByLabelText('订阅链接')) as HTMLInputElement;
     expect(link.value.endsWith('/api/calendar/abc.ics')).toBe(true);
+  });
+});
+
+describe('SettingsPage 检查更新', () => {
+  function makeFetchMock(): ReturnType<typeof vi.fn> {
+    return vi.fn(async (url: string | URL) => {
+      const u = String(url);
+      // CalDAV 分支写在日历分支之前（/api/caldav 与 /api/calendar 互不包含，顺序仅为将来防误伤）
+      if (u.includes('/api/caldav')) {
+        return json({ username: 'you@gmail.com', path: '/caldav/', configured: false });
+      }
+      if (u.includes('/api/calendar')) return json({ token: 'abc' });
+      return json(STATUS);
+    });
+  }
+
+  beforeEach(() => {
+    checkForUpdateMock.mockReset().mockResolvedValue(true);
+    vi.stubGlobal('fetch', makeFetchMock());
+  });
+
+  it('「检查更新」发起成功时提示已检查', async () => {
+    render(
+      <ThemeModeProvider>
+        <SettingsPage />
+      </ThemeModeProvider>,
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: '检查更新' }));
+    expect(checkForUpdateMock).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText('已检查，若有新版本会自动重载')).toBeTruthy();
+  });
+
+  it('环境不支持（返回 false）时提示当前环境不支持自动更新', async () => {
+    checkForUpdateMock.mockResolvedValue(false);
+    render(
+      <ThemeModeProvider>
+        <SettingsPage />
+      </ThemeModeProvider>,
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: '检查更新' }));
+    expect(await screen.findByText('当前环境不支持自动更新')).toBeTruthy();
   });
 });

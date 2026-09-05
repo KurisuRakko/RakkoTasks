@@ -9,7 +9,11 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
-      registerType: 'autoUpdate',
+      // iOS 常驻 PWA 不会自行复查 SW、也不会自动重载页面，autoUpdate 形同虚设：
+      // 改为 prompt，何时激活并重载由 src/lib/pwa-update.ts 主动决定（行为可测）
+      registerType: 'prompt',
+      // 不注入自动注册脚本，注册/周期检查/回前台补查统一走 src/lib/pwa-update.ts
+      injectRegister: false,
       includeAssets: ['icon.svg'],
       manifest: {
         name: 'RakkoTasks',
@@ -23,6 +27,11 @@ export default defineConfig({
           { src: 'icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' },
           { src: 'icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'maskable' },
         ],
+      },
+      workbox: {
+        cleanupOutdatedCaches: true,
+        // API / CalDAV / .well-known 路径不能被 SPA 导航兜底缓存
+        navigateFallbackDenylist: [/^\/api\//, /^\/caldav/, /^\/\.well-known\//],
       },
     }),
   ],
