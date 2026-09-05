@@ -1,4 +1,5 @@
 // 已完成页：勾掉即恢复为待办（乐观移除 + 离场动画 + PATCH open，失败回滚）。
+// 列表行与详情 Dialog 共用 VT_NAMES.sheet 做容器变换。
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Alert from '@mui/material/Alert';
@@ -12,7 +13,7 @@ import ListItemText from '@mui/material/ListItemText';
 import Snackbar from '@mui/material/Snackbar';
 import Typography from '@mui/material/Typography';
 import { fetchItems, patchItem } from '../lib/api';
-import { enterSx, LEAVE_SX, usePrefersReducedMotion } from '../lib/motion';
+import { LEAVE_DURATION, rowSx, useMorphDialog, usePrefersReducedMotion } from '../lib/motion';
 import type { Item } from '../types';
 import ItemDialog from '../components/ItemDialog';
 
@@ -21,9 +22,10 @@ export default function DonePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [leavingIds, setLeavingIds] = useState<number[]>([]);
-  const [editing, setEditing] = useState<Item | null>(null);
   const [snack, setSnack] = useState<string | null>(null);
   const reduced = usePrefersReducedMotion();
+  // 详情容器变换：current 非空即详情对话框打开（来源行与 paper 共享 VT_NAMES.sheet）
+  const { current, open, close, sourceName } = useMorphDialog<Item>((item) => item.id);
   const timers = useRef<number[]>([]);
 
   useEffect(() => {
@@ -66,7 +68,7 @@ export default function DonePage() {
       const timer = window.setTimeout(() => {
         setItems((p) => p.filter((i) => i.id !== item.id));
         patchItem(item.id, { status: 'open' }).catch(() => restore(item));
-      }, reduced ? 0 : 260);
+      }, reduced ? 0 : LEAVE_DURATION);
       timers.current.push(timer);
     },
     [leavingIds, reduced, restore],
@@ -94,9 +96,12 @@ export default function DonePage() {
               <ListItem
                 key={item.id}
                 disablePadding
-                sx={leaving ? LEAVE_SX : enterSx(index, reduced)}
+                sx={{
+                  ...rowSx(index, leaving, reduced),
+                  viewTransitionName: sourceName(item.id),
+                }}
               >
-                <ListItemButton onClick={() => setEditing(item)}>
+                <ListItemButton onClick={() => open(item)}>
                   <Checkbox
                     edge="start"
                     checked={!leaving}
@@ -119,10 +124,10 @@ export default function DonePage() {
           })}
         </List>
       )}
-      {editing && (
+      {current && (
         <ItemDialog
-          item={editing}
-          onClose={() => setEditing(null)}
+          item={current}
+          onClose={close}
           onChanged={(it) => setItems((p) => p.map((i) => (i.id === it.id ? it : i)))}
           onDeleted={(id) => setItems((p) => p.filter((i) => i.id !== id))}
         />

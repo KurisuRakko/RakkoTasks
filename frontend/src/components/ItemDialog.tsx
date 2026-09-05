@@ -3,10 +3,9 @@
 // 手动条目（email_id === null）降级：无 AI 详情/关联邮件/原邮件，summary 用 breaks
 // 渲染保留换行；AppBar 提供「编辑」（ItemEditor + PATCH）与「删除」（确认后 DELETE），
 // 成功后经 onChanged/onDeleted 通知父组件同步列表。
-// 移动端全屏、桌面端限宽（md），带向上滑入过渡。
+// 移动端全屏、桌面端限宽（md）；paper 挂 VT_NAMES.sheet，与来源列表行做容器变换。
 
-import type { ReactElement } from 'react';
-import { forwardRef, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import AppBar from '@mui/material/AppBar';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
@@ -23,7 +22,6 @@ import ListItem from '@mui/material/ListItem';
 import ListItemButton from '@mui/material/ListItemButton';
 import ListItemText from '@mui/material/ListItemText';
 import Skeleton from '@mui/material/Skeleton';
-import Slide from '@mui/material/Slide';
 import Snackbar from '@mui/material/Snackbar';
 import Stack from '@mui/material/Stack';
 import Toolbar from '@mui/material/Toolbar';
@@ -49,7 +47,8 @@ import type { AccountInfo, Email, Item, ItemFields, RelatedEmail } from '../type
 import EmailViewer from './EmailViewer';
 import ItemEditor from './ItemEditor';
 import SafeMarkdown from './SafeMarkdown';
-import type { TransitionProps } from '@mui/material/transitions';
+import { dialogTransitionProps } from './DialogTransition';
+import { VT_NAMES } from '../lib/view-transition';
 
 interface Props {
   item: Item;
@@ -59,11 +58,6 @@ interface Props {
   /** 手动条目删除成功（父组件用它把条目移出列表） */
   onDeleted?: (id: number) => void;
 }
-
-// 模块级 Slide 过渡组件：避免在渲染函数体内内联定义导致 Dialog 每次渲染重挂载
-const SlideUp = forwardRef<HTMLDivElement, TransitionProps & { children: ReactElement }>(
-  (props, ref) => <Slide direction="up" ref={ref} {...props} />,
-);
 
 export default function ItemDialog({ item, onClose, onChanged, onDeleted }: Props) {
   // 渲染一律读 current：编辑/删除会更新它，父组件列表经 onChanged/onDeleted 同步
@@ -184,7 +178,10 @@ export default function ItemDialog({ item, onClose, onChanged, onDeleted }: Prop
       fullScreen={fullScreen}
       maxWidth="md"
       fullWidth
-      TransitionComponent={SlideUp}
+      {...dialogTransitionProps()}
+      slotProps={{
+        paper: { sx: { viewTransitionName: VT_NAMES.sheet } },
+      }}
       open
       onClose={onClose}
     >

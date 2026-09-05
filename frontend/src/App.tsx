@@ -60,7 +60,10 @@ function ThemedApp() {
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
-      <BrowserRouter>
+      {/* useTransitions={false}：react-router 默认把导航引发的状态更新包进 React.startTransition，
+          flushSync 冲不动 transition lane，View Transitions 会因此拍到尚未更新的旧页面快照；
+          本应用没有 Suspense 数据路由，关掉不损失任何东西 */}
+      <BrowserRouter useTransitions={false}>
         <AuthGate />
       </BrowserRouter>
     </ThemeProvider>

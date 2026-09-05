@@ -86,14 +86,23 @@ export const RADIUS = {
   dialog: 12,
 } as const;
 
-/** 动效时长（ms）与缓动：state/enter/exit/ripple + 标准曲线 */
+/** 动效时长（ms）与缓动：state/enter/exit/ripple + 标准曲线。
+ * large / largeExit / fadeOut 是本项目按 MD2 Motion System 的扩展——Rakko Design 只
+ * 定义了短内容入退场，没有覆盖容器变换与换页这类大面积转场；待上游 tokens.css 收录
+ * 后改回镜像。fadeOut 是 fade-through 里出场内容的淡出占时（large 的前 30%）。 */
 export const MOTION = {
   state: 160,
   enter: 240,
   exit: 180,
   ripple: 420,
+  large: 300,
+  largeExit: 250,
+  fadeOut: 90,
   easeStandard: 'cubic-bezier(0.4, 0, 0.2, 1)',
 } as const;
+
+/** 共享轴转场的横向位移（px）：MD2 Motion System 的 30dp */
+export const SHARED_AXIS_OFFSET_PX = 30;
 
 /** 状态层不透明度：hover 4% / focus 8% / pressed 12% */
 export const STATE_OPACITY = {
