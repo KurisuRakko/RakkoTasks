@@ -9,6 +9,8 @@ import base64
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
+from urllib.parse import quote
+
 from fastapi.testclient import TestClient
 
 from app.api import create_app
@@ -529,3 +531,325 @@ def test_caldav_responses_have_no_store_cache_control(session_factory):
     _seed(session_factory)
     r = _propfind(_client(session_factory), "/caldav/")
     assert r.headers["cache-control"] == "no-store"
+
+
+# ── 对抗核查 ────────────────────────────────────────────────────────
+# 以下每一条先于任何实现改动写就：先跑出失败再修，修法保持契约不变。
+
+def _tag_text(xml: str, tag: str) -> str:
+    start = xml.index(f"<d:{tag}>") + len(f"<d:{tag}>")
+    return xml[start:xml.index(f"</d:{tag}>")]
+
+
+def test_if_match_multiple_tags_passes_when_one_matches(session_factory):
+    _seed(session_factory)
+    client = _client(session_factory)
+    auth = _basic("a@example.com", PW_A)
+    current = client.get(f"{COLL}MANUALUID.ics", headers=auth).headers["etag"]
+    body = APPLE_BODY.format(uid="MANUALUID", summary="多 etag 命中", extra="")
+    r = client.put(
+        f"{COLL}MANUALUID.ics",
+        headers={**auth, "If-Match": f'"bogus-1", "bogus-2", {current}'},
+        content=body.encode(),
+    )
+    assert r.status_code == 204
+    with session_factory() as s:
+        assert s.query(Item).filter(Item.caldav_uid == "MANUALUID").one().title == "多 etag 命中"
+
+
+def test_if_match_weak_etag_strips_w_prefix(session_factory):
+    """If-Match 带 W/ 弱前缀：剥前缀后与强 ETag 按字面比较，命中即通过。"""
+    _seed(session_factory)
+    client = _client(session_factory)
+    auth = _basic("a@example.com", PW_A)
+    current = client.get(f"{COLL}MANUALUID.ics", headers=auth).headers["etag"]
+    r = client.put(
+        f"{COLL}MANUALUID.ics",
+        headers={**auth, "If-Match": f"W/{current}"},
+        content=APPLE_BODY.format(uid="MANUALUID", summary="弱 etag", extra="").encode(),
+    )
+    assert r.status_code == 204
+
+
+def test_delete_if_match_weak_etag_matches(session_factory):
+    _seed(session_factory)
+    client = _client(session_factory)
+    auth = _basic("a@example.com", PW_A)
+    current = client.get(f"{COLL}MANUALUID.ics", headers=auth).headers["etag"]
+    r = client.delete(f"{COLL}MANUALUID.ics", headers={**auth, "If-Match": f"W/{current}"})
+    assert r.status_code == 204
+
+
+def test_put_if_none_match_weak_etag_412(session_factory):
+    """If-None-Match 的 W/ 弱形式与现有强 ETag 弱比较命中 → 412。"""
+    _seed(session_factory)
+    client = _client(session_factory)
+    auth = _basic("a@example.com", PW_A)
+    current = client.get(f"{COLL}MANUALUID.ics", headers=auth).headers["etag"]
+    r = client.put(
+        f"{COLL}MANUALUID.ics",
+        headers={**auth, "If-None-Match": f"W/{current}"},
+        content=APPLE_BODY.format(uid="MANUALUID", summary="x", extra="").encode(),
+    )
+    assert r.status_code == 412
+
+
+def test_encoded_stem_roundtrip_put_propfind_get_multiget(session_factory):
+    """stem 含空格与中文（'买 牛奶'）：客户端以百分号编码 URL 交互，全程编码形态往返。"""
+    _seed(session_factory)
+    client = _client(session_factory)
+    auth = _basic("a@example.com", PW_A)
+    stem = "买 牛奶"
+    enc = quote(stem, safe="")
+    body = APPLE_BODY.format(uid="uid-milk", summary="买牛奶", extra="")
+    r = client.put(f"{COLL}{enc}.ics", headers=auth, content=body.encode())
+    assert r.status_code == 201
+    with session_factory() as s:
+        item = s.query(Item).filter(Item.caldav_uid == "uid-milk").one()
+        assert item.caldav_name == stem  # 落库的是解码后的真实名称
+    # PROPFIND Depth:1 的 href 是编码形态
+    listing = _propfind(client, COLL, depth="1", body=PROP_CTAG).text
+    assert f"{enc}.ics</d:href>" in listing and f"{stem}.ics" not in listing
+    # 用该编码 href 原样 GET 能 200
+    got = client.get(f"{COLL}{enc}.ics", headers=auth)
+    assert got.status_code == 200 and "SUMMARY:买牛奶" in got.text
+    # multiget 用编码 href 能命中
+    multiget = (
+        b'<?xml version="1.0"?><c:calendar-multiget xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">'
+        b'<d:prop><d:getetag/><c:calendar-data/></d:prop>'
+        + f"<d:href>{COLL}{enc}.ics</d:href>".encode()
+        + b"</c:calendar-multiget>"
+    )
+    m = client.request("REPORT", COLL, headers={**auth, "Depth": "1"}, content=multiget)
+    assert m.status_code == 207 and "SUMMARY:买牛奶" in m.text
+    assert "HTTP/1.1 200 OK" in m.text and "HTTP/1.1 404 Not Found" not in m.text
+
+
+def test_multiget_absolute_url_href_hits(session_factory):
+    """multiget 的 href 可以是绝对 URL：只看路径部分，host 无所谓。"""
+    _seed(session_factory)
+    href = "https://tasks.rakko.cn/caldav/calendars/me/tasks/MANUALUID.ics"
+    multiget = (
+        b'<?xml version="1.0"?><c:calendar-multiget xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">'
+        b'<d:prop><d:getetag/><c:calendar-data/></d:prop>'
+        + f"<d:href>{href}</d:href>".encode()
+        + b"</c:calendar-multiget>"
+    )
+    r = _client(session_factory).request(
+        "REPORT", COLL, headers={**_basic("a@example.com", PW_A), "Depth": "1"}, content=multiget
+    )
+    assert r.status_code == 207
+    assert r.text.count("<d:response>") == 1
+    assert "SUMMARY:手动任务" in r.text and "HTTP/1.1 200 OK" in r.text
+
+
+def test_multiget_foreign_and_root_hrefs_404_alone(session_factory):
+    """href 指向别的集合或根路径：该 href 单独 404，其余照常命中。"""
+    _seed(session_factory)
+    hrefs = [
+        "/caldav/calendars/me/tasks/MANUALUID.ics",
+        "/caldav/",
+        "/caldav/calendars/me/other/X.ics",
+        "/caldav/principals/me/",
+    ]
+    body = (
+        b'<?xml version="1.0"?><c:calendar-multiget xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">'
+        b'<d:prop><d:getetag/><c:calendar-data/></d:prop>'
+        + b"".join(f"<d:href>{h}</d:href>".encode() for h in hrefs)
+        + b"</c:calendar-multiget>"
+    )
+    r = _client(session_factory).request(
+        "REPORT", COLL, headers={**_basic("a@example.com", PW_A), "Depth": "1"}, content=body
+    )
+    assert r.status_code == 207
+    assert r.text.count("<d:response>") == 4
+    assert r.text.count("HTTP/1.1 404 Not Found") == 3
+    assert "SUMMARY:手动任务" in r.text  # 好 href 仍带出数据
+
+
+def test_calendar_query_without_filter_returns_all_members(session_factory):
+    _seed(session_factory)
+    body = (
+        b'<?xml version="1.0"?><c:calendar-query xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">'
+        b'<d:prop><d:getetag/><c:calendar-data/></d:prop></c:calendar-query>'
+    )
+    r = _client(session_factory).request(
+        "REPORT", COLL, headers={**_basic("a@example.com", PW_A), "Depth": "1"}, content=body
+    )
+    assert r.status_code == 207
+    assert r.text.count("<d:response>") == 3  # 保留窗口内的全部成员
+    assert "OLDDONE" not in r.text
+
+
+def test_put_rename_via_body_uid_updates_name_not_rowcount(session_factory):
+    """重命名：PUT 到新文件名但 body UID 已存在 → 不新建、行数不变、caldav_name 换成新 stem。"""
+    ids = _seed(session_factory)
+    client = _client(session_factory)
+    auth = _basic("a@example.com", PW_A)
+    body = APPLE_BODY.format(uid="MANUALUID", summary="换了文件名", extra="")
+    r = client.put(f"{COLL}renamed-1.ics", headers=auth, content=body.encode())
+    assert r.status_code == 204
+    with session_factory() as s:
+        assert s.query(Item).filter(Item.user_sub == "sub-a").count() == 4
+        item = s.get(Item, ids["manual_id"])
+        assert item.caldav_uid == "MANUALUID" and item.caldav_name == "renamed-1"
+    assert client.get(f"{COLL}MANUALUID.ics", headers=auth).status_code == 404
+    assert client.get(f"{COLL}renamed-1.ics", headers=auth).status_code == 200
+
+
+def test_put_z_due_stored_as_sydney_date_and_kept_in_get(session_factory):
+    """DUE 为 Z 形态：20260909T230000Z → Sydney 本地日 2026-09-10；GET 透传不重写时间簇。"""
+    _seed(session_factory)
+    client = _client(session_factory)
+    body = (
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//x//EN\r\nBEGIN:VTODO\r\n"
+        "UID:ZUID-1\r\nSUMMARY:时区任务\r\nDUE:20260909T230000Z\r\nX-NOTE:keep\r\n"
+        "END:VTODO\r\nEND:VCALENDAR\r\n"
+    )
+    r = client.put(f"{COLL}ZUID-1.ics", headers=_basic("a@example.com", PW_A), content=body.encode())
+    assert r.status_code == 201
+    with session_factory() as s:
+        assert s.query(Item).filter(Item.caldav_uid == "ZUID-1").one().due_date == date(2026, 9, 10)
+    got = client.get(f"{COLL}ZUID-1.ics", headers=_basic("a@example.com", PW_A))
+    assert got.status_code == 200
+    assert "DUE:20260909T230000Z" in got.text
+    assert "DUE;VALUE=DATE" not in got.text and "X-NOTE:keep" in got.text
+
+
+def test_propfind_depth_header_case_insensitive(session_factory):
+    _seed(session_factory)
+    client = _client(session_factory)
+    auth = _basic("a@example.com", PW_A)
+    up = client.request("PROPFIND", COLL, headers={**auth, "Depth": "INFINITY"}, content=PROP_CTAG)
+    assert up.status_code == 403 and "propfind-finite-depth" in up.text
+    low = client.request("PROPFIND", COLL, headers={**auth, "depth": "1"}, content=PROP_CTAG)
+    assert low.status_code == 207 and low.text.count(".ics</d:href>") == 3
+
+
+def test_put_non_utf8_bytes_403_valid_calendar_data(session_factory):
+    _seed(session_factory)
+    r = _client(session_factory).put(
+        f"{COLL}BAD.ics", headers=_basic("a@example.com", PW_A), content=b"\xff\xfe\x00\x41"
+    )
+    assert r.status_code == 403
+    assert "valid-calendar-data" in r.text and r.status_code != 500
+
+
+def test_propfind_object_depth1_single_response(session_factory):
+    _seed(session_factory)
+    r = _propfind(_client(session_factory), f"{COLL}MANUALUID.ics", depth="1")
+    assert r.status_code == 207
+    assert r.text.count("<d:response>") == 1
+    assert r.text.count("MANUALUID.ics</d:href>") == 1  # 只回该对象自己，不带集合响应
+
+
+def test_object_getcontentlength_matches_get_and_lastmodified_http_date(session_factory):
+    _seed(session_factory)
+    client = _client(session_factory)
+    auth = _basic("a@example.com", PW_A)
+    body = (
+        b'<?xml version="1.0"?><propfind xmlns="DAV:"><prop>'
+        b"<getcontentlength/><getlastmodified/></prop></propfind>"
+    )
+    r = _propfind(client, f"{COLL}MANUALUID.ics", body=body)
+    assert r.status_code == 207
+    got = client.get(f"{COLL}MANUALUID.ics", headers=auth)
+    assert int(_tag_text(r.text, "getcontentlength")) == len(got.content)
+    assert _tag_text(r.text, "getlastmodified").endswith(" GMT")
+
+
+def test_well_known_redirects_always_301_and_never_rate_limited(session_factory):
+    """/.well-known/caldav 不鉴权不计数：连发 40 次任意方法仍 301，随后一次真失败鉴权也不 429。"""
+    _seed(session_factory)
+    client = _client(session_factory)
+    methods = ("GET", "PROPFIND", "PUT", "DELETE", "REPORT", "POST")
+    for _ in range(40):
+        r = client.request(methods[_ % len(methods)], "/.well-known/caldav", follow_redirects=False)
+        assert r.status_code == 301 and r.headers["location"] == "/caldav/"
+    r = _propfind(client, "/caldav/", auth={})
+    assert r.status_code == 401  # 限流配额没被 well-known 流量吃掉
+
+
+def test_put_stem_update_with_foreign_body_uid_keeps_row_reachable(session_factory):
+    """PUT 到已存在对象、body UID 却对不上任何行 → 按 URL stem 更新该行。
+
+    语义（当前实现，测试锁定）：caldav_uid 被改成 body 的 UID，caldav_name 承接
+    URL stem，保证 coalesce(caldav_name, caldav_uid) 恒等于 PUT 的目标 stem——
+    行不会因改名而「消失」，旧 href 依旧可 GET；body UID 作为新 URL 暂不可达，
+    直到客户端真以该文件名 PUT 一次（届时 find_by_uid 兜底命中同一行）。
+    """
+    ids = _seed(session_factory)
+    client = _client(session_factory)
+    auth = _basic("a@example.com", PW_A)
+    body = APPLE_BODY.format(uid="REWRITTEN-UID", summary="按 stem 更新", extra="")
+    r = client.put(f"{COLL}MANUALUID.ics", headers=auth, content=body.encode())
+    assert r.status_code == 204
+    with session_factory() as s:
+        assert s.query(Item).filter(Item.user_sub == "sub-a").count() == 4  # 没新建
+        item = s.get(Item, ids["manual_id"])
+        assert item.caldav_uid == "REWRITTEN-UID" and item.caldav_name == "MANUALUID"
+        assert item.title == "按 stem 更新"
+    assert client.get(f"{COLL}MANUALUID.ics", headers=auth).status_code == 200  # 旧 href 仍可达
+    assert "SUMMARY:按 stem 更新" in client.get(f"{COLL}MANUALUID.ics", headers=auth).text
+
+
+def test_other_user_put_same_stem_creates_own_row(session_factory):
+    """用户 B 用 A 的 stem 发 PUT → B 名下新建一行（同名不同 owner），A 的行分毫未动。"""
+    ids = _seed(session_factory)
+    client = _client(session_factory)
+    body = APPLE_BODY.format(uid="MANUALUID", summary="乙的覆盖", extra="")
+    r = client.put(f"{COLL}MANUALUID.ics", headers=_basic("b@example.com", PW_B), content=body.encode())
+    assert r.status_code == 201  # B 名下没有该 stem，按新建处理
+    with session_factory() as s:
+        assert s.get(Item, ids["manual_id"]).title == "手动任务"
+        assert s.query(Item).filter(Item.user_sub == "sub-b", Item.caldav_uid == "MANUALUID").count() == 1
+    auth_a = _basic("a@example.com", PW_A)
+    assert client.get(f"{COLL}MANUALUID.ics", headers=auth_a).status_code == 200
+    assert "SUMMARY:手动任务" in client.get(f"{COLL}MANUALUID.ics", headers=auth_a).text
+    b_got = client.get(f"{COLL}MANUALUID.ics", headers=_basic("b@example.com", PW_B))
+    assert b_got.status_code == 200 and "SUMMARY:乙的覆盖" in b_got.text
+
+
+def test_post_patch_lock_405_with_allow_and_no_json(session_factory):
+    _seed(session_factory)
+    client = _client(session_factory)
+    auth = _basic("a@example.com", PW_A)
+    for method in ("POST", "PATCH", "LOCK"):
+        for path in ("/caldav/", COLL, f"{COLL}MANUALUID.ics"):
+            r = client.request(method, path, headers=auth, content=b"")
+            assert r.status_code == 405, (method, path, r.status_code)
+            assert "PROPFIND" in r.headers["allow"] and "PUT" in r.headers["allow"]
+            assert not r.headers.get("content-type", "").startswith("application/json")
+
+
+def test_put_empty_body_403_valid_calendar_data(session_factory):
+    _seed(session_factory)
+    r = _client(session_factory).put(
+        f"{COLL}X.ics", headers=_basic("a@example.com", PW_A), content=b""
+    )
+    assert r.status_code == 403
+    assert "valid-calendar-data" in r.text
+
+
+def test_propfind_malformed_xml_400_not_json(session_factory):
+    _seed(session_factory)
+    r = _propfind(_client(session_factory), COLL, body=b'<propfind xmlns="DAV:"><prop><getetag/></prop>')
+    assert r.status_code == 400
+    assert not r.headers.get("content-type", "").startswith("application/json")
+
+
+def test_put_412_leaves_caldav_ics_and_title_unchanged(session_factory):
+    """If-Match 不匹配 → 412 在写入前抛出：行完全没变，含 caldav_ics 透传体。"""
+    _seed(session_factory)
+    client = _client(session_factory)
+    auth = _basic("a@example.com", PW_A)
+    v1 = APPLE_BODY.format(uid="TX-1", summary="第一版", extra="")
+    assert client.put(f"{COLL}TX-1.ics", headers=auth, content=v1.encode()).status_code == 201
+    v2 = APPLE_BODY.format(uid="TX-1", summary="第二版", extra="")
+    r = client.put(
+        f"{COLL}TX-1.ics", headers={**auth, "If-Match": '"stale"'}, content=v2.encode()
+    )
+    assert r.status_code == 412
+    with session_factory() as s:
+        item = s.query(Item).filter(Item.caldav_uid == "TX-1").one()
+        assert item.title == "第一版" and item.caldav_ics == v1
