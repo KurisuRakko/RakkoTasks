@@ -80,8 +80,8 @@ def _cmd_users_list(args: argparse.Namespace, settings: Settings) -> None:  # no
 
 
 def _require_account(session, user: User, email: str) -> Account:
-    """CLI 按邮箱寻址（服务层按 id）：从该用户的账户列表里找，找不到 exit 2。"""
-    account = next((a for a in accounts.list_accounts(session, user.sub) if a.email == email), None)
+    """CLI 按邮箱寻址（服务层按 id）：一条 select 精确找该用户的账户，找不到 exit 2。"""
+    account = accounts.get_account_by_email(session, user.sub, email)
     if account is None:
         print(f"错误：未找到账户 {email}（用户 {user.sub}）", file=sys.stderr)
         sys.exit(2)
@@ -110,9 +110,14 @@ def _print_auth_failure(kind: str, detail: str, sub: str | None = None, email: s
 def _die_account_error(
     exc: accounts.AccountError, *, user_sub: str | None = None, email: str | None = None
 ) -> None:
-    """AccountError → stderr 中文说明 + 退出码（校验类 2、流程类 1），不冒 traceback。"""
+    """AccountError → stderr 中文说明 + 退出码（校验类 2、流程类 1），不冒 traceback。
+
+    auth_failed 的具体原因与重试命令已由 _print_auth_failure 打到 stdout，
+    这里不再重复泛句，直接按流程类退出。
+    """
     if exc.code == "auth_failed":
         _print_auth_failure(exc.extra.get("kind", "other"), exc.extra.get("detail", ""), user_sub, email)
+        sys.exit(1)
     print(f"错误：{_ACCOUNT_ERR_TEXT.get(exc.code, exc.code)}", file=sys.stderr)
     sys.exit(1 if exc.code in _FLOW_ERROR_CODES else 2)
 
@@ -154,7 +159,6 @@ def _cmd_accounts_set_password(args: argparse.Namespace, settings: Settings) -> 
         account = _require_account(session, user, args.email)
         try:
             accounts.set_app_password(
-                session,
                 account,
                 _getpass("Gmail 应用专用密码（输入不回显）：") if account.kind == "gmail" else None,
             )
@@ -303,7 +307,7 @@ def _cmd_accounts_remove(args: argparse.Namespace, settings: Settings) -> None:
         n_items = session.execute(
             select(func.count(Item.id)).join(Email, Item.email_id == Email.id).where(Email.account_id == account.id)
         ).scalar() or 0
-        accounts.set_enabled(session, account, False)
+        accounts.set_enabled(account, False)
         session.commit()
         print(
             f"账户已停用：{account.email}（{account.name}），不再同步；"

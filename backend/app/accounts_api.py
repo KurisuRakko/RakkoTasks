@@ -59,12 +59,6 @@ class AuthCodeRequest(BaseModel):
 def register_accounts(app: FastAPI, settings: Settings, get_db) -> None:
     """把账户端点与 AccountError 统一处理器挂到 app 上；get_db 由 api.py 注入。"""
 
-    # 依赖先绑成实例再作默认值：闭包内端点若在默认值里直调 Depends(...) 会
-    # 被 ruff B008 拦，而 Annotated 式在 from __future__ import annotations 下
-    # 无法把注解字符串里的闭包名 get_db 解析回对象（get_type_hints 只认模块全局）。
-    auth_dep = Depends(require_auth)
-    db_dep = Depends(get_db)
-
     @app.exception_handler(AccountError)
     async def _account_error_handler(_request, exc: AccountError):
         return JSONResponse(status_code=exc.status, content={"code": exc.code, **exc.extra})
@@ -77,7 +71,7 @@ def register_accounts(app: FastAPI, settings: Settings, get_db) -> None:
 
     @app.get("/api/accounts")
     def list_endpoint(
-        user: CurrentUser = auth_dep, db: Session = db_dep,
+        user: CurrentUser = Depends(require_auth), db: Session = Depends(get_db),
     ) -> dict:
         """当前用户全部账户（含已停用），按 id 升序。"""
         return {"accounts": [account_info(a) for a in list_accounts(db, user.sub)]}
@@ -85,7 +79,8 @@ def register_accounts(app: FastAPI, settings: Settings, get_db) -> None:
     @app.post("/api/accounts", status_code=201)
     def create_endpoint(
         body: AccountCreate,
-        user: CurrentUser = auth_dep, db: Session = db_dep,
+        user: CurrentUser = Depends(require_auth),
+        db: Session = Depends(get_db),
     ) -> dict:
         account = add_account(
             db,
@@ -106,20 +101,19 @@ def register_accounts(app: FastAPI, settings: Settings, get_db) -> None:
     def patch_endpoint(
         account_id: int,
         body: AccountPatch,
-        user: CurrentUser = auth_dep, db: Session = db_dep,
+        user: CurrentUser = Depends(require_auth),
+        db: Session = Depends(get_db),
     ) -> dict:
         account = _owned_or_404(db, user, account_id)
-        # 空请求体 / 三字段全为 null → 400；enabled=false 是合法值，不能用真值判断
-        if not body.model_fields_set or not any(
-            v is not None for v in (body.name, body.app_password, body.enabled)
-        ):
+        if not any(v is not None for v in (body.name, body.app_password, body.enabled)):
+            # 请求体三字段全缺省或全为 null → 400；enabled=false 是合法值
             raise HTTPException(status_code=400, detail={"code": "bad_request"})
         if body.name is not None:
-            rename_account(db, account, body.name)
+            rename_account(account, body.name)
         if body.app_password is not None:
-            set_app_password(db, account, body.app_password)
+            set_app_password(account, body.app_password)
         if body.enabled is not None:
-            set_enabled(db, account, body.enabled)
+            set_enabled(account, body.enabled)
             logger.info(
                 "账户启停变更 user=%s account_id=%d kind=%s email=%s",
                 user.sub, account.id, account.kind, account.email,
@@ -129,7 +123,8 @@ def register_accounts(app: FastAPI, settings: Settings, get_db) -> None:
     @app.delete("/api/accounts/{account_id}", status_code=204)
     def delete_endpoint(
         account_id: int,
-        user: CurrentUser = auth_dep, db: Session = db_dep,
+        user: CurrentUser = Depends(require_auth),
+        db: Session = Depends(get_db),
     ) -> Response:
         account = _owned_or_404(db, user, account_id)
         delete_account(db, account, settings)
@@ -142,18 +137,20 @@ def register_accounts(app: FastAPI, settings: Settings, get_db) -> None:
     @app.post("/api/accounts/{account_id}/auth-url")
     def auth_url_endpoint(
         account_id: int,
-        body: AuthUrlRequest,
-        user: CurrentUser = auth_dep, db: Session = db_dep,
+        body: AuthUrlRequest | None = None,  # redirect_uri 可选，请求体整体可缺省
+        user: CurrentUser = Depends(require_auth),
+        db: Session = Depends(get_db),
     ) -> dict:
         """生成微软授权链接（授权码 + PKCE，flow 落盘由 mstoken 完成）。"""
         account = _owned_or_404(db, user, account_id)
-        return {"auth_uri": start_ms_auth(account, settings, body.redirect_uri)}
+        return {"auth_uri": start_ms_auth(account, settings, body.redirect_uri if body else None)}
 
     @app.post("/api/accounts/{account_id}/auth-code")
     def auth_code_endpoint(
         account_id: int,
         body: AuthCodeRequest,
-        user: CurrentUser = auth_dep, db: Session = db_dep,
+        user: CurrentUser = Depends(require_auth),
+        db: Session = Depends(get_db),
     ) -> dict:
         """用粘贴回的完整回调 URL 或授权码换 token；成功后 status=ok。"""
         account = _owned_or_404(db, user, account_id)

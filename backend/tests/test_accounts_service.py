@@ -72,17 +72,17 @@ def test_add_account_success_trims_and_flushes(session_factory):
     with session_factory() as s:
         acc = accounts.add_account(
             s, "user-1", name="  学校邮箱  ", kind="gmail",
-            email="  a@x.com ", app_password="secret-123",
+            email="  a@x.com ", app_password="  abcd efgh  ",  # 密码首尾空白去除、内部原样
         )
         assert acc.status == "pending"
         assert acc.enabled is True
         assert acc.id is not None  # flush 过，id 可用（flow 文件路径等按账户隔离）
         assert acc.name == "学校邮箱"
         assert acc.email == "a@x.com"
-        assert acc.app_password == "secret-123"
+        assert acc.app_password == "abcd efgh"
         s.commit()
     row = _account_row(session_factory, "a@x.com")
-    assert row.app_password == "secret-123"
+    assert row.app_password == "abcd efgh"
 
 
 def test_add_account_microsoft_ignores_app_password_and_blank_client_id(session_factory):
@@ -136,9 +136,9 @@ def test_rename_account(session_factory):
         acc = accounts.add_account(s, "user-1", name="x", kind="gmail", email="a@x.com", app_password="pw")
         s.commit()
         with pytest.raises(accounts.AccountError) as ei:
-            accounts.rename_account(s, acc, "  ")
+            accounts.rename_account(acc, "  ")
         assert _err(ei).code == "bad_name"
-        accounts.rename_account(s, acc, "  新名字  ")
+        accounts.rename_account(acc, "  新名字  ")
         s.commit()
     assert _account_row(session_factory, "a@x.com").name == "新名字"
 
@@ -152,19 +152,19 @@ def test_set_app_password(session_factory):
         s.add(gmail)
         s.commit()
         with pytest.raises(accounts.AccountError) as ei:
-            accounts.set_app_password(s, gmail, "   ")
+            accounts.set_app_password(gmail, "   ")
         assert _err(ei).code == "password_required"
         ms = _account_row(session_factory, "m@x.com", "user-1")
         with pytest.raises(accounts.AccountError) as ei:
-            accounts.set_app_password(s, ms, "whatever")
+            accounts.set_app_password(ms, "whatever")
         assert _err(ei).code == "invalid_kind"
-        accounts.set_app_password(s, gmail, "new-pw")
-        assert gmail.app_password == "new-pw"
+        accounts.set_app_password(gmail, "  abcd efgh  ")  # 首尾空白去除、内部原样
+        assert gmail.app_password == "abcd efgh"
         assert gmail.status == "pending"
         assert gmail.last_error is None
         s.commit()
     row = _account_row(session_factory, "g@x.com")
-    assert row.app_password == "new-pw"
+    assert row.app_password == "abcd efgh"
     assert row.status == "pending"
 
 
@@ -183,14 +183,14 @@ def test_set_enabled_false_clears_credentials_and_keeps_data(session_factory):
         s.add(Item(email_id=em.id, user_sub="user-1", title="t", summary="", category="其他"))
         s.commit()
         acc_id = acc.id
-        accounts.set_enabled(s, acc, False)
+        accounts.set_enabled(acc, False)
         assert acc.enabled is False
         assert acc.app_password is None
         assert acc.token_cache is None
         assert acc.status == "pending"
         assert acc.last_error is None
         s.commit()
-        accounts.set_enabled(s, acc, True)
+        accounts.set_enabled(acc, True)
         assert acc.enabled is True
         assert acc.app_password is None  # 只置位，凭据需另行设置
         s.commit()

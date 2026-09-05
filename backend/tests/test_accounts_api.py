@@ -207,6 +207,20 @@ def test_patch_app_password_on_microsoft_invalid_kind(session_factory):
     assert _account_of(session_factory, ids["a"]).app_password == "pw-2"
 
 
+def test_patch_partial_failure_rolls_back_whole_request(session_factory):
+    """多字段 PATCH 中途失败（name 已改、app_password 抛 invalid_kind）→ 400，name 不得半途落库。"""
+    ids = _seed_two_accounts(session_factory)
+    client_b = _client_as(session_factory, "user-B", "b@x.com")
+    resp = client_b.patch(f"/api/accounts/{ids['b']}", json={"name": "新名", "app_password": "x"})
+    assert resp.status_code == 400
+    assert resp.json() == {"code": "invalid_kind"}
+    # AccountError 经 _get_db 回滚：rename 不落库，name 仍是旧值
+    accs = client_b.get("/api/accounts").json()["accounts"]
+    assert accs[0]["id"] == ids["b"]
+    assert accs[0]["name"] == "B 邮箱"
+    assert _account_of(session_factory, ids["b"]).name == "B 邮箱"
+
+
 def test_patch_enabled_roundtrip(session_factory):
     ids = _seed_two_accounts(session_factory)
     client = _client_as(session_factory, "user-A", "a@x.com")
@@ -335,6 +349,24 @@ def test_auth_url_microsoft_returns_auth_uri(session_factory, tmp_path, monkeypa
     resp = client_b.post(f"/api/accounts/{ids['b']}/auth-url", json={"redirect_uri": "urn:ietf:wg:oauth:2.0:oob"})
     assert resp.status_code == 200
     assert captured["redirect_uri"] == "urn:ietf:wg:oauth:2.0:oob"
+
+
+def test_auth_url_without_body_uses_default_redirect(session_factory, tmp_path, monkeypatch):
+    """redirect_uri 可选：整个请求体都缺省时 POST auth-url 仍 200，用默认重定向地址。"""
+    ids = _seed_two_accounts(session_factory)
+    _patch_flow(monkeypatch, tmp_path)
+    captured = {}
+
+    def fake_initiate(account, settings=None, redirect_uri=DEFAULT_REDIRECT):
+        captured["redirect_uri"] = redirect_uri
+        return {"auth_uri": FAKE_AUTH_URI, "flow": {"state": "s"}}
+
+    monkeypatch.setattr(mstoken, "initiate_auth_code_flow", fake_initiate)
+    client_b = _client_as(session_factory, "user-B", "b@x.com")
+    resp = client_b.post(f"/api/accounts/{ids['b']}/auth-url")  # 不带请求体
+    assert resp.status_code == 200
+    assert resp.json() == {"auth_uri": FAKE_AUTH_URI}
+    assert captured["redirect_uri"] == DEFAULT_REDIRECT
 
 
 def test_auth_code_no_pending_flow_409(session_factory, tmp_path, monkeypatch):

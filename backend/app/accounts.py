@@ -77,6 +77,13 @@ def get_owned_account(session: Session, user_sub: str, account_id: int) -> Accou
     ).scalars().first()
 
 
+def get_account_by_email(session: Session, user_sub: str, email: str) -> Account | None:
+    """按 (user_sub, email) 精确取账户（CLI 以邮箱寻址用）；含已停用，找不到返回 None。"""
+    return session.execute(
+        select(Account).where(Account.user_sub == user_sub, Account.email == email)
+    ).scalars().first()
+
+
 def add_account(
     session: Session,
     user_sub: str,
@@ -99,6 +106,7 @@ def add_account(
     if kind == "gmail":
         if not app_password or not app_password.strip():
             raise AccountError("password_required")
+        app_password = app_password.strip()  # 复制粘贴常带首尾空白；密码内部原样保留
     else:
         app_password = None  # microsoft 不用应用专用密码，提交了也忽略
     ms_client_id = (ms_client_id or "").strip() or None
@@ -123,25 +131,25 @@ def add_account(
     return account
 
 
-def rename_account(session: Session, account: Account, name: str) -> None:
+def rename_account(account: Account, name: str) -> None:
     name = name.strip()
     if not 1 <= len(name) <= 128:
         raise AccountError("bad_name")
     account.name = name
 
 
-def set_app_password(session: Session, account: Account, password: str | None) -> None:
+def set_app_password(account: Account, password: str | None) -> None:
     """重录 Gmail 应用专用密码：成功后 status 回 pending（下次同步重新验证）、清掉旧错误。"""
     if account.kind != "gmail":
         raise AccountError("invalid_kind")
     if not password or not password.strip():
         raise AccountError("password_required")
-    account.app_password = password
+    account.app_password = password.strip()  # 只去首尾空白，密码内部原样
     account.status = "pending"
     account.last_error = None
 
 
-def set_enabled(session: Session, account: Account, enabled: bool) -> None:
+def set_enabled(account: Account, enabled: bool) -> None:
     """停用 = 软删除：清空全部凭据、status 回 pending，邮件与任务保留可重新启用；启用只置位。"""
     if not enabled:
         account.enabled = False
