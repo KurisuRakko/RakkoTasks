@@ -253,8 +253,7 @@ docker compose -f deploy/docker-compose.yml logs -f --tail=100 cloudflared
 # 升级：拉取新代码后重建（数据库在 volume 里，不受影响）
 git pull
 docker compose -f deploy/docker-compose.yml up -d --build
-# 注意：本次多用户改造变更了数据库 schema 且无迁移脚本，从旧版本升级需删除
-# data/rakkotasks.db 后重建数据库，并重新接入邮箱账户（旧数据不保留）。
+# 升级时数据库由启动过程就地迁移，升级前建议先备份 data/。
 
 # 备份：整个 data/ 目录（含 SQLite WAL 文件）。最稳妥先停服务再拷：
 docker compose -f deploy/docker-compose.yml stop
@@ -262,8 +261,9 @@ cp -a data/ /backup/rakkotasks-$(date +%F)/
 docker compose -f deploy/docker-compose.yml start
 # 在线备份可用 sqlite3 data/rakkotasks.db ".backup '/backup/rakkotasks.db'"
 
-# 令牌掉线：设置页该账户显示 error 时，重跑该账户的 connect 即可
-# （--user 可填 sub 或邮箱）
+# 令牌掉线：设置页该账户显示 error 时，主路径是使用者在网页 设置 → 邮箱账户 →
+# 该账户 → 「重新授权」（Gmail 则在账户详情里更换应用专用密码）；CLI 的
+# accounts auth-url / auth-code（或 connect）只作运维兜底，示例（--user 可填 sub 或邮箱）：
 docker compose -f deploy/docker-compose.yml run --rm web \
   python -m app.cli accounts connect --user <sub或邮箱> <email>
 
