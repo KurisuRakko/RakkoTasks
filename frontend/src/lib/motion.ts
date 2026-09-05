@@ -55,6 +55,11 @@ export const LEAVE_DURATION = MOTION.largeExit;
 export function rowSx(index: number, leaving: boolean, reduced: boolean): SxProps<Theme> {
   const box = {
     display: 'grid',
+    // MUI ListItem 根样式带 justify-content: flex-start，网格的隐式 auto 列会按
+    // max-content 打包并贴左，行宽于是随内容长短变化——短标题的行只有半屏宽，
+    // 右侧标签（重要 / 分类 / 日期）每行落在不同位置。显式铺一列 minmax(0, 1fr)
+    // 让行占满容器；下限取 0 而非 auto，长文本才不会被 min-content 撑破列宽。
+    gridTemplateColumns: 'minmax(0, 1fr)',
     gridTemplateRows: leaving ? '0fr' : '1fr',
     opacity: leaving ? 0 : 1,
     '& > *': { minHeight: 0, overflow: 'hidden' },

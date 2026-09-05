@@ -2,8 +2,9 @@
 // 勾选 → 离场动画 → 移除并 PATCH done；已完成列表已拆到 /done，本页不再持有 done 数据。
 // 条目左侧小蓝点表示源邮件是今天发的，按日期自动过期，与查看/勾选状态无关。
 // 列表行与详情 Dialog 共用 VT_NAMES.sheet 做容器变换（点哪行哪行长成对话框）；
-// 右下角悬浮 + 与 ItemEditor 共用 VT_NAMES.fab 变换，经 portal 挂到 body ——
-// 路由转场内层动画盒的 transform 会成为 fixed 后代的包含块，换页后按钮会跟着内容漂移。
+// 右下角悬浮按钮经 portal 挂到 body——路由转场内层动画盒的 transform 会成为
+// fixed 后代的包含块，换页后按钮会跟着内容漂移。按钮只打 data-vt-shell 标记，
+// 与编辑器共用名字的持名时机由样式层按转场种类决定（见 FAB 处注释）。
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -19,12 +20,13 @@ import ListItemButton from '@mui/material/ListItemButton';
 import ListItemText from '@mui/material/ListItemText';
 import ListSubheader from '@mui/material/ListSubheader';
 import Snackbar from '@mui/material/Snackbar';
+import Stack from '@mui/material/Stack';
 import Typography from '@mui/material/Typography';
 import AddIcon from '@mui/icons-material/Add';
 import { createItem, fetchItems, patchItem } from '../lib/api';
 import { formatDueDate, groupItems, isNewToday, isOverdue } from '../lib/grouping';
 import { LEAVE_DURATION, rowSx, useMorphDialog, usePrefersReducedMotion } from '../lib/motion';
-import { runViewTransition, VT_NAMES } from '../lib/view-transition';
+import { runViewTransition, shellAttr, VT_NAMES } from '../lib/view-transition';
 import type { Category, Item, ItemFields } from '../types';
 import CategoryChips from '../components/CategoryChips';
 import ItemDialog from '../components/ItemDialog';
@@ -103,18 +105,31 @@ function GroupSection({
                   },
                 }}
               />
-              {item.importance === 'high' && (
-                <Chip label="重要" color="warning" size="small" variant="outlined" sx={{ ml: 1 }} />
-              )}
-              <Chip label={item.category} size="small" variant="outlined" sx={{ ml: 1 }} />
-              {item.due_date && (
-                <Chip
-                  label={formatDueDate(item.due_date)}
-                  size="small"
-                  color={isOverdue(item, today) ? 'error' : 'default'}
-                  sx={{ ml: 0.5 }}
-                />
-              )}
+              {/* 右侧标签成组：整组 flexShrink: 0，长标题换行时标签不被挤压截断。
+                  行已由 rowSx 的 grid 列撑满容器宽度（见 motion.ts），标签组自然贴右 */}
+              <Stack
+                direction="row"
+                spacing={0.5}
+                alignItems="center"
+                sx={{ ml: 1, flexShrink: 0 }}
+              >
+                {item.importance === 'high' && (
+                  <Chip
+                    label="重要"
+                    color="warning"
+                    size="small"
+                    variant="outlined"
+                  />
+                )}
+                <Chip label={item.category} size="small" variant="outlined" />
+                {item.due_date && (
+                  <Chip
+                    label={formatDueDate(item.due_date)}
+                    size="small"
+                    color={isOverdue(item, today) ? 'error' : 'default'}
+                  />
+                )}
+              </Stack>
             </ListItemButton>
           </ListItem>
         );
@@ -277,20 +292,24 @@ export default function TasksPage() {
         右下角 + ：手动添加待办。移动端浮在 64px 底栏（zIndex 1100）之上，计入安全区。
         portal 到 body：路由转场内层动画盒带 transform，会让 fixed 后代的定位退化成
         相对该盒（换页后按钮跟着内容滚）；挂到 body 下才保持视口角落定位。
-        right/bottom/zIndex 保持原值不动。编辑器打开期间按钮让名（'none'），
-        由 ItemEditor 的 paper 独占 VT_NAMES.fab，做来源按钮 → 编辑器整页的容器变换。
+        right/bottom/zIndex 保持原值不动。持名策略：编辑器打开期间这里内联 none 让名，
+        名字由 ItemEditor 的 paper 独占、做来源按钮 → 编辑器整页的容器变换；换页与
+        expand-fab / collapse-fab 时由样式层按 data-vt-shell 下发名字；打开详情
+        （expand / collapse）时不持名，按钮留在 root 快照里跟遮罩一起压暗。
       */}
       {createPortal(
         <Fab
           color="primary"
           aria-label="添加任务"
+          {...shellAttr(VT_NAMES.fab)}
           onClick={() => runViewTransition('expand-fab', () => setAddOpen(true), reduced)}
           sx={{
             position: 'fixed',
             right: { xs: 16, md: 24 },
             bottom: { xs: 'calc(16px + 64px + env(safe-area-inset-bottom))', md: 24 },
             zIndex: 1150,
-            viewTransitionName: addOpen ? 'none' : VT_NAMES.fab,
+            // 编辑器打开期间内联 none 让名给 ItemEditor 的 paper；其余交给样式层
+            viewTransitionName: addOpen ? 'none' : undefined,
           }}
         >
           <AddIcon />
