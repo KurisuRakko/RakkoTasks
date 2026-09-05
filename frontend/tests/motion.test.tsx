@@ -152,12 +152,15 @@ describe('rowSx', () => {
     expect(sx).not.toHaveProperty('transition');
     expect(sx).not.toHaveProperty('animation');
     expect(sx.gridTemplateRows).toBe('0fr');
+    // 显式 1fr 列撑满容器：行宽不再随内容长短变化，右侧标签每行对齐
+    expect(sx.gridTemplateColumns).toBe('minmax(0, 1fr)');
   });
 
   it('正常入场：grid 行容器 + 入场 animation', () => {
     const sx = rowSx(0, false, false) as Record<string, unknown>;
     expect(sx.display).toBe('grid');
     expect(sx.gridTemplateRows).toBe('1fr');
+    expect(sx.gridTemplateColumns).toBe('minmax(0, 1fr)');
     expect(sx.animation).toContain('rtk-enter-up');
   });
 

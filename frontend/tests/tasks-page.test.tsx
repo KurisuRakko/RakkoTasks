@@ -1,11 +1,13 @@
 // TasksPage 测试：high 条目渲染「重要」Chip，normal/low 条目不渲染；「重要」组标题出现。
 // 另覆盖容器变换与 portal 相关行为：悬浮按钮挂在 body 下（不被路由转场盒子的
-// transform 困住）、勾选推进 LEAVE_DURATION 后发 PATCH done 且条目从列表消失。
+// transform 困住）、打 data-vt-shell 标记、勾选推进 LEAVE_DURATION 后发 PATCH done
+// 且条目从列表消失。
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import TasksPage from '../src/pages/TasksPage';
 import { LEAVE_DURATION } from '../src/lib/motion';
+import { VT_SHELL_ATTR, VT_NAMES } from '../src/lib/view-transition';
 import type { Item } from '../src/types';
 
 function makeItem(partial: Partial<Item>): Item {
@@ -65,6 +67,10 @@ describe('TasksPage 重要度标记', () => {
     const highRow = screen.getByText('重要任务').closest('li');
     expect(highRow).not.toBeNull();
     expect(within(highRow!).getAllByText('重要').length).toBeGreaterThan(0);
+
+    // 标签成组：行内「重要」Chip 收在横向 Stack 里（整组不被长标题挤压）
+    const chip = within(highRow!).getAllByText('重要')[0];
+    expect(chip.closest('.MuiStack-root')).not.toBeNull();
 
     // normal / low 条目行内没有「重要」Chip
     for (const title of ['普通任务', '低重要任务']) {
@@ -181,6 +187,15 @@ describe('TasksPage 容器变换与 portal', () => {
 
     const fab = await screen.findByRole('button', { name: '添加任务' });
     expect(fab.parentElement).toBe(document.body);
+  });
+
+  it('悬浮按钮打 data-vt-shell 标记（持名由样式层按转场种类下发）', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => json({ items: [] })));
+
+    render(<TasksPage />);
+
+    const fab = await screen.findByRole('button', { name: '添加任务' });
+    expect(fab.getAttribute(VT_SHELL_ATTR)).toBe(VT_NAMES.fab);
   });
 
   it('勾选条目后推进 LEAVE_DURATION：PATCH {"status":"done"} 且条目从列表消失', async () => {
