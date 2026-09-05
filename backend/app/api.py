@@ -132,6 +132,14 @@ def create_app(
         if request.url.path.startswith(("/api/", "/caldav")):
             # 邮件内容与 CalDAV 凭据态不允许进任何缓存
             resp.headers["Cache-Control"] = "no-store"
+        elif request.url.path in ("/", "/index.html", "/sw.js", "/registerSW.js", "/manifest.webmanifest") or request.url.path.startswith(
+            "/workbox-"
+        ):
+            # SW 与入口 HTML 不能进启发式缓存：Safari 对没有显式 Cache-Control 的
+            # 响应按启发式缓存（最长可达一天），会让常驻的 iPhone PWA 一直拿不到
+            # 新版本；no-cache 强制每次回源校验。带 hash 的 /assets/ 不在此列，
+            # 它们靠文件名失效，缓存越久越好。
+            resp.headers["Cache-Control"] = "no-cache"
         return resp
 
     @app.get("/api/health")

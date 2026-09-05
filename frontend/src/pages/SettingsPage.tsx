@@ -41,6 +41,7 @@ import { copyText } from '../lib/clipboard';
 import { API_BASE_URL, PHAINON_API_BASE } from '../lib/env';
 import { enterSx, usePrefersReducedMotion } from '../lib/motion';
 import { logout, startLogin } from '../lib/phainon';
+import { checkForUpdate } from '../lib/pwa-update';
 import { useSession } from '../lib/session';
 import { useThemeMode } from '../lib/theme-mode';
 import { timeAgo } from '../lib/time';
@@ -195,6 +196,13 @@ export default function SettingsPage() {
   const handleLogout = async () => {
     await logout();
     startLogin();
+  };
+
+  // 手动检查新版：SW 尚未注册（环境不支持）时给对应提示
+  const handleCheckUpdate = () => {
+    checkForUpdate().then((started) => {
+      setSnack(started ? '已检查，若有新版本会自动重载' : '当前环境不支持自动更新');
+    });
   };
 
   return (
@@ -438,6 +446,11 @@ export default function SettingsPage() {
         <List dense>
           <ListItem>
             <ListItemText primary="版本" secondary={__APP_VERSION__} />
+          </ListItem>
+          <ListItem>
+            <Button variant="outlined" size="small" onClick={handleCheckUpdate}>
+              检查更新
+            </Button>
           </ListItem>
           <ListItem>
             <ListItemText primary="后端地址" secondary={API_BASE_URL || '同源'} />

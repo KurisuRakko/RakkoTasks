@@ -336,6 +336,35 @@ def test_frontend_dist_static_serving(session_factory, tmp_path):
     assert resp.json() == {"status": "ok"}
 
 
+def test_pwa_sw_and_entry_no_cache(session_factory, tmp_path):
+    """SW 与入口 HTML 下发 no-cache（禁 iOS 启发式缓存），带 hash 的 assets 不动，API 仍是 no-store。"""
+    dist = tmp_path / "dist"
+    (dist / "assets").mkdir(parents=True)
+    (dist / "index.html").write_text("<html>app</html>", encoding="utf-8")
+    (dist / "sw.js").write_text("self.__SW__", encoding="utf-8")
+    (dist / "assets" / "x.js").write_text("console.log(1)", encoding="utf-8")
+
+    settings = Settings(database_path=":memory:", frontend_dist=str(dist))
+    app = create_app(settings=settings, session_factory=session_factory)
+    client = TestClient(app)
+
+    # SPA 入口与 Service Worker 必须可回源校验，禁止被启发式缓存
+    for path in ("/", "/sw.js"):
+        resp = client.get(path)
+        assert resp.status_code == 200
+        assert resp.headers.get("Cache-Control") == "no-cache"
+
+    # 带 hash 的静态资源不带该头：靠文件名失效，缓存越久越好
+    resp = client.get("/assets/x.js")
+    assert resp.status_code == 200
+    assert resp.headers.get("Cache-Control") is None
+
+    # /api/ 的 no-store 不受影响
+    resp = client.get("/api/health")
+    assert resp.status_code == 200
+    assert resp.headers.get("Cache-Control") == "no-store"
+
+
 def test_detail_html_only_email_body_extracted(session_factory, monkeypatch):
     """只有 html_body 的邮件：detail 端点把提取后的正文传给 LLM，而不是空串。"""
     with session_factory() as s:
