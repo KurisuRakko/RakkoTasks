@@ -3,8 +3,22 @@
 
 import { flushSync } from 'react-dom';
 
-/** 转场种类：写到 <html data-vt> 上，供样式层的 ::view-transition-* 规则选择 */
-export type VtKind = 'route-forward' | 'route-back' | 'expand' | 'collapse';
+/**
+ * 转场种类：写到 <html data-vt> 上，供样式层的 ::view-transition-* 规则选择。
+ *
+ * expand/collapse 与 expand-fab/collapse-fab 必须分开：一次 expand 里只有真正在形变的
+ * 那个共享元素该做淡入淡出，其余同名元素（例如打开详情时原地不动的悬浮按钮）必须保持
+ * 静止——CSS 无法从选择器上区分「这次形变的是谁」，只能靠 data-vt 的取值区分。
+ */
+export type VtKind =
+  | 'route-forward'
+  | 'route-back'
+  /** 列表行 / 引用项 ↔ 对话框 */
+  | 'expand'
+  | 'collapse'
+  /** 悬浮按钮 ↔ 编辑器 */
+  | 'expand-fab'
+  | 'collapse-fab';
 
 /** 共享元素名。同一时刻同名元素只能有一个，出现两个会让整个转场被浏览器跳过 */
 export const VT_NAMES = {
@@ -48,6 +62,9 @@ export function runViewTransition(
   const transition = document.startViewTransition(() => {
     flushSync(update);
   });
+  // 转场被跳过时（文档不可见、被后一次转场打断）ready 会 reject。DOM 更新照常完成，
+  // 不是错误，但不接住就会变成控制台里的 Uncaught (in promise)。
+  transition.ready.catch(() => undefined);
   return transition.finished
     .catch(() => undefined)
     .then(() => {

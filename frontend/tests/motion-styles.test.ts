@@ -77,6 +77,41 @@ describe('viewTransitionStyles 结构', () => {
   });
 });
 
+describe('悬浮按钮与对话框的转场互不干扰', () => {
+  const styles = viewTransitionStyles(createTheme()) as Styles;
+
+  it('FAB 形变挂在 expand-fab / collapse-fab 上，不蹭详情的 expand', () => {
+    // 圆角 morph 只在 FAB 自己的 kind 下跑
+    const expandRadius = findKey(styles, 'data-vt="expand-fab"', 'image-pair', VT_NAMES.fab);
+    expect(ruleValue(styles, expandRadius).animation).toContain(`${MOTION.large}ms`);
+    const collapseRadius = findKey(styles, 'data-vt="collapse-fab"', 'image-pair', VT_NAMES.fab);
+    expect(ruleValue(styles, collapseRadius).animation).toContain(`${MOTION.largeExit}ms`);
+  });
+
+  it('打开/关闭详情时 FAB 原地不动：两侧快照都不加动画', () => {
+    const key = findKey(
+      styles,
+      `data-vt="expand"]::view-transition-old(${VT_NAMES.fab})`,
+      `data-vt="collapse"]::view-transition-new(${VT_NAMES.fab})`,
+    );
+    expect(ruleValue(styles, key).animation).toBe('none');
+  });
+
+  it('详情的淡入淡出只落在 sheet 与 FAB 自己的 kind 上，不落在 expand 下的 fab', () => {
+    const fadeKeys = Object.keys(styles).filter((k) => {
+      const rule = styles[k] as Rule;
+      return typeof rule?.animation === 'string' && rule.animation.startsWith('rtk-vt-fade');
+    });
+    const expandFabFaded = fadeKeys.some((k) =>
+      k.includes(`data-vt="expand"]::view-transition-old(${VT_NAMES.fab})`),
+    );
+    expect(expandFabFaded).toBe(false);
+    // sheet 与 expand-fab 各自都有淡化规则
+    expect(fadeKeys.some((k) => k.includes(`data-vt="expand"]::view-transition-old(${VT_NAMES.sheet})`))).toBe(true);
+    expect(fadeKeys.some((k) => k.includes(`data-vt="expand-fab"]`))).toBe(true);
+  });
+});
+
 describe('源码静态检查', () => {
   it('motion-styles.ts 与 theme.ts 不使用 transition: all', () => {
     for (const source of [motionStylesSource, themeSource]) {

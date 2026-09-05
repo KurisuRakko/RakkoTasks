@@ -149,7 +149,7 @@ export default function TasksPage() {
             setOpenItems((p) => [item, ...p]);
           }
           // 保存成功后编辑器关闭同样走容器变换，缩回悬浮按钮
-          runViewTransition('collapse', () => setAddOpen(false), reduced);
+          runViewTransition('collapse-fab', () => setAddOpen(false), reduced);
           setSnack('已添加');
         })
         .catch(() => setSnack('添加失败'))
@@ -284,7 +284,7 @@ export default function TasksPage() {
         <Fab
           color="primary"
           aria-label="添加任务"
-          onClick={() => runViewTransition('expand', () => setAddOpen(true), reduced)}
+          onClick={() => runViewTransition('expand-fab', () => setAddOpen(true), reduced)}
           sx={{
             position: 'fixed',
             right: { xs: 16, md: 24 },
@@ -302,7 +302,7 @@ export default function TasksPage() {
           heading="添加任务"
           submitting={creating}
           onSubmit={handleCreate}
-          onClose={() => runViewTransition('collapse', () => setAddOpen(false), reduced)}
+          onClose={() => runViewTransition('collapse-fab', () => setAddOpen(false), reduced)}
           viewTransitionName={VT_NAMES.fab}
         />
       )}

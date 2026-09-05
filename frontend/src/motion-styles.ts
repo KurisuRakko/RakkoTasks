@@ -58,11 +58,13 @@ export function viewTransitionStyles(theme: Theme): Record<string, unknown> {
     .flatMap((n) => [`::view-transition-old(${n})`, `::view-transition-new(${n})`])
     .join(', ');
 
-  // 场景 B/C 中参与容器变换的 shared 元素旧/新快照的选择器
-  const dim = (kind: 'old' | 'new', dir: 'expand' | 'collapse') =>
-    [sheet, fab]
-      .map((n) => `:root[data-vt="${dir}"]${vtPseudo(kind, n)}`)
-      .join(', ');
+  // 容器变换里正在形变的那个共享元素的旧/新快照选择器。
+  // dir 精确到具体元素（expand → sheet、expand-fab → fab），因为一次转场里只有形变的
+  // 那个该淡入淡出；同名但未变化的元素另有「保持静止」的规则兜住。
+  const dim = (kind: 'old' | 'new', dir: 'expand' | 'collapse', name: string) =>
+    `:root[data-vt="${dir}"]${vtPseudo(kind, name)}`;
+  const dimFab = (kind: 'old' | 'new', dir: 'expand' | 'collapse') =>
+    `:root[data-vt="${dir}-fab"]${vtPseudo(kind, fab)}`;
 
   return {
     // (a) 公共 keyframes——时长与位移全部来自 MOTION / SHARED_AXIS_OFFSET_PX
@@ -164,26 +166,32 @@ export function viewTransitionStyles(theme: Theme): Record<string, unknown> {
       objectPosition: 'top left',
     },
     // group 的动画时长决定尺寸/位置插值节奏，expand 用 large、collapse 用 largeExit
-    [`:root[data-vt="expand"]${vtPseudo('group', sheet)}, :root[data-vt="expand"]${vtPseudo('group', fab)}`]:
+    [`:root[data-vt="expand"]${vtPseudo('group', sheet)}, :root[data-vt="expand-fab"]${vtPseudo('group', fab)}`]:
       {
         animationDuration: `${MOTION.large}ms`,
         animationTimingFunction: ease,
       },
-    [`:root[data-vt="collapse"]${vtPseudo('group', sheet)}, :root[data-vt="collapse"]${vtPseudo('group', fab)}`]:
+    [`:root[data-vt="collapse"]${vtPseudo('group', sheet)}, :root[data-vt="collapse-fab"]${vtPseudo('group', fab)}`]:
       {
         animationDuration: `${MOTION.largeExit}ms`,
         animationTimingFunction: ease,
       },
-    [dim('old', 'expand')]: {
+    // 打开/关闭详情时悬浮按钮原地不动：两侧快照都不加动画，叠放即原样，不闪
+    [`:root[data-vt="expand"]${vtPseudo('old', fab)}, :root[data-vt="expand"]${vtPseudo('new', fab)},
+      :root[data-vt="collapse"]${vtPseudo('old', fab)}, :root[data-vt="collapse"]${vtPseudo('new', fab)}`]:
+      {
+        animation: 'none',
+      },
+    [`${dim('old', 'expand', sheet)}, ${dimFab('old', 'expand')}`]: {
       animation: `${KF.fadeOut} ${MOTION.fadeOut}ms ${ease} both`,
     },
-    [dim('new', 'expand')]: {
+    [`${dim('new', 'expand', sheet)}, ${dimFab('new', 'expand')}`]: {
       animation: `${KF.fadeIn} ${MOTION.large - MOTION.fadeOut}ms ${ease} ${MOTION.fadeOut}ms both`,
     },
-    [dim('old', 'collapse')]: {
+    [`${dim('old', 'collapse', sheet)}, ${dimFab('old', 'collapse')}`]: {
       animation: `${KF.fadeOut} ${MOTION.fadeOut}ms ${ease} both`,
     },
-    [dim('new', 'collapse')]: {
+    [`${dim('new', 'collapse', sheet)}, ${dimFab('new', 'collapse')}`]: {
       animation: `${KF.fadeIn} ${MOTION.largeExit - MOTION.fadeOut}ms ${ease} ${MOTION.fadeOut}ms both`,
     },
     // 关闭详情时来源行已被删除：只剩 sheet 的旧快照，让它像 FAB 一样收小淡出
@@ -191,10 +199,10 @@ export function viewTransitionStyles(theme: Theme): Record<string, unknown> {
       animation: `${KF.fabOut} ${MOTION.largeExit}ms ${ease} both`,
     },
     // FAB 的圆角 morph 只作用于 image-pair（快照合成层），跟随容器时长
-    [`:root[data-vt="expand"]::view-transition-image-pair(${fab})`]: {
+    [`:root[data-vt="expand-fab"]::view-transition-image-pair(${fab})`]: {
       animation: `${KF.radiusExpand} ${MOTION.large}ms ${ease} both`,
     },
-    [`:root[data-vt="collapse"]::view-transition-image-pair(${fab})`]: {
+    [`:root[data-vt="collapse-fab"]::view-transition-image-pair(${fab})`]: {
       animation: `${KF.radiusCollapse} ${MOTION.largeExit}ms ${ease} both`,
     },
     // sheet（Dialog）圆角：移动端全屏无圆角，md 起是带 Dialog 圆角的浮层
