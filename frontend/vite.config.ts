@@ -21,8 +21,8 @@ export default defineConfig({
         lang: 'zh-CN',
         display: 'standalone',
         start_url: '/',
-        theme_color: '#1976d2',
-        background_color: '#ffffff',
+        theme_color: '#f9f8f5',
+        background_color: '#f9f8f5',
         icons: [
           { src: 'icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' },
           { src: 'icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'maskable' },
