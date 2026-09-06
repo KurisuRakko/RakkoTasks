@@ -193,9 +193,12 @@ function buildThemeOptions(mode: Mode): ThemeOptions {
           },
         },
       },
+      // backgroundImage: 'none' 是为了压掉 MUI 深色模式的 overlay 渐变。收进
+      // &:not([data-glass])：挂了 data-glass 的 Paper 由 rakko-glass.css 提供背景
+      // （panel 档本身就带透镜渐变），主题层不能把它抹掉。
       MuiPaper: {
         styleOverrides: {
-          root: { backgroundImage: 'none' },
+          root: { '&:not([data-glass])': { backgroundImage: 'none' } },
         },
       },
       MuiCard: {
@@ -276,13 +279,17 @@ function buildThemeOptions(mode: Mode): ThemeOptions {
           },
         },
       },
-      // 底栏底色与分割线改由 AppShell 的外层 Paper 提供（它叠在内容玻璃板之上），
-      // 内层保持透明，否则会挡住外层的半透明纸底。
+      // 底栏玻璃底色改由外层 Paper 的 data-glass="chrome" 提供（镜像的 chrome 配方
+      // 自带纸底与发丝线，不再是本组件兜底的半透明纸底），内层必须保持透明，
+      // 否则会挡住玻璃。
       MuiBottomNavigation: {
         styleOverrides: {
           root: { backgroundColor: 'transparent' },
         },
       },
+      // Drawer 纸底由另一路给侧边栏挂 data-glass（chrome 配方）；这里的 borderRight
+      // 保留——chrome 档的发丝线画在下缘（box-shadow: 0 1px 0），方向对不上侧边栏，
+      // 右侧分割线仍由主题层给。
       MuiDrawer: {
         styleOverrides: {
           paper: ({ theme }) => ({
