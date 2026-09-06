@@ -80,9 +80,12 @@ function GroupSection({
               viewTransitionName: sourceName(item.id),
             }}
           >
-            {/* 卡片视觉在 ListItemButton 上（纸底 + 圆角 + 边框），行间空隙由
-                ListItem 的 rowSx padding-bottom 提供；容器变换名字留在 ListItem */}
-            <ListItemButton sx={cardRowSx} onClick={() => onOpen(item)}>
+            {/* 每行一块玻璃：data-glass="panel" 直接压在壁纸上，不再有内容玻璃板底板。
+                纸底/边框/高光/阴影由 rakko-glass.css 配方提供，cardRowSx 只补圆角。
+                每行一次 backdrop 读回是对上游 anti-patterns "A glass surface per list
+                item" 的明知偏离，理由见 surface.ts 文件头。行间空隙由 ListItem 的
+                rowSx padding-bottom 提供；容器变换名字留在 ListItem */}
+            <ListItemButton data-glass="panel" sx={cardRowSx()} onClick={() => onOpen(item)}>
               <Box sx={{ width: 12, display: 'flex', justifyContent: 'center', flexShrink: 0 }}>
                 {isNewToday(item, today) && (
                   <Box
