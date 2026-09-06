@@ -1,6 +1,6 @@
 // 设置页：账户状态 / 外观 / 账户 / 关于 四个纵向分区（原 StatusPage 逻辑迁入账户状态区）。
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Alert from '@mui/material/Alert';
 import Avatar from '@mui/material/Avatar';
 import Box from '@mui/material/Box';
@@ -45,6 +45,7 @@ import { checkForUpdate } from '../lib/pwa-update';
 import { useSession } from '../lib/session';
 import { useThemeMode } from '../lib/theme-mode';
 import { timeAgo } from '../lib/time';
+import { compressWallpaper, setWallpaper, useWallpaper } from '../lib/wallpaper';
 import type { CaldavInfo, StatusResponse } from '../types';
 
 export default function SettingsPage() {
@@ -68,6 +69,27 @@ export default function SettingsPage() {
   const { mode, setMode } = useThemeMode();
   const me = useSession();
   const reduced = usePrefersReducedMotion();
+  // 壁纸：订阅模块级状态（同 useThemeMode 之外的 list-cache 模式），无壁纸为 null
+  const wallpaper = useWallpaper();
+  // 「选择图片」按钮触发的是隐藏的 file input
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  /** 选中图片：先压缩再持久化。压缩失败与写入失败（超配额）分开提示——后者说明
+   *  压完的图还是塞不进 localStorage，需要换更小的图。 */
+  const handleWallpaperFile = async (file: File) => {
+    let dataUrl: string;
+    try {
+      dataUrl = await compressWallpaper(file);
+    } catch {
+      setSnack('图片处理失败');
+      return;
+    }
+    try {
+      setWallpaper(dataUrl);
+    } catch {
+      setSnack('图片太大，换一张小一点的');
+    }
+  };
 
   const load = useCallback(() => {
     let alive = true;
@@ -305,6 +327,52 @@ export default function SettingsPage() {
           <ToggleButton value="light">浅色</ToggleButton>
           <ToggleButton value="dark">深色</ToggleButton>
         </ToggleButtonGroup>
+      </Box>
+
+      <Divider sx={{ my: 2 }} />
+
+      {/* 壁纸：本机背景图，localStorage 持久化（不传后端） */}
+      <Box sx={{ px: 2 }}>
+        <Typography variant="overline">壁纸</Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+          壁纸只存在本机浏览器里，换设备需要重新设置。
+        </Typography>
+        <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap' }}>
+          <Button variant="outlined" onClick={() => fileInputRef.current?.click()}>
+            选择图片
+          </Button>
+          {wallpaper && (
+            <Button variant="outlined" color="warning" onClick={() => setWallpaper(null)}>
+              移除壁纸
+            </Button>
+          )}
+        </Stack>
+        {wallpaper && (
+          <Box
+            role="img"
+            aria-label="壁纸预览"
+            sx={{
+              height: 96,
+              borderRadius: (theme) => theme.shape.borderRadius,
+              backgroundImage: `url("${wallpaper}")`,
+              backgroundSize: 'cover',
+              backgroundPosition: 'center',
+            }}
+          />
+        )}
+        {/* 隐藏的 file input：「选择图片」按钮触发它的 click；值每次清空，
+            同一文件才能再次触发 change */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          hidden
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) void handleWallpaperFile(file);
+            e.target.value = '';
+          }}
+        />
       </Box>
 
       <Divider sx={{ my: 2 }} />

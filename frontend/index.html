@@ -8,6 +8,16 @@
     />
     <meta name="theme-color" content="#f9f8f5" />
     <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <!-- 壁纸首帧上屏：React 挂载前先把 localStorage 里已有的壁纸写到 <html>，否则首屏会
+         先闪一下没有壁纸的纯纸色背景。存储键与变量名必须与 src/lib/wallpaper.tsx
+         保持一致（那边是常量；本脚本在模块系统之外只能手抄，tests/wallpaper.test.tsx
+         会断言两处一致）。 -->
+    <script>
+      try {
+        var w = localStorage.getItem('rakkotasks.wallpaper');
+        if (w) document.documentElement.style.setProperty('--rtk-wallpaper', 'url("' + w + '")');
+      } catch (e) {}
+    </script>
     <title>RakkoTasks</title>
   </head>
   <body>

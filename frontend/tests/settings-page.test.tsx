@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import SettingsPage from '../src/pages/SettingsPage';
 import { ThemeModeProvider } from '../src/lib/theme-mode';
+import { readWallpaper, setWallpaper } from '../src/lib/wallpaper';
 import type { StatusResponse } from '../src/types';
 
 // SettingsPage 依赖 pwa-update（其注册逻辑只在浏览器生效），这里替换 checkForUpdate
@@ -239,5 +240,56 @@ describe('SettingsPage 检查更新', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: '检查更新' }));
     expect(await screen.findByText('当前环境不支持自动更新')).toBeTruthy();
+  });
+});
+
+describe('SettingsPage 壁纸', () => {
+  const DAV = { username: 'a@x.com', path: '/caldav/', configured: false };
+
+  function makeFetchMock(): ReturnType<typeof vi.fn> {
+    return vi.fn(async (url: string | URL) => {
+      const u = String(url);
+      if (u.includes('/api/caldav')) return json(DAV);
+      if (u.includes('/api/calendar')) return json({ token: 'abc' });
+      return json(STATUS);
+    });
+  }
+
+  beforeEach(() => {
+    setWallpaper(null);
+  });
+
+  afterEach(() => {
+    setWallpaper(null);
+  });
+
+  function renderSettings() {
+    vi.stubGlobal('fetch', makeFetchMock());
+    render(
+      <ThemeModeProvider>
+        <SettingsPage />
+      </ThemeModeProvider>,
+    );
+  }
+
+  it('未设壁纸：渲染「选择图片」，不出现「移除壁纸」与预览', async () => {
+    renderSettings();
+
+    expect(await screen.findByRole('button', { name: '选择图片' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '移除壁纸' })).toBeNull();
+    expect(screen.queryByLabelText('壁纸预览')).toBeNull();
+  });
+
+  it('已设壁纸：出现「移除壁纸」与预览；点击移除后 readWallpaper() 返回 null、UI 同步消失', async () => {
+    setWallpaper('data:image/jpeg;base64,AAAA');
+    renderSettings();
+
+    expect(await screen.findByRole('button', { name: '移除壁纸' })).toBeTruthy();
+    expect(screen.getByLabelText('壁纸预览')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: '移除壁纸' }));
+    expect(readWallpaper()).toBeNull();
+    expect(screen.queryByRole('button', { name: '移除壁纸' })).toBeNull();
+    expect(screen.queryByLabelText('壁纸预览')).toBeNull();
   });
 });
