@@ -63,17 +63,22 @@ function GroupSection({
   return (
     <List
       subheader={
-        <ListSubheader component="div" sx={{ bgcolor: 'transparent' }}>
-          {/* 分组标题的雾挂在内层包裹元素上，不能直接挂 ListSubheader 本身：haze 配方
-              会给宿主设 position: relative（与 ListSubheader 默认 position: sticky 同为
-              (0,1,0) 特异性，镜像 CSS 后插入会赢），挂外层会把 sticky 顶成 relative，
-              滚动时标题不再吸顶。每个分组标题各一团雾是可以的——组与组之间隔着整组
-              卡片，距离远超 bleed（14px），雾不会互相重叠；上游禁止的是给相邻的每一行
-              各挂一团。haze 配方会把文字色设成 n9（color: var(--color-neutral-9)），比
-              原 ListSubheader 的 secondary（n7）更深：压在图像上的文字需要更高对比度，
-              这是刻意的。形态取 veil（软圆角矩形），不用配方默认的 cloud——cloud 的
-              九团椭圆按盒子百分比布局，在小标签与宽扁盒子上会被拉变形；上游要求一页
-              只用一种形态，故与 chips 行一致。 */}
+        <ListSubheader component="div" disableSticky sx={{ bgcolor: 'transparent' }}>
+          {/* disableSticky：本应用滚的是 document，ListSubheader 默认吸顶的 top: 0 相对
+              视口，不会给 64px 高的 sticky 顶栏让位——吸顶后的标题整个藏进顶栏底下
+              （实测吸顶标题 {top:0,bottom:18} 对顶栏 {top:0,bottom:64}），用户根本看不到，
+              这个吸顶功能本就无效。取消吸顶同时修好了层叠方向：sticky + z-index:1 会
+              让标题连同它的雾浮在后续列表行之上，雾压在卡片玻璃上形成两层 backdrop
+              叠加；回到普通流后雾按 DOM 顺序画在卡片之下，这才是产品要的方向。
+              雾仍然挂在内层包裹元素上而不是 ListSubheader 本身：haze 配方会给宿主设
+              position: relative 与 isolation: isolate，挂外层会改变 ListSubheader 自身
+              的定位与层叠语义，内层承载更内聚。每个分组标题各一团雾是可以的——组与
+              组之间隔着整组卡片，距离远超 bleed（14px），雾不会互相重叠；上游禁止的
+              是给相邻的每一行各挂一团。haze 配方会把文字色设成 n9（color:
+              var(--color-neutral-9)），比原 ListSubheader 的 secondary（n7）更深：压在
+              图像上的文字需要更高对比度，这是刻意的。形态取 veil（软圆角矩形），不用
+              配方默认的 cloud——cloud 的九团椭圆按盒子百分比布局，在小标签与宽扁盒子
+              上会被拉变形；上游要求一页只用一种形态，故与 chips 行一致。 */}
           <Box
             component="span"
             data-glass="haze"
