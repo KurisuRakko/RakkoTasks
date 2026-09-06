@@ -108,14 +108,18 @@ export default function SearchPage() {
                     <ListItemButton
                       key={c.email_id}
                       onClick={() => open(c)}
+                      data-glass="panel"
                       sx={[
-                        // 卡片纸底（圆角 / 边框 / 半透明）由 cardRowSx 提供。
+                        // 每行引用一条就是一块 data-glass="panel" 玻璃（纸底 / 边框 /
+                        // 高光 / 阴影来自 rakko-glass.css 配方，cardRowSx 只补圆角）。
+                        // 每行一次 backdrop 读回是对上游 anti-patterns "A glass surface
+                        // per list item" 的明知偏离，理由见 surface.ts 文件头。
                         // 行间距用 mb 而非 padding：引用行没有 ListItem 包裹、也没有
                         // rowSx 的折叠动画，不存在 overflow:hidden 裁剪 margin 的问题，
                         // 间距放行外即可。Tasks / Done 两页的间距必须做在 ListItem 的
                         // padding 上并随离场归零——margin 在行折叠后不被裁剪会留空隙，
                         // 见 motion.rowSx 注释。
-                        cardRowSx,
+                        cardRowSx(),
                         {
                           mb: `${ROW_GAP_PX}px`,
                           viewTransitionName: sourceName(c.email_id),

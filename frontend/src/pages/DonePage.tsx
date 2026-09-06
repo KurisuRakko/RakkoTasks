@@ -89,7 +89,9 @@ export default function DonePage() {
                   viewTransitionName: sourceName(item.id),
                 }}
               >
-                <ListItemButton sx={cardRowSx} onClick={() => open(item)}>
+                {/* 每行一块 data-glass="panel" 玻璃（偏离上游 anti-patterns 的决定，
+                    理由见 surface.ts 文件头），cardRowSx 只补圆角 */}
+                <ListItemButton data-glass="panel" sx={cardRowSx()} onClick={() => open(item)}>
                   <Checkbox
                     edge="start"
                     checked={!leaving}

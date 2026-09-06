@@ -237,4 +237,45 @@ describe('玻璃材质变量下发与让位', () => {
     expect(backdrop).toBeDefined();
     expect(JSON.stringify(backdrop!.styleOverrides)).toContain('var(--glass-scrim-opacity)');
   });
+
+  it('5g. MuiPaper 顶层不下发 backgroundImage，只落在 &:not([data-glass])', () => {
+    const theme = themeOf('light');
+    const paper = theme.components?.MuiPaper;
+    expect(paper).toBeDefined();
+    const rootOverride = paper!.styleOverrides?.root as
+      | Record<string, unknown>
+      | ((p: { theme: typeof theme }) => Record<string, unknown>);
+    const rootStyles =
+      typeof rootOverride === 'function' ? rootOverride({ theme }) : (rootOverride ?? {});
+    // 顶层 backgroundImage 会把挂 data-glass 的 Paper 背景抹掉（panel 档的透镜渐变
+    // 来自镜像配方的背景声明）；backgroundImage: none 只用来压 MUI 深色模式的
+    // overlay 渐变，故收敛到 ':not([data-glass])'
+    expect(rootStyles.backgroundImage).toBeUndefined();
+    const plain = rootStyles['&:not([data-glass])'] as Record<string, unknown> | undefined;
+    expect(plain, "MuiPaper 的 backgroundImage: none 应收敛到 '&:not([data-glass])'").toBeDefined();
+    expect(plain!.backgroundImage).toBe('none');
+  });
+
+  it('5h. MuiDrawer paper 保留右侧分割线（chrome 发丝线在下缘，方向对不上侧边栏）', () => {
+    const theme = themeOf('light');
+    const drawer = theme.components?.MuiDrawer;
+    expect(drawer).toBeDefined();
+    const paperOverride = drawer!.styleOverrides?.paper as unknown as (p: {
+      theme: typeof theme;
+    }) => Record<string, unknown>;
+    const paperStyles = paperOverride({ theme });
+    expect(paperStyles.borderRight).toBe(`1px solid ${theme.palette.divider}`);
+  });
+
+  it('5i. MuiBottomNavigation root 保持透明（玻璃底色来自外层 Paper 的 data-glass）', () => {
+    const theme = themeOf('light');
+    const bottomNav = theme.components?.MuiBottomNavigation;
+    expect(bottomNav).toBeDefined();
+    const rootOverride = bottomNav!.styleOverrides?.root as
+      | Record<string, unknown>
+      | ((p: { theme: typeof theme }) => Record<string, unknown>);
+    const rootStyles =
+      typeof rootOverride === 'function' ? rootOverride({ theme }) : (rootOverride ?? {});
+    expect(rootStyles.backgroundColor).toBe('transparent');
+  });
 });

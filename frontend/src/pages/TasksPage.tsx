@@ -64,7 +64,24 @@ function GroupSection({
     <List
       subheader={
         <ListSubheader component="div" sx={{ bgcolor: 'transparent' }}>
-          {title}
+          {/* 分组标题的雾挂在内层包裹元素上，不能直接挂 ListSubheader 本身：haze 配方
+              会给宿主设 position: relative（与 ListSubheader 默认 position: sticky 同为
+              (0,1,0) 特异性，镜像 CSS 后插入会赢），挂外层会把 sticky 顶成 relative，
+              滚动时标题不再吸顶。每个分组标题各一团雾是可以的——组与组之间隔着整组
+              卡片，距离远超 bleed（14px），雾不会互相重叠；上游禁止的是给相邻的每一行
+              各挂一团。haze 配方会把文字色设成 n9（color: var(--color-neutral-9)），比
+              原 ListSubheader 的 secondary（n7）更深：压在图像上的文字需要更高对比度，
+              这是刻意的。形态取 veil（软圆角矩形），不用配方默认的 cloud——cloud 的
+              九团椭圆按盒子百分比布局，在小标签与宽扁盒子上会被拉变形；上游要求一页
+              只用一种形态，故与 chips 行一致。 */}
+          <Box
+            component="span"
+            data-glass="haze"
+            data-haze="veil"
+            sx={{ display: 'inline-block', '--glass-haze-bleed': '14px' }}
+          >
+            {title}
+          </Box>
         </ListSubheader>
       }
       disablePadding
@@ -80,9 +97,12 @@ function GroupSection({
               viewTransitionName: sourceName(item.id),
             }}
           >
-            {/* 卡片视觉在 ListItemButton 上（纸底 + 圆角 + 边框），行间空隙由
-                ListItem 的 rowSx padding-bottom 提供；容器变换名字留在 ListItem */}
-            <ListItemButton sx={cardRowSx} onClick={() => onOpen(item)}>
+            {/* 每行一块玻璃：data-glass="panel" 直接压在壁纸上，不再有内容玻璃板底板。
+                纸底/边框/高光/阴影由 rakko-glass.css 配方提供，cardRowSx 只补圆角。
+                每行一次 backdrop 读回是对上游 anti-patterns "A glass surface per list
+                item" 的明知偏离，理由见 surface.ts 文件头。行间空隙由 ListItem 的
+                rowSx padding-bottom 提供；容器变换名字留在 ListItem */}
+            <ListItemButton data-glass="panel" sx={cardRowSx()} onClick={() => onOpen(item)}>
               <Box sx={{ width: 12, display: 'flex', justifyContent: 'center', flexShrink: 0 }}>
                 {isNewToday(item, today) && (
                   <Box

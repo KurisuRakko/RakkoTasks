@@ -26,13 +26,10 @@ import Toolbar from '@mui/material/Toolbar';
 import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
 import useMediaQuery from '@mui/material/useMediaQuery';
-import { GLASS_PANEL_RADIUS } from '../lib/glass';
 import { useTransitionNavigate } from '../lib/motion';
 import { CONTENT_MAX_WIDTH, DRAWER_WIDTH } from '../lib/layout';
 import { NAV_ITEMS, navIndexOf } from '../lib/nav';
 import { shellAttr, VT_NAMES } from '../lib/view-transition';
-import { useWallpaper } from '../lib/wallpaper';
-import { GLASS } from '../rakko-tokens';
 import RouteTransition from './RouteTransition';
 import TasksPage from '../pages/TasksPage';
 import SearchPage from '../pages/SearchPage';
@@ -46,6 +43,15 @@ function titleFor(navIndex: number): string {
   return navIndex === -1 ? TITLES[3] : TITLES[navIndex];
 }
 
+/** 桌面抽屉 paper 的壳层属性：转场持名标记（何时持名由样式层按转场种类决定）+
+ *  常驻 chrome 玻璃（侧边栏是常驻 chrome，身后是壁纸，材质由 rakko-glass.css 的
+ *  chrome 档提供；主题层已让位）。chrome 档的发丝线在下缘、方向对不上侧边栏——
+ *  右边框仍由主题层的 MuiDrawer.paper 提供（那条已经在，不要动）。 */
+const NAV_DRAWER_PAPER_PROPS = {
+  ...shellAttr(VT_NAMES.navDrawer),
+  'data-glass': 'chrome',
+} as const;
+
 export default function AppShell() {
   const location = useLocation();
   // 带方向的路由跳转（View Transitions）；目标等于当前路径时它自己会跳过
@@ -55,8 +61,6 @@ export default function AppShell() {
   // 与抽屉 display: { xs: 'none', md: 'block' } 同一断点（md = 900px）：桌面端常驻
   // 抽屉里有「设置」入口，AppBar 的按钮只留给没有抽屉的移动端
   const desktop = useMediaQuery(theme.breakpoints.up('md'));
-  // 内容玻璃板只在设了壁纸时出现（见下方注释），订阅模块级壁纸状态
-  const wallpaper = useWallpaper();
 
   return (
     <Box sx={{ display: 'flex', minHeight: '100dvh' }}>
@@ -72,7 +76,7 @@ export default function AppShell() {
             boxSizing: 'border-box',
           },
         }}
-        slotProps={{ paper: shellAttr(VT_NAMES.navDrawer) }}
+        slotProps={{ paper: NAV_DRAWER_PAPER_PROPS }}
       >
         <Toolbar>
           <Typography variant="h6" noWrap>
@@ -107,43 +111,12 @@ export default function AppShell() {
         </List>
       </Drawer>
 
-      {/* 内容玻璃板：壁纸之上的 panel 玻璃底板，盖住整块内容列。整页的玻璃预算只允许
-          两次 backdrop 读回——顶栏 chrome + 这块 panel——且两者几何上零重叠，这里的
-          top 两档（xs 56 / sm 64）正是 MUI Toolbar 的默认高度，让玻璃板从顶栏下缘
-          开始，重叠区域会付两次读回。
-          只在设了壁纸时渲染：身后没有图像时，模糊一片纯色等于白付一次读回。这不是
-          契约禁止的「滚动挂载」——它随壁纸设置一次性出现、之后常驻，不随滚动或交互
-          开关。
-          pointerEvents: none——它纯粹是块底板，不能吃掉内容的点击。
-          fixed + left/right + mx:auto 让它与内容列同宽同心：md 起 left 让出抽屉宽度，
-          与内容列（main 里的限宽居中盒）对齐居中；移动端贴边不给圆角。 */}
-      {wallpaper && (
-        <Box
-          data-glass="panel"
-          aria-hidden
-          {...shellAttr(VT_NAMES.contentGlass)}
-          sx={{
-            position: 'fixed',
-            top: { xs: 56, sm: 64 },
-            bottom: 0,
-            left: { xs: 0, md: `${DRAWER_WIDTH}px` },
-            right: 0,
-            mx: 'auto',
-            maxWidth: { md: `${CONTENT_MAX_WIDTH}px` },
-            pointerEvents: 'none',
-            zIndex: 0,
-            borderTopLeftRadius: { md: `${GLASS_PANEL_RADIUS}px` },
-            borderTopRightRadius: { md: `${GLASS_PANEL_RADIUS}px` },
-          }}
-        />
-      )}
-
+      {/* 内容区不再有玻璃底板：列表行自己就是 data-glass="panel" 玻璃（对上游
+          anti-patterns 的明知偏离，理由见 surface.ts 文件头），整页玻璃只剩壳层
+          chrome（顶栏 / 侧边栏 / 底栏）与各行 panel。 */}
       <Box
         component="main"
         sx={{
-          // 内容压在玻璃板（zIndex 0 的 fixed 底板）之上
-          position: 'relative',
-          zIndex: 1,
           flexGrow: 1,
           minWidth: 0,
           pb: { xs: 'calc(64px + env(safe-area-inset-bottom))', md: 0 },
@@ -182,12 +155,13 @@ export default function AppShell() {
         </Box>
       </Box>
 
-      {/* 移动端：底部导航（md 以下），固定定位，内容区已预留 padding。底栏叠在内容玻璃板
-          之上，只补一层纸色层次、自己不上玻璃——同一区域两次 backdrop 读回是纯浪费；
-          纸底浓度取 panel 档（GLASS.panelOpacity），视觉上是玻璃板的延伸；分割线画在
-          顶边，因为 chrome 档的发丝线在下缘，方向不对。 */}
+      {/* 移动端：底部导航（md 以下），固定定位，内容区已预留 padding。底栏自己就是
+          一块 data-glass="chrome" 玻璃（与顶栏同档常驻 chrome），材质由 rakko-glass.css
+          配方提供——主题层与局部 sx 都不能再下发 background，否则会盖掉配方（同
+          MuiAppBar 让位的道理）。borderTop 保留：chrome 档的发丝线在下缘、底栏需要顶边。 */}
       <Paper
         elevation={0}
+        data-glass="chrome"
         {...shellAttr(VT_NAMES.bottomNav)}
         sx={{
           position: 'fixed',
@@ -197,8 +171,6 @@ export default function AppShell() {
           zIndex: 1100,
           pb: 'env(safe-area-inset-bottom)',
           display: { xs: 'block', md: 'none' },
-          bgcolor: (theme) =>
-            `color-mix(in srgb, ${theme.palette.background.paper} ${GLASS.panelOpacity}, transparent)`,
           borderTop: (theme) => `1px solid ${theme.palette.divider}`,
         }}
       >

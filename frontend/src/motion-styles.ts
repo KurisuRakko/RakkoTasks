@@ -48,7 +48,6 @@ export function viewTransitionStyles(theme: Theme): Record<string, unknown> {
   const appBar = VT_NAMES.appBar;
   const bottomNav = VT_NAMES.bottomNav;
   const navDrawer = VT_NAMES.navDrawer;
-  const contentGlass = VT_NAMES.contentGlass;
 
   // 容器变换里 sheet/fab 各自的旧/新快照基础样式（圆角、尺寸插值打底）
   const pairNames = [sheet, fab]
@@ -146,9 +145,6 @@ export function viewTransitionStyles(theme: Theme): Record<string, unknown> {
     [`:root[data-vt^="route-"] [${VT_SHELL_ATTR}="${appBar}"]`]: { viewTransitionName: appBar },
     [`:root[data-vt^="route-"] [${VT_SHELL_ATTR}="${bottomNav}"]`]: { viewTransitionName: bottomNav },
     [`:root[data-vt^="route-"] [${VT_SHELL_ATTR}="${navDrawer}"]`]: { viewTransitionName: navDrawer },
-    // 内容玻璃板也是 fixed 壳层元素：换页时若不持名就会留在 root 快照里，跟着内容一起做
-    // 共享轴位移——它必须像其它壳层一样保持静止
-    [`:root[data-vt^="route-"] [${VT_SHELL_ATTR}="${contentGlass}"]`]: { viewTransitionName: contentGlass },
     [`:root[data-vt^="route-"] [${VT_SHELL_ATTR}="${fab}"]`]: { viewTransitionName: fab },
     [`:root[data-vt="expand-fab"] [${VT_SHELL_ATTR}="${fab}"],
       :root[data-vt="collapse-fab"] [${VT_SHELL_ATTR}="${fab}"]`]:
@@ -177,8 +173,7 @@ export function viewTransitionStyles(theme: Theme): Record<string, unknown> {
     // 自己的 group 继承，交叉淡化的节奏与内容轴移一致。
     [`:root[data-vt^="route-"]${vtPseudo('group', appBar)},
       :root[data-vt^="route-"]${vtPseudo('group', bottomNav)},
-      :root[data-vt^="route-"]${vtPseudo('group', navDrawer)},
-      :root[data-vt^="route-"]${vtPseudo('group', contentGlass)}`]:
+      :root[data-vt^="route-"]${vtPseudo('group', navDrawer)}`]:
       {
         animationDuration: `${MOTION.large}ms`,
         animationTimingFunction: ease,
