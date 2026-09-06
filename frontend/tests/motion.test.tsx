@@ -7,8 +7,14 @@ import { createTheme, ThemeProvider } from '@mui/material/styles';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import { LEAVE_DURATION, rowSx, useMorphDialog, useTransitionNavigate } from '../src/lib/motion';
+import { ROW_GAP_PX } from '../src/lib/surface';
 import { MOTION } from '../src/rakko-tokens';
 import { VT_ATTR, VT_NAMES } from '../src/lib/view-transition';
+// ?raw：读源文件原文做「无 backdrop-filter」断言；tsconfig 无 @types/node，node:fs 不可用
+import tasksPageSource from '../src/pages/TasksPage.tsx?raw';
+import donePageSource from '../src/pages/DonePage.tsx?raw';
+import searchPageSource from '../src/pages/SearchPage.tsx?raw';
+import surfaceSource from '../src/lib/surface.ts?raw';
 
 // jsdom 运行时不实现 startViewTransition（TS DOM lib 有类型、运行时没有），
 // 用可选属性 cast 后直接赋值 / 删除来 stub 与还原
@@ -185,6 +191,36 @@ describe('rowSx', () => {
     expect(sx).not.toHaveProperty('animation');
     expect(sx.gridTemplateRows).toBe('0fr');
     expect(sx.transition).toContain('grid-template-rows');
+  });
+
+  it('行间距做在 padding-bottom：leaving=false 是 ROW_GAP_PX，leaving=true 归零', () => {
+    const open = rowSx(0, false, false, false) as Record<string, unknown>;
+    expect(open.paddingBottom).toBe(`${ROW_GAP_PX}px`);
+    const leaving = rowSx(0, true, false, false) as Record<string, unknown>;
+    expect(leaving.paddingBottom).toBe(0);
+  });
+
+  it('离场时 padding-bottom 与 grid-template-rows 同长同曲线：transition 含 padding-bottom', () => {
+    const sx = rowSx(0, false, false, false) as Record<string, unknown>;
+    expect(sx.transition).toContain('padding-bottom');
+  });
+
+  it('reduced 分支同样带 paddingBottom：无动效时离场折叠也要收间距', () => {
+    const open = rowSx(0, false, true, false) as Record<string, unknown>;
+    expect(open.paddingBottom).toBe(`${ROW_GAP_PX}px`);
+    const leaving = rowSx(0, true, true, true) as Record<string, unknown>;
+    expect(leaving.paddingBottom).toBe(0);
+    // reduced 分支仍是不带 transition / animation 的纯网格 box
+    expect(leaving).not.toHaveProperty('transition');
+    expect(leaving).not.toHaveProperty('animation');
+  });
+});
+
+describe('列表卡片层无 backdrop-filter（预算第 3 条硬红线）', () => {
+  it('三个页面的列表行与 surface.ts 的源码里都没有 backdrop-filter', () => {
+    for (const source of [tasksPageSource, donePageSource, searchPageSource, surfaceSource]) {
+      expect(source).not.toContain('backdrop-filter');
+    }
   });
 });
 

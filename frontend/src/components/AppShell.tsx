@@ -26,10 +26,13 @@ import Toolbar from '@mui/material/Toolbar';
 import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
 import useMediaQuery from '@mui/material/useMediaQuery';
+import { GLASS_PANEL_RADIUS } from '../lib/glass';
 import { useTransitionNavigate } from '../lib/motion';
 import { CONTENT_MAX_WIDTH, DRAWER_WIDTH } from '../lib/layout';
 import { NAV_ITEMS, navIndexOf } from '../lib/nav';
 import { shellAttr, VT_NAMES } from '../lib/view-transition';
+import { useWallpaper } from '../lib/wallpaper';
+import { GLASS } from '../rakko-tokens';
 import RouteTransition from './RouteTransition';
 import TasksPage from '../pages/TasksPage';
 import SearchPage from '../pages/SearchPage';
@@ -52,6 +55,8 @@ export default function AppShell() {
   // 与抽屉 display: { xs: 'none', md: 'block' } 同一断点（md = 900px）：桌面端常驻
   // 抽屉里有「设置」入口，AppBar 的按钮只留给没有抽屉的移动端
   const desktop = useMediaQuery(theme.breakpoints.up('md'));
+  // 内容玻璃板只在设了壁纸时出现（见下方注释），订阅模块级壁纸状态
+  const wallpaper = useWallpaper();
 
   return (
     <Box sx={{ display: 'flex', minHeight: '100dvh' }}>
@@ -102,16 +107,54 @@ export default function AppShell() {
         </List>
       </Drawer>
 
+      {/* 内容玻璃板：壁纸之上的 panel 玻璃底板，盖住整块内容列。整页的玻璃预算只允许
+          两次 backdrop 读回——顶栏 chrome + 这块 panel——且两者几何上零重叠，这里的
+          top 两档（xs 56 / sm 64）正是 MUI Toolbar 的默认高度，让玻璃板从顶栏下缘
+          开始，重叠区域会付两次读回。
+          只在设了壁纸时渲染：身后没有图像时，模糊一片纯色等于白付一次读回。这不是
+          契约禁止的「滚动挂载」——它随壁纸设置一次性出现、之后常驻，不随滚动或交互
+          开关。
+          pointerEvents: none——它纯粹是块底板，不能吃掉内容的点击。
+          fixed + left/right + mx:auto 让它与内容列同宽同心：md 起 left 让出抽屉宽度，
+          与内容列（main 里的限宽居中盒）对齐居中；移动端贴边不给圆角。 */}
+      {wallpaper && (
+        <Box
+          data-glass="panel"
+          aria-hidden
+          {...shellAttr(VT_NAMES.contentGlass)}
+          sx={{
+            position: 'fixed',
+            top: { xs: 56, sm: 64 },
+            bottom: 0,
+            left: { xs: 0, md: `${DRAWER_WIDTH}px` },
+            right: 0,
+            mx: 'auto',
+            maxWidth: { md: `${CONTENT_MAX_WIDTH}px` },
+            pointerEvents: 'none',
+            zIndex: 0,
+            borderTopLeftRadius: { md: `${GLASS_PANEL_RADIUS}px` },
+            borderTopRightRadius: { md: `${GLASS_PANEL_RADIUS}px` },
+          }}
+        />
+      )}
+
       <Box
         component="main"
         sx={{
+          // 内容压在玻璃板（zIndex 0 的 fixed 底板）之上
+          position: 'relative',
+          zIndex: 1,
           flexGrow: 1,
           minWidth: 0,
           pb: { xs: 'calc(64px + env(safe-area-inset-bottom))', md: 0 },
         }}
       >
         {/* AppBar 是换页转场共享元素：只打 data-vt-shell 标记，名字由样式层按转场种类下发 */}
-        <AppBar position="sticky" elevation={0} {...shellAttr(VT_NAMES.appBar)}>
+        {/* 常驻 chrome 玻璃：材质来自 rakko-glass.css 的 data-glass="chrome"，主题层已让位
+            （不再下发 background）。不要加 data-reveal="scroll"——滚动渐显的起点是完全
+            透明，标题会直接裸在用户壁纸上，深色壁纸下对比度过不了 AA；顶栏必须常显玻璃，
+            始终给标题一个底衬。 */}
+        <AppBar position="sticky" elevation={0} data-glass="chrome" {...shellAttr(VT_NAMES.appBar)}>
           <Toolbar>
             <Typography variant="h6" noWrap sx={{ flexGrow: 1 }}>
               {titleFor(navIndex)}
@@ -139,9 +182,12 @@ export default function AppShell() {
         </Box>
       </Box>
 
-      {/* 移动端：底部导航（md 以下），固定定位，内容区已预留 padding */}
+      {/* 移动端：底部导航（md 以下），固定定位，内容区已预留 padding。底栏叠在内容玻璃板
+          之上，只补一层纸色层次、自己不上玻璃——同一区域两次 backdrop 读回是纯浪费；
+          纸底浓度取 panel 档（GLASS.panelOpacity），视觉上是玻璃板的延伸；分割线画在
+          顶边，因为 chrome 档的发丝线在下缘，方向不对。 */}
       <Paper
-        elevation={8}
+        elevation={0}
         {...shellAttr(VT_NAMES.bottomNav)}
         sx={{
           position: 'fixed',
@@ -151,6 +197,9 @@ export default function AppShell() {
           zIndex: 1100,
           pb: 'env(safe-area-inset-bottom)',
           display: { xs: 'block', md: 'none' },
+          bgcolor: (theme) =>
+            `color-mix(in srgb, ${theme.palette.background.paper} ${GLASS.panelOpacity}, transparent)`,
+          borderTop: (theme) => `1px solid ${theme.palette.divider}`,
         }}
       >
         <BottomNavigation

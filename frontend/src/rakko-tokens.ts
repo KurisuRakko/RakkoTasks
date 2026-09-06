@@ -113,3 +113,24 @@ export const STATE_OPACITY = {
 
 /** whisper 阴影：禁硬阴影（阴影只允许此档，其余用 1px 边框分层） */
 export const WHISPER_SHADOW = '0 1px 2px rgba(20, 19, 18, 0.06)';
+
+/** 玻璃材质数值（镜像自上游 tokens.css 的 --glass-*）。配方本身在 rakko-glass.css，
+ * 是 design-system/src/glass.css 的逐字镜像；这里只放它消费的值，由主题层下发到 :root。 */
+export const GLASS = {
+  blur: '3px',
+  saturate: '193%',
+  surfaceOpacity: '45%',
+  panelOpacity: '58%',
+  scrimOpacity: '34%',
+  highlight: 'rgba(255, 255, 255, 0.59)',
+  hazeOpacity: '51%',
+  hazeBleed: '28px',
+} as const;
+
+/** 玻璃面板的 whisper 阴影（上游 --shadow-whisper）；深色主题按契约加深一档。
+ * 与上面的 WHISPER_SHADOW 是两回事：那一档是 MUI elevation 用的紧凑阴影，
+ * 本项目早先镜像时取的值与上游 --shadow-whisper 不一致，此次不动它以免波及全部 elevation。 */
+export const GLASS_SHADOW_WHISPER = {
+  light: '0 4px 24px rgba(0, 0, 0, 0.05)',
+  dark: '0 4px 24px rgba(0, 0, 0, 0.35)',
+} as const;

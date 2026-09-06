@@ -139,6 +139,30 @@ describe('壳层与 FAB 的持名时机', () => {
   });
 });
 
+describe('内容玻璃板（contentGlass）换页保持静止', () => {
+  const styles = viewTransitionStyles(createTheme()) as Styles;
+
+  it('换页（route-*）时玻璃板按 VT_SHELL_ATTR 持名，与其它壳层并列', () => {
+    const holding = (Object.entries(styles) as Array<[string, Rule]>).filter(
+      ([, rule]) => typeof rule === 'object' && rule !== null && 'viewTransitionName' in rule,
+    );
+    const hit = holding.find(
+      ([key, rule]) =>
+        key.includes(`data-vt^="route-"`) &&
+        key.includes(`[${VT_SHELL_ATTR}="${VT_NAMES.contentGlass}"]`) &&
+        rule.viewTransitionName === VT_NAMES.contentGlass,
+    );
+    expect(hit, 'route-* 下 [data-vt-shell="rtk-content-glass"] 应持名').toBeDefined();
+  });
+
+  it('玻璃板进入换页 group 交叉淡化规则：与壳层三件套共用一条规则，时长对齐 large', () => {
+    const key = findKey(styles, 'route-', '::view-transition-group(', VT_NAMES.contentGlass);
+    const rule = ruleValue(styles, key);
+    expect(rule.animationDuration).toBe(`${MOTION.large}ms`);
+    expect(rule.animationTimingFunction).toBe(MOTION.easeStandard);
+  });
+});
+
 describe('壳层与遮罩的交叉淡化', () => {
   const styles = viewTransitionStyles(createTheme()) as Styles;
 

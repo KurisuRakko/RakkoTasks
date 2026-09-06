@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react';
 import Box from '@mui/material/Box';
 import CircularProgress from '@mui/material/CircularProgress';
 import { BrowserRouter } from 'react-router-dom';
-import { ThemeProvider } from '@mui/material/styles';
+import { StyledEngineProvider, ThemeProvider } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
 import { consumeCallback, getMe, startLogin } from './lib/phainon';
 import { useAppTheme } from './theme';
@@ -71,9 +71,14 @@ function ThemedApp() {
 }
 
 export default function App() {
+  // injectFirst 让 MUI 的 emotion 样式插到 <head> 最前面，rakko-glass.css 作为静态 CSS
+  // 排在其后。[data-glass='chrome'] 与 .MuiAppBar-colorDefault 特异性同为 (0,1,0)，
+  // 同特异性下后插入的赢——不 injectFirst，MUI 自带的 background-color 会盖掉玻璃配方。
   return (
-    <ThemeModeProvider>
-      <ThemedApp />
-    </ThemeModeProvider>
+    <StyledEngineProvider injectFirst>
+      <ThemeModeProvider>
+        <ThemedApp />
+      </ThemeModeProvider>
+    </StyledEngineProvider>
   );
 }

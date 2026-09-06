@@ -18,6 +18,7 @@ import Typography from '@mui/material/Typography';
 import { fetchItems, patchItem } from '../lib/api';
 import { DONE_KEY, moveItem, removeItem, replaceItem, useCachedList } from '../lib/list-cache';
 import { LEAVE_DURATION, rowSx, useMorphDialog, usePrefersReducedMotion } from '../lib/motion';
+import { cardRowSx } from '../lib/surface';
 import type { Item } from '../types';
 import ItemDialog from '../components/ItemDialog';
 
@@ -88,7 +89,7 @@ export default function DonePage() {
                   viewTransitionName: sourceName(item.id),
                 }}
               >
-                <ListItemButton onClick={() => open(item)}>
+                <ListItemButton sx={cardRowSx} onClick={() => open(item)}>
                   <Checkbox
                     edge="start"
                     checked={!leaving}
