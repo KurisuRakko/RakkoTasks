@@ -331,6 +331,23 @@ describe('TasksPage haze 底衬（分组标题与 chips 行）', () => {
     }
   });
 
+  it('分组标题不再吸顶：ListSubheader 渲染结果不含 MuiListSubheader-sticky 类', async () => {
+    const fetchMock = vi.fn(async () => json({ items: ITEMS }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { container } = render(<TasksPage />);
+    await screen.findByText('重要任务');
+
+    // MUI 源码里 sticky 类由 `!disableSticky && 'sticky'` 决定，disableSticky 时不会加，
+    // 这是可靠的判定；不要去测 computed position——jsdom 不解析 emotion 生成的样式，
+    // 那样会写出永远为真的假断言。
+    const subheaders = Array.from(container.querySelectorAll('.MuiListSubheader-root'));
+    expect(subheaders.length).toBeGreaterThan(0);
+    for (const sh of subheaders) {
+      expect(sh.classList.contains('MuiListSubheader-sticky')).toBe(false);
+    }
+  });
+
   it('分类 chips 行的雾在滚动容器外层：haze 元素本身不滚动，直接子元素是滚动 Stack', async () => {
     const fetchMock = vi.fn(async () => json({ items: ITEMS }));
     vi.stubGlobal('fetch', fetchMock);
