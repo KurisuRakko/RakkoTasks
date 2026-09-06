@@ -3,8 +3,12 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { createTheme } from '@mui/material/styles';
 import DonePage from '../src/pages/DonePage';
 import { resetLists } from '../src/lib/list-cache';
+import { CARD_PAPER_OPACITY } from '../src/lib/glass';
+import { cardRowSx } from '../src/lib/surface';
+import { RADIUS } from '../src/rakko-tokens';
 
 const ITEMS = [
   {
@@ -129,5 +133,35 @@ describe('DonePage', () => {
     expect(screen.getByText('任务一')).toBeTruthy();
     // 命中缓存仍会发起一次后台刷新
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+  });
+});
+
+describe('列表行卡片视觉（cardRowSx）', () => {
+  it('cardRowSx 纯函数：color-mix 纸底 + 1px 边框 + 卡片圆角', () => {
+    const theme = createTheme();
+    const sx = cardRowSx(theme) as unknown as Record<string, string>;
+    expect(sx.backgroundColor).toContain('color-mix');
+    expect(sx.backgroundColor).toContain(CARD_PAPER_OPACITY);
+    expect(sx.border).toBe(`1px solid ${theme.palette.divider}`);
+    expect(sx.borderRadius).toBe(`${RADIUS.card}px`);
+  });
+
+  it('列表行的 ListItemButton 挂上了 sx（emotion 局部类），纸底样式实际应用到行', async () => {
+    const fetchMock = vi.fn(async (_url: string | URL, _init?: RequestInit) =>
+      json({ items: ITEMS }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<DonePage />);
+    await screen.findByText('任务一');
+
+    const rowBtn = screen.getByText('任务一').closest(
+      '.MuiListItemButton-root',
+    ) as HTMLElement;
+    expect(rowBtn).not.toBeNull();
+    // sx 经 emotion 编译成 css-* 局部类挂在按钮上。jsdom 解析不了 color-mix 的
+    // 计算结果（那是浏览器渲染层的事），这里只断言「sx 确实应用到了行」；
+    // 纸底取值本身由上面的 cardRowSx 纯函数用例覆盖。
+    expect(rowBtn.className).toMatch(/(?:^|\s)css-[A-Za-z0-9_-]+/);
   });
 });

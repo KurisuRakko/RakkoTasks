@@ -7,6 +7,7 @@ import useMediaQuery from '@mui/material/useMediaQuery';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { MOTION } from '../rakko-tokens';
 import { navIndexOf } from './nav';
+import { ROW_GAP_PX } from './surface';
 import { runViewTransition, VT_NAMES } from './view-transition';
 import type { SxProps } from '@mui/material';
 import type { Theme } from '@mui/material/styles';
@@ -62,6 +63,11 @@ export function rowSx(
 ): SxProps<Theme> {
   const box = {
     display: 'grid',
+    // 卡片行间距做在 ListItem 的 padding-bottom 上，而不是卡片的 margin 上：
+    // 离场时行高靠 grid-template-rows 折叠、子元素被 overflow:hidden 裁到 0，
+    // 但 margin 不受 overflow 裁剪——若间距是 margin，行折叠完会留下一条空隙。
+    // padding 属于 ListItem 自身，leaving 时归零、行才真正收干净（间距见 surface）。
+    paddingBottom: leaving ? 0 : `${ROW_GAP_PX}px`,
     // MUI ListItem 根样式带 justify-content: flex-start，网格的隐式 auto 列会按
     // max-content 打包并贴左，行宽于是随内容长短变化——短标题的行只有半屏宽，
     // 右侧标签（重要 / 分类 / 日期）每行落在不同位置。显式铺一列 minmax(0, 1fr)
@@ -80,7 +86,10 @@ export function rowSx(
     ...box,
     transform: leaving ? 'translateX(12px)' : 'none',
     transition: [
+      // padding-bottom 与 grid-template-rows 同时长同曲线：行高与间距一起收起，
+      // 折叠过程才不会留出半截空隙
       `grid-template-rows ${MOTION.largeExit}ms ${MOTION.easeStandard}`,
+      `padding-bottom ${MOTION.largeExit}ms ${MOTION.easeStandard}`,
       `opacity ${MOTION.exit}ms ${MOTION.easeStandard}`,
       `transform ${MOTION.exit}ms ${MOTION.easeStandard}`,
     ].join(', '),
