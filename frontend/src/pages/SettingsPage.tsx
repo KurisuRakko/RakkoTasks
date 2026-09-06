@@ -46,6 +46,7 @@ import { useSession } from '../lib/session';
 import { useThemeMode } from '../lib/theme-mode';
 import { timeAgo } from '../lib/time';
 import { compressWallpaper, setWallpaper, useWallpaper } from '../lib/wallpaper';
+import { RADIUS } from '../rakko-tokens';
 import type { CaldavInfo, StatusResponse } from '../types';
 
 export default function SettingsPage() {
@@ -74,8 +75,8 @@ export default function SettingsPage() {
   // 「选择图片」按钮触发的是隐藏的 file input
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  /** 选中图片：先压缩再持久化。压缩失败与写入失败（超配额）分开提示——后者说明
-   *  压完的图还是塞不进 localStorage，需要换更小的图。 */
+  /** 选中图片：先压缩再持久化。压缩失败与写入失败分开提示；写入失败再按错误类型
+   *  分流——超配额才是「图太大」，隐私模式等存储不可用的场景提示换小图是误导。 */
   const handleWallpaperFile = async (file: File) => {
     let dataUrl: string;
     try {
@@ -86,8 +87,12 @@ export default function SettingsPage() {
     }
     try {
       setWallpaper(dataUrl);
-    } catch {
-      setSnack('图片太大，换一张小一点的');
+    } catch (error) {
+      // NS_ERROR_DOM_QUOTA_REACHED 是 Firefox 的配额错误名，两个都认
+      const quota =
+        error instanceof DOMException &&
+        (error.name === 'QuotaExceededError' || error.name === 'NS_ERROR_DOM_QUOTA_REACHED');
+      setSnack(quota ? '图片太大，换一张小一点的' : '无法保存壁纸，浏览器存储不可用');
     }
   };
 
@@ -353,7 +358,9 @@ export default function SettingsPage() {
             aria-label="壁纸预览"
             sx={{
               height: 96,
-              borderRadius: (theme) => theme.shape.borderRadius,
+              // 圆角必须是 px 字符串：MUI 会把 sx 里的数字 borderRadius 当作圆角
+              // token（RADIUS.base = 6）的乘数，6 × 6 = 36px，不是 CSS 直通
+              borderRadius: `${RADIUS.base}px`,
               backgroundImage: `url("${wallpaper}")`,
               backgroundSize: 'cover',
               backgroundPosition: 'center',

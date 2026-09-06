@@ -8,11 +8,20 @@ import SettingsPage from '../src/pages/SettingsPage';
 import { ThemeModeProvider } from '../src/lib/theme-mode';
 import { readWallpaper, setWallpaper } from '../src/lib/wallpaper';
 import type { StatusResponse } from '../src/types';
+import settingsPageSource from '../src/pages/SettingsPage.tsx?raw';
 
 // SettingsPage 依赖 pwa-update（其注册逻辑只在浏览器生效），这里替换 checkForUpdate
 const { checkForUpdateMock } = vi.hoisted(() => ({ checkForUpdateMock: vi.fn() }));
 
 vi.mock('../src/lib/pwa-update', () => ({ checkForUpdate: checkForUpdateMock }));
+
+// 壁纸用例要驱动「选图→压缩→写入」整条链路；jsdom 跑不了真 canvas，mock 掉
+// compressWallpaper 的模块导出（其余导出保持原样——写入/订阅仍走真实现，
+// setWallpaper 的配额异常与提示分流是真实验证对象）
+vi.mock('../src/lib/wallpaper', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/lib/wallpaper')>();
+  return { ...actual, compressWallpaper: vi.fn(async () => 'data:image/jpeg;base64,OKOK') };
+});
 
 const STATUS: StatusResponse = {
   accounts: [
@@ -261,6 +270,7 @@ describe('SettingsPage 壁纸', () => {
 
   afterEach(() => {
     setWallpaper(null);
+    vi.restoreAllMocks();
   });
 
   function renderSettings() {
@@ -270,6 +280,15 @@ describe('SettingsPage 壁纸', () => {
         <SettingsPage />
       </ThemeModeProvider>,
     );
+  }
+
+  /** 触发「选择图片」的隐藏 file input，模拟用户选中一张图 */
+  function pickImage() {
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    expect(input).not.toBeNull();
+    fireEvent.change(input, {
+      target: { files: [new File(['x'], 'photo.jpg', { type: 'image/jpeg' })] },
+    });
   }
 
   it('未设壁纸：渲染「选择图片」，不出现「移除壁纸」与预览', async () => {
@@ -291,5 +310,35 @@ describe('SettingsPage 壁纸', () => {
     expect(readWallpaper()).toBeNull();
     expect(screen.queryByRole('button', { name: '移除壁纸' })).toBeNull();
     expect(screen.queryByLabelText('壁纸预览')).toBeNull();
+  });
+
+  it('预览圆角必须是 px 字面量（sx 数字会被当作 shape.borderRadius 的乘数：6×6=36px）', () => {
+    // jsdom 拿不到 emotion 生成样式的计算值，退一步做源码断言：
+    // 不允许 theme.shape.borderRadius 写法，必须是 RADIUS.base 的 px 字符串
+    expect(settingsPageSource).not.toContain('theme.shape.borderRadius');
+    expect(settingsPageSource).toContain('${RADIUS.base}px');
+  });
+
+  it('写入抛 QuotaExceededError（超配额）：提示「图片太大，换一张小一点的」', async () => {
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('quota exceeded', 'QuotaExceededError');
+    });
+    renderSettings();
+    await screen.findByRole('button', { name: '选择图片' });
+
+    pickImage();
+    expect(await screen.findByText('图片太大，换一张小一点的')).toBeTruthy();
+  });
+
+  it('写入抛普通 Error（隐私模式等存储不可用）：提示「无法保存壁纸，浏览器存储不可用」，不误导成换小图', async () => {
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('storage denied');
+    });
+    renderSettings();
+    await screen.findByRole('button', { name: '选择图片' });
+
+    pickImage();
+    expect(await screen.findByText('无法保存壁纸，浏览器存储不可用')).toBeTruthy();
+    expect(screen.queryByText(/图片太大/)).toBeNull();
   });
 });

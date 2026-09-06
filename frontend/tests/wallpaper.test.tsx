@@ -104,3 +104,31 @@ describe('compressWallpaper 错误路径', () => {
     expect(decode).toHaveBeenCalledWith(file);
   });
 });
+
+describe('脏值形状校验（url() 逃逸防御）', () => {
+  // 值的实际来源是 localStorage，不受控（用户手改 / 同源脚本可写）；含 " 与 ) 的假值
+  // 能逃出 url("...")。校验挡掉后按没有壁纸处理，不抛错。
+  const DIRTY = 'data:image/jpeg;base64,AA")AA';
+
+  it('脏值不当作壁纸：readWallpaper 返回 null；模块兜底与 applyToRoot 都置 none；正常值照常写出', async () => {
+    // 直接往 localStorage 塞脏值，模拟存储被外部写入
+    localStorage.setItem(WALLPAPER_STORAGE_KEY, DIRTY);
+    expect(readWallpaper()).toBeNull();
+
+    // 模块加载兜底：重放「import 时 localStorage 已是脏值」——顶层
+    // readWallpaper → applyToRoot 不把脏值写到 <html>（动态重载出新模块实例验证）
+    vi.resetModules();
+    const mod = await import('../src/lib/wallpaper');
+    expect(mod.readWallpaper()).toBeNull();
+    expect(document.documentElement.style.getPropertyValue(WALLPAPER_VAR)).toBe('none');
+
+    // setWallpaper 走同一 applyToRoot：脏值按没有壁纸处理（置 none），不抛错
+    setWallpaper(DIRTY);
+    expect(document.documentElement.style.getPropertyValue(WALLPAPER_VAR)).toBe('none');
+
+    // 正常的 data:image/jpeg;base64 仍然照常写出 url("...")
+    setWallpaper(FAKE);
+    expect(localStorage.getItem(WALLPAPER_STORAGE_KEY)).toBe(FAKE);
+    expect(document.documentElement.style.getPropertyValue(WALLPAPER_VAR)).toBe(`url("${FAKE}")`);
+  });
+});

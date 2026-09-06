@@ -20,6 +20,12 @@ export const WALLPAPER_STORAGE_KEY = 'rakkotasks.wallpaper';
 const MAX_EDGE = 1920;
 const JPEG_QUALITY = 0.75;
 
+/** data URL 形状校验。值的实际来源是 localStorage，不受控——用户能手改、同源的任何
+ *  脚本也能写；含 " 或 ) 的值能逃出 url("...") 往 <html> 的 style 里注入别的 CSS 声明
+ *  （危害有限，CSS 注入不执行 JS，但本项目对注入面敏感）。只放行 data:image 的
+ *  base64 值；不匹配一律当作没有壁纸。 */
+const SAFE_DATA_URL = /^data:image\/[a-z+.-]+;base64,[A-Za-z0-9+/=]+$/;
+
 // —— 模块级状态 + 订阅（模式同 src/lib/list-cache.ts）——
 let current: string | null = null;
 const listeners = new Set<() => void>();
@@ -31,16 +37,19 @@ function subscribe(listener: () => void): () => void {
   return () => listeners.delete(listener);
 }
 
-/** 把壁纸图源同步到 <html> 的 CSS 变量（null 表示清除，变量置 'none'） */
+/** 把壁纸图源同步到 <html> 的 CSS 变量：形状不符的脏值按没有壁纸处理（置 'none'），
+ *  不抛错——localStorage 里是脏数据不该让整个应用崩掉 */
 function applyToRoot(dataUrl: string | null): void {
   const root = document.documentElement;
-  root.style.setProperty(WALLPAPER_VAR, dataUrl === null ? 'none' : `url("${dataUrl}")`);
+  const safe = dataUrl !== null && SAFE_DATA_URL.test(dataUrl);
+  root.style.setProperty(WALLPAPER_VAR, safe ? `url("${dataUrl}")` : 'none');
 }
 
-/** 同步读 localStorage 里的壁纸 data URL；读失败（隐私模式等）返回 null */
+/** 同步读 localStorage 里的壁纸 data URL；读失败（隐私模式等）或形状不符返回 null */
 export function readWallpaper(): string | null {
   try {
-    return localStorage.getItem(WALLPAPER_STORAGE_KEY);
+    const raw = localStorage.getItem(WALLPAPER_STORAGE_KEY);
+    return raw !== null && SAFE_DATA_URL.test(raw) ? raw : null;
   } catch {
     return null;
   }
@@ -48,17 +57,13 @@ export function readWallpaper(): string | null {
 
 /**
  * 写壁纸：dataUrl 为 null 表示移除。先持久化，成功后才改内存态与 <html> 变量并通知
- * 订阅者——localStorage 写入超配额会抛 QuotaExceededError（隐私模式连读都抛），必须
- * try/catch 并原样重抛，让调用方提示用户。这与 theme-mode 的「写失败静默降级」不同：
- * 壁纸写不进去等于功能没生效，静默掉用户永远不知道。
+ * 订阅者。这里刻意不接异常：localStorage 写入超配额会抛 QuotaExceededError（隐私模式
+ * 连 setItem 都直接抛），让它自然冒泡到调用方去提示用户——这与 theme-mode 的
+ * 「写失败静默降级」不同：壁纸写不进去等于功能没生效，静默掉用户永远不知道。
  */
 export function setWallpaper(dataUrl: string | null): void {
-  try {
-    if (dataUrl === null) localStorage.removeItem(WALLPAPER_STORAGE_KEY);
-    else localStorage.setItem(WALLPAPER_STORAGE_KEY, dataUrl);
-  } catch (error) {
-    throw error;
-  }
+  if (dataUrl === null) localStorage.removeItem(WALLPAPER_STORAGE_KEY);
+  else localStorage.setItem(WALLPAPER_STORAGE_KEY, dataUrl);
   current = dataUrl;
   applyToRoot(dataUrl);
   emit();
