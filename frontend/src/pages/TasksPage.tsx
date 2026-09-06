@@ -30,6 +30,7 @@ import { createItem, fetchItems, patchItem } from '../lib/api';
 import { formatDueDate, groupItems, isNewToday, isOverdue } from '../lib/grouping';
 import { moveItem, openKey, removeItem, upsertOpenItem, useCachedList } from '../lib/list-cache';
 import { LEAVE_DURATION, rowSx, useMorphDialog, usePrefersReducedMotion } from '../lib/motion';
+import { cardRowSx } from '../lib/surface';
 import { runViewTransition, shellAttr, VT_NAMES } from '../lib/view-transition';
 import type { Category, Item, ItemFields } from '../types';
 import CategoryChips from '../components/CategoryChips';
@@ -79,7 +80,9 @@ function GroupSection({
               viewTransitionName: sourceName(item.id),
             }}
           >
-            <ListItemButton onClick={() => onOpen(item)}>
+            {/* 卡片视觉在 ListItemButton 上（纸底 + 圆角 + 边框），行间空隙由
+                ListItem 的 rowSx padding-bottom 提供；容器变换名字留在 ListItem */}
+            <ListItemButton sx={cardRowSx} onClick={() => onOpen(item)}>
               <Box sx={{ width: 12, display: 'flex', justifyContent: 'center', flexShrink: 0 }}>
                 {isNewToday(item, today) && (
                   <Box

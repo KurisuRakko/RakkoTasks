@@ -29,6 +29,7 @@ import type { SearchCitation, SearchResponse } from '../types';
 import EmailViewer from '../components/EmailViewer';
 import SafeMarkdown from '../components/SafeMarkdown';
 import { useMorphDialog } from '../lib/motion';
+import { cardRowSx, ROW_GAP_PX } from '../lib/surface';
 import { VT_NAMES } from '../lib/view-transition';
 import { dialogTransitionProps } from '../components/DialogTransition';
 
@@ -106,9 +107,20 @@ export default function SearchPage() {
                   {result.citations.map((c) => (
                     <ListItemButton
                       key={c.email_id}
-                      divider
                       onClick={() => open(c)}
-                      sx={{ viewTransitionName: sourceName(c.email_id) }}
+                      sx={[
+                        // 卡片纸底（圆角 / 边框 / 半透明）由 cardRowSx 提供。
+                        // 行间距用 mb 而非 padding：引用行没有 ListItem 包裹、也没有
+                        // rowSx 的折叠动画，不存在 overflow:hidden 裁剪 margin 的问题，
+                        // 间距放行外即可。Tasks / Done 两页的间距必须做在 ListItem 的
+                        // padding 上并随离场归零——margin 在行折叠后不被裁剪会留空隙，
+                        // 见 motion.rowSx 注释。
+                        cardRowSx,
+                        {
+                          mb: `${ROW_GAP_PX}px`,
+                          viewTransitionName: sourceName(c.email_id),
+                        },
+                      ]}
                     >
                       <ListItemText
                         primary={c.subject}
