@@ -64,7 +64,21 @@ function GroupSection({
     <List
       subheader={
         <ListSubheader component="div" sx={{ bgcolor: 'transparent' }}>
-          {title}
+          {/* 分组标题的雾挂在内层包裹元素上，不能直接挂 ListSubheader 本身：haze 配方
+              会给宿主设 position: relative（与 ListSubheader 默认 position: sticky 同为
+              (0,1,0) 特异性，镜像 CSS 后插入会赢），挂外层会把 sticky 顶成 relative，
+              滚动时标题不再吸顶。每个分组标题各一团雾是可以的——组与组之间隔着整组
+              卡片，距离远超 bleed（14px），雾不会互相重叠；上游禁止的是给相邻的每一行
+              各挂一团。haze 配方会把文字色设成 n9（color: var(--color-neutral-9)），比
+              原 ListSubheader 的 secondary（n7）更深：压在图像上的文字需要更高对比度，
+              这是刻意的。 */}
+          <Box
+            component="span"
+            data-glass="haze"
+            sx={{ display: 'inline-block', '--glass-haze-bleed': '14px' }}
+          >
+            {title}
+          </Box>
         </ListSubheader>
       }
       disablePadding
