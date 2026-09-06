@@ -378,4 +378,34 @@ describe('TasksPage haze 底衬（分组标题与 chips 行）', () => {
     const groupCount = container.querySelectorAll('.MuiListSubheader-root').length;
     expect(container.querySelectorAll('[data-glass="haze"]')).toHaveLength(groupCount + 1);
   });
+
+  it('页面上每个 data-glass="haze" 元素都带 data-haze="veil"（一页一种形态，不混 cloud）', async () => {
+    const fetchMock = vi.fn(async () => json({ items: ITEMS }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { container } = render(<TasksPage />);
+    await screen.findByText('重要任务');
+
+    // 分组标题雾 + chips 行雾各一团（前述用例已断言数量）
+    const hazes = Array.from(container.querySelectorAll('[data-glass="haze"]'));
+    expect(hazes.length).toBeGreaterThan(0);
+    for (const haze of hazes) {
+      expect(haze.getAttribute('data-haze')).toBe('veil');
+    }
+  });
+
+  it('chips 行雾盒收缩到内容宽度：sx 含 inline-block，bleed 为 10px', () => {
+    // jsdom 对 emotion 编译出的类名给不出可靠的 computed display，退回源码断言：
+    // 定位 CategoryChips 里 data-glass="haze" 所在的开标签，它必须同时带 inline-block
+    // 与 10px bleed——少了任何一项（有人改回撑满整列的块级、或加回 14px 溢出）此断言先翻。
+    const hazeTagStart = chipsSource.indexOf('<Box data-glass="haze"');
+    expect(hazeTagStart).toBeGreaterThan(-1);
+    const hazeTagEnd = chipsSource.indexOf('>', hazeTagStart);
+    expect(hazeTagEnd).toBeGreaterThan(-1);
+    const hazeTag = chipsSource.slice(hazeTagStart, hazeTagEnd);
+    expect(hazeTag).toContain('data-haze="veil"');
+    // 源码里 sx 的属性值带引号（display: 'inline-block'），按源码原文断言
+    expect(hazeTag).toContain("display: 'inline-block'");
+    expect(hazeTag).toContain("'--glass-haze-bleed': '10px'");
+  });
 });

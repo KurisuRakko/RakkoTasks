@@ -71,10 +71,13 @@ function GroupSection({
               卡片，距离远超 bleed（14px），雾不会互相重叠；上游禁止的是给相邻的每一行
               各挂一团。haze 配方会把文字色设成 n9（color: var(--color-neutral-9)），比
               原 ListSubheader 的 secondary（n7）更深：压在图像上的文字需要更高对比度，
-              这是刻意的。 */}
+              这是刻意的。形态取 veil（软圆角矩形），不用配方默认的 cloud——cloud 的
+              九团椭圆按盒子百分比布局，在小标签与宽扁盒子上会被拉变形；上游要求一页
+              只用一种形态，故与 chips 行一致。 */}
           <Box
             component="span"
             data-glass="haze"
+            data-haze="veil"
             sx={{ display: 'inline-block', '--glass-haze-bleed': '14px' }}
           >
             {title}
