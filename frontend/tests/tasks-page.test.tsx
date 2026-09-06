@@ -2,10 +2,13 @@
 // 另覆盖容器变换与 portal 相关行为：悬浮按钮挂在 body 下（不被路由转场盒子的
 // transform 困住）、打 data-vt-shell 标记、勾选推进 LEAVE_DURATION 后发 PATCH done
 // 且条目从列表消失；切回页面命中模块级缓存（list-cache）时不再闪加载圈。
+// haze 底衬覆盖：分组标题的雾挂 ListSubheader 内层（外层 sticky 不动、无 data-glass）、
+// chips 行的雾在滚动容器外层（滚动留在内层 Stack）、全页 haze 数 = 分组数 + 1。
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import TasksPage from '../src/pages/TasksPage';
+import chipsSource from '../src/components/CategoryChips.tsx?raw';
 import { resetLists } from '../src/lib/list-cache';
 import { LEAVE_DURATION } from '../src/lib/motion';
 import { cardRowSx } from '../src/lib/surface';
@@ -293,5 +296,86 @@ describe('列表行玻璃视觉（cardRowSx）', () => {
     // color-mix 的计算结果（那是浏览器渲染层的事），这里只断言「sx 确实应用到了行」；
     // 材质本身由 data-glass="panel" 从 rakko-glass.css 取。
     expect(rowBtn.className).toMatch(/(?:^|\s)css-[A-Za-z0-9_-]+/);
+  });
+});
+
+describe('TasksPage haze 底衬（分组标题与 chips 行）', () => {
+  it('分组标题文字被 data-glass="haze" 包着，且 haze 在 ListSubheader 内层而非其本身', async () => {
+    const fetchMock = vi.fn(async () => json({ items: ITEMS }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { container } = render(<TasksPage />);
+    await screen.findByText('重要任务');
+
+    // ITEMS 全部无截止日期：high 进「重要」组，其余进「无期限」组；今天/本周是空组不渲染
+    const subheaders = Array.from(container.querySelectorAll('.MuiListSubheader-root'));
+    expect(subheaders.map((s) => s.textContent).sort()).toEqual(['无期限', '重要']);
+    expect(subheaders).toHaveLength(2);
+
+    for (const sh of subheaders) {
+      // 坑一：ListSubheader 默认 position: sticky，haze 配方的 position: relative 会把
+      // 吸顶顶掉，所以 haze 挂内层——subheader 自身不允许出现 data-glass
+      expect(sh.getAttribute('data-glass')).toBeNull();
+      // 内层 haze 元素存在且包住了整段标题文字
+      const haze = sh.querySelector('[data-glass="haze"]');
+      expect(haze).not.toBeNull();
+      expect(haze!.textContent).toBe(sh.textContent);
+    }
+
+    // 每个渲染出的分组标题都恰有一团雾（文字节点直接落在 haze 元素里）
+    for (const title of ['重要', '无期限']) {
+      const wrapped = screen
+        .getAllByText(title)
+        .filter((el) => el.closest('[data-glass="haze"]') !== null);
+      expect(wrapped).toHaveLength(1);
+    }
+  });
+
+  it('分类 chips 行的雾在滚动容器外层：haze 元素本身不滚动，直接子元素是滚动 Stack', async () => {
+    const fetchMock = vi.fn(async () => json({ items: ITEMS }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<TasksPage />);
+    await screen.findByText('重要任务');
+
+    // 从 chips 行的文字往上层找它所在的唯一 haze（分类 chips 行在加载条件之外，同步渲染）
+    const haze = screen.getByText('全部').closest('[data-glass="haze"]') as HTMLElement | null;
+    expect(haze).not.toBeNull();
+
+    // 坑二：haze 元素自己不是滚动容器（Stack 的 overflowX: auto 会把雾的负 inset 溢出
+    // 裁成硬边方块），雾元素身上没有 MuiStack 类
+    expect(haze!.classList.contains('MuiStack-root')).toBe(false);
+    // 滚动留在 haze 的直接子元素（内层 Stack）上
+    const scroller = haze!.firstElementChild;
+    expect(scroller).not.toBeNull();
+    expect(scroller!.classList.contains('MuiStack-root')).toBe(true);
+
+    // jsdom 拿不到可靠的 computed overflow，改从源码断言坑二的布局：haze 元素的开标签
+    // （含其 sx）里不许有 overflowX，滚动必须落在它后面紧跟的 Stack 开标签上。
+    // 若有人把滚动挪回外层雾盒（负 inset 溢出会被裁成硬边方块）或把 data-glass 挪进
+    // Stack，此断言会先翻。
+    const hazeTagStart = chipsSource.indexOf('<Box data-glass="haze"');
+    expect(hazeTagStart).toBeGreaterThan(-1);
+    const hazeTagEnd = chipsSource.indexOf('>', hazeTagStart);
+    const hazeTag = chipsSource.slice(hazeTagStart, hazeTagEnd);
+    expect(hazeTag).not.toContain('overflowX');
+
+    const stackStart = chipsSource.indexOf('<Stack', hazeTagEnd);
+    expect(stackStart).toBeGreaterThan(-1);
+    const stackTag = chipsSource.slice(stackStart, chipsSource.indexOf('>', stackStart));
+    expect(stackTag).toContain('overflowX');
+  });
+
+  it('全页 data-glass="haze" 数量 = 分组数 + 1（chips 行），不多不少', async () => {
+    const fetchMock = vi.fn(async () => json({ items: ITEMS }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { container } = render(<TasksPage />);
+    await screen.findByText('重要任务');
+
+    // 每个分组标题一团雾（它们之间隔着整组卡片，距离远超 bleed，不重叠），
+    // 外加 chips 行一团
+    const groupCount = container.querySelectorAll('.MuiListSubheader-root').length;
+    expect(container.querySelectorAll('[data-glass="haze"]')).toHaveLength(groupCount + 1);
   });
 });
