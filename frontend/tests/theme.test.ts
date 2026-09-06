@@ -11,6 +11,8 @@ import { ThemeProvider } from '@mui/material/styles';
 import { ThemeModeProvider } from '../src/lib/theme-mode';
 import {
   ACCENT,
+  GLASS,
+  GLASS_SHADOW_WHISPER,
   MOTION,
   NEUTRAL_DARK,
   NEUTRAL_LIGHT,
@@ -107,7 +109,9 @@ describe('Rakko Design token 主题', () => {
     expect(typeof overrides).toBe('function');
     const styles = (overrides as (t: typeof theme) => Record<string, unknown>)(theme);
     expect(styles.html).toEqual({ fontSize: 14 });
-    expect(styles.body).toEqual({ letterSpacing: '0.01em' });
+    // 3b 起 body 除 letterSpacing 还带壁纸/驯化层背景（见下文玻璃用例），这里只验证
+    // letterSpacing 保留，背景字段的完整断言在「body 带驯化层与壁纸背景」用例里
+    expect(styles.body).toMatchObject({ letterSpacing: '0.01em' });
     expect(Object.keys(styles).some((k) => k.startsWith('::view-transition'))).toBe(true);
   });
 
@@ -145,5 +149,92 @@ describe('Rakko Design token 主题', () => {
     expect(dark.palette.info.main).not.toBe(light.palette.info.main);
     expect(dark.palette.success.main).not.toBe(light.palette.success.main);
     expect(dark.palette.warning.main).not.toBe(light.palette.warning.main);
+  });
+});
+
+/** MuiCssBaseline styleOverrides 函数跑出全局样式表（:root / body / 伪元素选择器） */
+function globalStyles(mode: 'light' | 'dark') {
+  const theme = themeOf(mode);
+  const cssBaseline = theme.components?.MuiCssBaseline;
+  expect(cssBaseline).toBeDefined();
+  const overrides = cssBaseline!.styleOverrides;
+  expect(typeof overrides).toBe('function');
+  return (overrides as (t: typeof theme) => Record<string, unknown>)(theme);
+}
+
+/** :root 下下发的 CSS 变量表（键即变量名） */
+function rootVars(mode: 'light' | 'dark'): Record<string, string> {
+  const styles = globalStyles(mode);
+  const root = styles[':root'];
+  expect(root, "CssBaseline 应下发 ':root' 规则块").toBeDefined();
+  return root as Record<string, string>;
+}
+
+describe('玻璃材质变量下发与让位', () => {
+  it('5a. :root 的 --glass-* 值与 GLASS 常量逐项一致（浅/深两套）', () => {
+    const expected: Record<string, string> = {
+      '--glass-blur': GLASS.blur,
+      '--glass-saturate': GLASS.saturate,
+      '--glass-surface-opacity': GLASS.surfaceOpacity,
+      '--glass-panel-opacity': GLASS.panelOpacity,
+      '--glass-scrim-opacity': GLASS.scrimOpacity,
+      '--glass-highlight': GLASS.highlight,
+      '--glass-haze-opacity': GLASS.hazeOpacity,
+      '--glass-haze-bleed': GLASS.hazeBleed,
+    };
+    for (const mode of ['light', 'dark'] as const) {
+      const vars = rootVars(mode);
+      for (const [cssVar, tokenValue] of Object.entries(expected)) {
+        expect(vars[cssVar], `${mode} ${cssVar}`).toBe(tokenValue);
+      }
+    }
+  });
+
+  it('5b. --shadow-whisper 浅色=GLASS_SHADOW_WHISPER.light，深色=.dark', () => {
+    expect(rootVars('light')['--shadow-whisper']).toBe(GLASS_SHADOW_WHISPER.light);
+    expect(rootVars('dark')['--shadow-whisper']).toBe(GLASS_SHADOW_WHISPER.dark);
+  });
+
+  it('5c. --color-paper 等于该主题 palette.background.default', () => {
+    for (const mode of ['light', 'dark'] as const) {
+      const theme = themeOf(mode);
+      expect(rootVars(mode)['--color-paper']).toBe(theme.palette.background.default);
+      expect(rootVars(mode)['--color-paper']).toBe(
+        mode === 'light' ? NEUTRAL_LIGHT[0] : NEUTRAL_DARK[0],
+      );
+    }
+  });
+
+  it('5d. body 背景同时含壁纸 var(--rtk-wallpaper 与驯化层 color-mix', () => {
+    for (const mode of ['light', 'dark'] as const) {
+      const styles = globalStyles(mode);
+      const body = styles.body as Record<string, unknown>;
+      const bg = body.backgroundImage;
+      expect(typeof bg).toBe('string');
+      expect(bg as string).toContain('var(--rtk-wallpaper');
+      expect(bg as string).toContain('color-mix');
+    }
+  });
+
+  it('5e. AppBar 顶层无 backgroundColor，纸色只落在 &:not([data-glass])', () => {
+    const theme = themeOf('light');
+    const appBar = theme.components?.MuiAppBar;
+    expect(appBar).toBeDefined();
+    const rootOverride = appBar!.styleOverrides?.root as unknown as (p: {
+      theme: typeof theme;
+    }) => Record<string, unknown>;
+    const rootStyles = rootOverride({ theme });
+    expect(rootStyles.backgroundColor).toBeUndefined();
+    expect(rootStyles.borderBottom).toBeUndefined();
+    const plain = rootStyles['&:not([data-glass])'] as Record<string, unknown>;
+    expect(plain.backgroundColor).toBe(theme.palette.background.paper);
+    expect(plain.borderBottom).toBe(`1px solid ${theme.palette.divider}`);
+  });
+
+  it('5f. MuiBackdrop 压暗层引用 --glass-scrim-opacity', () => {
+    const theme = themeOf('light');
+    const backdrop = theme.components?.MuiBackdrop;
+    expect(backdrop).toBeDefined();
+    expect(JSON.stringify(backdrop!.styleOverrides)).toContain('var(--glass-scrim-opacity)');
   });
 });
