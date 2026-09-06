@@ -2,6 +2,9 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';
 import { setupPwaUpdate } from './lib/pwa-update';
+// 玻璃材质样式表：全项目唯一带 backdrop-filter 的样式表，必须在应用入口无条件加载，
+// 材质要从首帧就在（它的 --glass-* 变量由 theme.ts 经 CssBaseline 下发到 :root）。
+import './rakko-glass.css';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

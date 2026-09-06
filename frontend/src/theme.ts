@@ -12,6 +12,8 @@ import {
   ACCENT,
   BORDER,
   FONT_SANS,
+  GLASS,
+  GLASS_SHADOW_WHISPER,
   MOTION,
   NEUTRAL_DARK,
   NEUTRAL_LIGHT,
@@ -21,6 +23,7 @@ import {
   TYPE_SCALE,
   WHISPER_SHADOW,
 } from './rakko-tokens';
+import { WALLPAPER_TAME_OPACITY, WALLPAPER_VAR } from './lib/glass';
 
 type Mode = 'light' | 'dark';
 
@@ -34,6 +37,9 @@ function buildThemeOptions(mode: Mode): ThemeOptions {
   const n = mode === 'light' ? NEUTRAL_LIGHT : NEUTRAL_DARK;
   const [n1, n2, , , n5, , n7, , n9, n10] = n;
   const accent = mode === 'light' ? ACCENT.light : ACCENT.dark;
+  // 驯化层：壁纸之上、玻璃之下的一层纸色叠加，把任意用户壁纸压进可控亮度区间
+  // （玻璃档位按「身后是纸色系页面」调校，见 lib/glass.ts 的 WALLPAPER_TAME_OPACITY）
+  const tame = `color-mix(in srgb, ${n1} ${WALLPAPER_TAME_OPACITY}, transparent)`;
   // 语义色深色各提亮约 15%（tokens 约定），浅色直接用源色值
   const semantic =
     mode === 'dark'
@@ -122,20 +128,69 @@ function buildThemeOptions(mode: Mode): ThemeOptions {
         // 也从这里注入：styleOverrides 的返回值会整段作为全局样式下发
         styleOverrides: (themeParam) => ({
           html: { fontSize: 14 },
-          body: { letterSpacing: '0.01em' },
+          // rakko-glass.css 消费的全部 CSS 变量由主题层在这里下发到 :root——它自己不带任何
+          // 默认值，是这套玻璃材质唯一的数据源；值来自 rakko-tokens 的镜像常量（GLASS /
+          // GLASS_SHADOW_WHISPER），深浅主题各自求值。
+          // --shadow-whisper 深色加深是契约要求：深底需要更强的阴影托起浮层。
+          ':root': {
+            '--color-paper': n1, // 页面纸色 = palette.background.default
+            '--color-border': BORDER[mode],
+            '--color-neutral-1': n[0],
+            '--color-neutral-9': n[8],
+            '--color-neutral-10': n[9],
+            '--glass-blur': GLASS.blur,
+            '--glass-saturate': GLASS.saturate,
+            '--glass-surface-opacity': GLASS.surfaceOpacity,
+            '--glass-panel-opacity': GLASS.panelOpacity,
+            '--glass-scrim-opacity': GLASS.scrimOpacity,
+            '--glass-highlight': GLASS.highlight,
+            '--glass-haze-opacity': GLASS.hazeOpacity,
+            '--glass-haze-bleed': GLASS.hazeBleed,
+            '--shadow-whisper': GLASS_SHADOW_WHISPER[mode],
+          },
+          // body 两层背景：第一层是驯化层（把用户壁纸压进可控亮度区间，理由见 lib/glass 注释），
+          // 第二层是壁纸本身，由 lib/wallpaper 写到 <html> 上；无壁纸时该变量为 none，
+          // 退回纯纸色背景。backgroundAttachment: fixed 让壁纸不随滚动移动。
+          body: {
+            letterSpacing: '0.01em',
+            backgroundImage: `linear-gradient(${tame}, ${tame}), var(${WALLPAPER_VAR}, none)`,
+            backgroundSize: 'cover',
+            backgroundPosition: 'center',
+            backgroundAttachment: 'fixed',
+            backgroundRepeat: 'no-repeat',
+          },
           ...viewTransitionStyles(themeParam),
         }),
       },
-      // AppBar 不再是 accent 大色块（accent 覆盖面 ≤5% 纪律）：paper 背景 + 下边框分层
+      // AppBar 不再是 accent 大色块（accent 覆盖面 ≤5% 纪律）：paper 背景 + 下边框分层。
+      // 挂了 data-glass 的 AppBar（壳层顶栏）由 rakko-glass.css 的 chrome 配方接管，
+      // 主题层一个 background / border 声明都不许下发——不能写成「data-glass 时设
+      // transparent」：那是 (0,2,0) 的声明，会盖掉玻璃配方的 background，只剩模糊没有纸底。
+      // 让位的唯一正确形式就是「什么都不写」。对话框内部的 AppBar（position="static"，
+      // 不挂 data-glass）照旧走纸面色 + 下边框。
       MuiAppBar: {
         defaultProps: { color: 'default' },
         styleOverrides: {
           root: ({ theme }) => ({
-            backgroundColor: theme.palette.background.paper,
             color: theme.palette.text.primary,
-            borderBottom: `1px solid ${theme.palette.divider}`,
             boxShadow: 'none',
+            '&:not([data-glass])': {
+              backgroundColor: theme.palette.background.paper,
+              borderBottom: `1px solid ${theme.palette.divider}`,
+            },
           }),
+        },
+      },
+      // 遮罩只压暗不模糊：全屏 backdrop-filter 要每帧读回整个视口，是整套材质里最贵的
+      // 东西。用纯黑而不是 n-10，因为 n-10 在深色主题会翻成近白，遮罩会变成漂白层。
+      // :not(.MuiBackdrop-invisible) 是不把 MUI 的隐形遮罩变体染黑。
+      MuiBackdrop: {
+        styleOverrides: {
+          root: {
+            '&:not(.MuiBackdrop-invisible)': {
+              backgroundColor: 'rgb(0 0 0 / var(--glass-scrim-opacity))',
+            },
+          },
         },
       },
       MuiPaper: {
@@ -221,12 +276,11 @@ function buildThemeOptions(mode: Mode): ThemeOptions {
           },
         },
       },
+      // 底栏底色与分割线改由 AppShell 的外层 Paper 提供（它叠在内容玻璃板之上），
+      // 内层保持透明，否则会挡住外层的半透明纸底。
       MuiBottomNavigation: {
         styleOverrides: {
-          root: ({ theme }) => ({
-            backgroundColor: theme.palette.background.paper,
-            borderTop: `1px solid ${theme.palette.divider}`,
-          }),
+          root: { backgroundColor: 'transparent' },
         },
       },
       MuiDrawer: {
