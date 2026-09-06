@@ -27,8 +27,6 @@ export const VT_NAMES = {
   appBar: 'rtk-app-bar',
   bottomNav: 'rtk-bottom-nav',
   navDrawer: 'rtk-nav-drawer',
-  /** 内容玻璃板：fixed 定位的壳层元素，换页时必须与其它壳层一样保持静止 */
-  contentGlass: 'rtk-content-glass',
 } as const;
 
 /**

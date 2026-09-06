@@ -18,6 +18,10 @@ import { VT_SHELL_ATTR, VT_NAMES } from '../src/lib/view-transition';
 import { setWallpaper } from '../src/lib/wallpaper';
 import type { Item } from '../src/types';
 
+/** 已删除的内容玻璃底板的旧共享元素名。VT_NAMES 里对应项已随底板一并移除，
+ * 这里保留字面量只为防回归：底板若被重新引入，下面两条断言会红。 */
+const REMOVED_CONTENT_GLASS_NAME = 'rtk-content-glass';
+
 /** setup.ts 装好的永不匹配 stub；桌面用例覆盖后由 afterEach 还原 */
 const neverMatch = window.matchMedia;
 
@@ -181,12 +185,12 @@ describe('AppShell 壳层与列表行玻璃', () => {
     expect(bar.hasAttribute('data-reveal')).toBe(false);
   });
 
-  it('没有壁纸时没有内容玻璃底板（contentGlass 标记不存在）；壳层玻璃不依赖壁纸开关', async () => {
+  it('没有壁纸时没有内容玻璃底板（玻璃板旧共享名标记不存在）；壳层玻璃不依赖壁纸开关', async () => {
     renderShell();
     await screen.findByText('没有待办任务');
 
     // 玻璃板曾只在设壁纸时渲染：现在它整体消失，这个标记在任意壁纸状态下都不该出现
-    expect(document.querySelector(`[${VT_SHELL_ATTR}="${VT_NAMES.contentGlass}"]`)).toBeNull();
+    expect(document.querySelector(`[${VT_SHELL_ATTR}="${REMOVED_CONTENT_GLASS_NAME}"]`)).toBeNull();
     // 壳层 chrome 与壁纸无关：空列表时 panel 行数为 0，chrome 仍是三件套
     expect(document.querySelectorAll('[data-glass="chrome"]')).toHaveLength(3);
     expect(document.querySelectorAll('[data-glass="panel"]')).toHaveLength(0);
@@ -197,11 +201,11 @@ describe('AppShell 壳层与列表行玻璃', () => {
     renderShell();
     await screen.findByText('没有待办任务');
 
-    // 旧内容玻璃板的三样特征——contentGlass 转场标记 / aria-hidden / fixed 底板——
+    // 旧内容玻璃板的三样特征——共享元素名转场标记 / aria-hidden / fixed 底板——
     // 一样都不能残留；fixed 定位的底栏 Paper 是壳层 chrome，不是内容底板
-    expect(document.querySelector(`[${VT_SHELL_ATTR}="${VT_NAMES.contentGlass}"]`)).toBeNull();
+    expect(document.querySelector(`[${VT_SHELL_ATTR}="${REMOVED_CONTENT_GLASS_NAME}"]`)).toBeNull();
     for (const el of Array.from(document.querySelectorAll('[data-glass]'))) {
-      expect(el.getAttribute(VT_SHELL_ATTR)).not.toBe(VT_NAMES.contentGlass);
+      expect(el.getAttribute(VT_SHELL_ATTR)).not.toBe(REMOVED_CONTENT_GLASS_NAME);
       expect(el.getAttribute('aria-hidden')).toBeNull();
     }
   });
