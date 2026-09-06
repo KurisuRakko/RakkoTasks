@@ -63,9 +63,10 @@ export function rowSx(
 ): SxProps<Theme> {
   const box = {
     display: 'grid',
-    // 卡片行间距做在 ListItem 的 padding-bottom 上，而不是卡片的 margin 上：
-    // 离场时行高靠 grid-template-rows 折叠、子元素被 overflow:hidden 裁到 0，
-    // 但 margin 不受 overflow 裁剪——若间距是 margin，行折叠完会留下一条空隙。
+    // 行间距做在 ListItem 的 padding-bottom 上，而不是玻璃行元素（ListItemButton，
+    // data-glass="panel"，材质来自 rakko-glass.css）的 margin 上：离场时行高靠
+    // grid-template-rows 折叠、子元素被 overflow:hidden 裁到 0，但 margin 不受
+    // overflow 裁剪——若间距是 margin，行折叠完会留下一条空隙。
     // padding 属于 ListItem 自身，leaving 时归零、行才真正收干净（间距见 surface）。
     paddingBottom: leaving ? 0 : `${ROW_GAP_PX}px`,
     // MUI ListItem 根样式带 justify-content: flex-start，网格的隐式 auto 列会按

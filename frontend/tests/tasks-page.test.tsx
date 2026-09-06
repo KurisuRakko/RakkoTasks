@@ -5,11 +5,9 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { createTheme } from '@mui/material/styles';
 import TasksPage from '../src/pages/TasksPage';
 import { resetLists } from '../src/lib/list-cache';
 import { LEAVE_DURATION } from '../src/lib/motion';
-import { CARD_PAPER_OPACITY } from '../src/lib/glass';
 import { cardRowSx } from '../src/lib/surface';
 import { RADIUS } from '../src/rakko-tokens';
 import { VT_SHELL_ATTR, VT_NAMES } from '../src/lib/view-transition';
@@ -258,17 +256,29 @@ describe('TasksPage 容器变换与 portal', () => {
   });
 });
 
-describe('列表行卡片视觉（cardRowSx）', () => {
-  it('cardRowSx 纯函数：color-mix 纸底 + 1px 边框 + 卡片圆角', () => {
-    const theme = createTheme();
-    const sx = cardRowSx(theme) as unknown as Record<string, string>;
-    expect(sx.backgroundColor).toContain('color-mix');
-    expect(sx.backgroundColor).toContain(CARD_PAPER_OPACITY);
-    expect(sx.border).toBe(`1px solid ${theme.palette.divider}`);
+describe('列表行玻璃视觉（cardRowSx）', () => {
+  it('cardRowSx 不再下发纸底与边框（那些归 data-glass 配方），只返回圆角', () => {
+    const sx = cardRowSx() as unknown as Record<string, string>;
+    expect(sx.backgroundColor).toBeUndefined();
+    expect(sx.border).toBeUndefined();
     expect(sx.borderRadius).toBe(`${RADIUS.card}px`);
   });
 
-  it('列表行的 ListItemButton 挂上了 sx（emotion 局部类），纸底样式实际应用到行', async () => {
+  it('列表行的可点击元素（ListItemButton）带 data-glass="panel"（每行一块玻璃）', async () => {
+    const fetchMock = vi.fn(async () => json({ items: ITEMS }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<TasksPage />);
+    await screen.findByText('重要任务');
+
+    for (const title of ['重要任务', '普通任务', '低重要任务']) {
+      const rowBtn = screen.getByText(title).closest('.MuiListItemButton-root');
+      expect(rowBtn).not.toBeNull();
+      expect(rowBtn!.getAttribute('data-glass')).toBe('panel');
+    }
+  });
+
+  it('列表行的 ListItemButton 挂上了 sx（emotion 局部类），圆角样式实际应用到行', async () => {
     const fetchMock = vi.fn(async () => json({ items: ITEMS }));
     vi.stubGlobal('fetch', fetchMock);
 
@@ -279,9 +289,9 @@ describe('列表行卡片视觉（cardRowSx）', () => {
       '.MuiListItemButton-root',
     ) as HTMLElement;
     expect(rowBtn).not.toBeNull();
-    // sx 经 emotion 编译成 css-* 局部类挂在按钮上。jsdom 解析不了 color-mix 的
-    // 计算结果（那是浏览器渲染层的事），这里只断言「sx 确实应用到了行」；
-    // 纸底取值本身由上面的 cardRowSx 纯函数用例覆盖。
+    // sx 经 emotion 编译成 css-* 局部类挂在按钮上。jsdom 解析不了 glass 配方与
+    // color-mix 的计算结果（那是浏览器渲染层的事），这里只断言「sx 确实应用到了行」；
+    // 材质本身由 data-glass="panel" 从 rakko-glass.css 取。
     expect(rowBtn.className).toMatch(/(?:^|\s)css-[A-Za-z0-9_-]+/);
   });
 });
