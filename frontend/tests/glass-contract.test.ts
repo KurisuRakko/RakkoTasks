@@ -1,8 +1,9 @@
 // 玻璃材质契约守卫（纯文本断言，不渲染任何组件）：
 // rakko-glass.css 是上游 design-system/src/glass.css 的逐字镜像，全项目 backdrop-filter
 // 的唯一合法宿主。本文件守住：四档配方、两条退化路径、滚动渐显规则都在位；
-// 「backdrop-filter 只允许出现在一个样式表里」；以及「css 消费的每个变量都已在
-// theme.ts 下发」这两条接线契约。
+// 「-webkit- 前缀写法不得与无前缀 backdrop-filter 声明并列在同一规则块，前缀兜底
+// 独立在 @supports 块里」；「backdrop-filter 只允许出现在一个样式表里」；以及
+// 「css 消费的每个变量都已在 theme.ts 下发」这几条接线契约。
 //
 // 读文件机制：tests 无 node 类型声明（tsconfig types 只有 vite/client），不能静态
 // import 'node:fs'；同时 vitest 的 css:false 会把 .css 的任何静态导入（含 ?raw）剥成
@@ -85,6 +86,33 @@ describe('backdrop-filter 唯一宿主守卫', () => {
       .filter((path) => !path.endsWith('rakko-glass.css'))
       .filter((path) => declaration.test(fs.readFileSync(path, 'utf-8')));
     expect(offenders).toEqual([]);
+  });
+});
+
+describe('backdrop-filter 前缀写法契约', () => {
+  it('4f. 同一规则块内不得并列 backdrop-filter 与 -webkit-backdrop-filter 声明', async () => {
+    const glassCss = (await loadFs()).readFileSync('src/rakko-glass.css', 'utf-8');
+    // Lightning CSS（Tailwind v4 与 Vite 的 CSS 压缩器）会把同一规则块内的前缀/无前缀
+    // 声明当同一属性去重、只留后写的一条——并列写法会让生产构建的玻璃失去模糊。
+    // 判定：把 CSS 按 } 粗切成块，任何一块同时出现两种声明即违规。
+    // @supports 的条件表达式本身也带「backdrop-filter: blur(1px)」这类文本（退化判定
+    // 那条还同时含 -webkit- 形态），它们不是声明；先剥掉条件再切块，避免把合规的
+    // @supports 包裹块（内部只有前缀声明）误判。
+    const conditionless = glassCss.replace(/@supports\s+[^{]*\{/g, '@supports {');
+    const prefixed = /-webkit-backdrop-filter\s*:/i;
+    // 无前缀判定要求属性名前不是词字符/连字符：剥掉条件后，前缀声明内部的
+    // backdrop-filter 子串前面恰是连字符，不会被当成第二条无前缀声明
+    const unprefixed = /(?:^|[^-\w])backdrop-filter\s*:/i;
+    const offenders = conditionless
+      .split('}')
+      .filter((block) => prefixed.test(block) && unprefixed.test(block))
+      .map((block) => block.replace(/\s+/g, ' ').trim().slice(0, 120));
+    expect(offenders).toEqual([]);
+  });
+
+  it('4g. 老 WebKit 前缀兜底块有 @supports not (backdrop-filter: blur(1px)) 守卫', async () => {
+    const glassCss = (await loadFs()).readFileSync('src/rakko-glass.css', 'utf-8');
+    expect(glassCss).toContain('@supports not (backdrop-filter: blur(1px))');
   });
 });
 
