@@ -8,13 +8,14 @@
 // 断点用 useMediaQuery(theme.breakpoints.up('md'))，即查询 '(min-width:900px)'；
 // tests/setup.ts 的 matchMedia 永不匹配（模拟移动端），桌面用例在渲染前替换它。
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { createTheme, ThemeProvider } from '@mui/material/styles';
 import { MemoryRouter } from 'react-router-dom';
 import AppShell from '../src/components/AppShell';
 import { ThemeModeProvider } from '../src/lib/theme-mode';
 import { VT_SHELL_ATTR, VT_NAMES } from '../src/lib/view-transition';
+import { setWallpaper } from '../src/lib/wallpaper';
 
 /** setup.ts 装好的永不匹配 stub；桌面用例覆盖后由 afterEach 还原 */
 const neverMatch = window.matchMedia;
@@ -125,5 +126,65 @@ describe('AppShell 设置入口与壳层标记', () => {
     expect(await within(bar).findByText('设置')).toBeTruthy();
     // 设置页没有导航位，AppBar 按钮随之消失
     expect(within(bar).queryByRole('button', { name: '设置' })).toBeNull();
+  });
+});
+
+// 壁纸与玻璃预算：整页只允许两次 backdrop 读回（顶栏 chrome + 内容玻璃板 panel），
+// [data-glass] 只允许出现在这两处，且两者不得嵌套。玻璃板只在设了壁纸时渲染。
+describe('AppShell 壁纸与玻璃预算', () => {
+  beforeEach(() => {
+    // 模块级壁纸状态跨用例共享，逐个重置成「无壁纸」
+    setWallpaper(null);
+  });
+
+  afterEach(() => {
+    setWallpaper(null);
+  });
+
+  it('顶栏带 data-glass="chrome"，且不带 data-reveal（滚动渐显起点全透明会裸在壁纸上）', async () => {
+    renderShell();
+    await screen.findByText('没有待办任务');
+
+    const bar = appBar();
+    expect(bar.getAttribute('data-glass')).toBe('chrome');
+    expect(bar.hasAttribute('data-reveal')).toBe(false);
+  });
+
+  it('没有壁纸时文档里没有 [data-glass="panel"]，全文档只有顶栏一个 [data-glass]', async () => {
+    renderShell();
+    await screen.findByText('没有待办任务');
+
+    expect(document.querySelector('[data-glass="panel"]')).toBeNull();
+    expect(document.querySelectorAll('[data-glass]')).toHaveLength(1);
+  });
+
+  it('设了壁纸时出现且只出现一个内容玻璃板：data-vt-shell=contentGlass、aria-hidden', async () => {
+    setWallpaper('data:image/jpeg;base64,AAAA');
+    renderShell();
+    await screen.findByText('没有待办任务');
+
+    const panels = document.querySelectorAll('[data-glass="panel"]');
+    expect(panels).toHaveLength(1);
+    const panel = panels[0] as HTMLElement;
+    expect(panel.getAttribute(VT_SHELL_ATTR)).toBe(VT_NAMES.contentGlass);
+    expect(panel.getAttribute('aria-hidden')).toBe('true');
+  });
+
+  it('玻璃预算：全文档 [data-glass] 总数不超过 2（顶栏 chrome + 玻璃板 panel），没有第三个', async () => {
+    setWallpaper('data:image/jpeg;base64,AAAA');
+    renderShell();
+    await screen.findByText('没有待办任务');
+
+    expect(document.querySelectorAll('[data-glass]')).toHaveLength(2);
+  });
+
+  it('没有 [data-glass] 元素是另一个 [data-glass] 的后代（契约禁止嵌套玻璃）', async () => {
+    setWallpaper('data:image/jpeg;base64,AAAA');
+    renderShell();
+    await screen.findByText('没有待办任务');
+
+    for (const el of Array.from(document.querySelectorAll('[data-glass]'))) {
+      expect(el.parentElement?.closest('[data-glass]') ?? null).toBeNull();
+    }
   });
 });
