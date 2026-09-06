@@ -25,7 +25,17 @@
 /* haze 的模糊落在 ::before 上，宿主本身不做 backdrop-filter，否则会多出一块方形模糊。 */
 [data-glass]:not([data-glass='haze']) {
   backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+}
+
+/* 老 WebKit（Safari 18 之前）只认 -webkit- 前缀。前缀声明必须独立成块，不许与无前缀声明并列写在
+   同一个规则块里：Lightning CSS（Tailwind v4 与 Vite 的 CSS 压缩器）会把两者当同一属性去重、只保留
+   后写的那条，而 Chrome 152 起已删除前缀别名——并列写法会让生产构建里的全部玻璃失去模糊，
+   且下方的 @supports 兜底因为检测到无前缀受支持而不会启用。scripts/check.ts 用真实压缩跑一遍守住这一点。 */
+@supports not (backdrop-filter: blur(1px)) {
+  [data-glass]:not([data-glass='haze']),
+  [data-glass='haze']::before {
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  }
 }
 
 [data-glass='chrome'] {
@@ -49,7 +59,6 @@
   from {
     background: transparent;
     backdrop-filter: blur(0px) saturate(100%);
-    -webkit-backdrop-filter: blur(0px) saturate(100%);
     box-shadow: 0 1px 0 transparent;
   }
 }
@@ -142,7 +151,6 @@
   z-index: -1;
   background: color-mix(in srgb, var(--color-paper) var(--glass-haze-opacity), transparent);
   backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
 }
 
 /* 雾边：更淡的纸色，被噪声撕碎；不做 backdrop 模糊，整套 haze 仍只有一次 backdrop 读回。 */
@@ -235,7 +243,13 @@
   [data-glass],
   [data-glass='haze']::before {
     backdrop-filter: none;
-    -webkit-backdrop-filter: none;
+  }
+
+  @supports not (backdrop-filter: blur(1px)) {
+    [data-glass],
+    [data-glass='haze']::before {
+      -webkit-backdrop-filter: none;
+    }
   }
 
   [data-glass='haze']::before {
