@@ -6,22 +6,43 @@
    │ 要改材质先改上游 src/glass.css，再把这里整段重拷一次。                    │
    │ tests/glass-contract.test.ts 会校验四档配方与两条退化路径都在位。         │
    │                                                                          │
-   │ 它消费的 --glass-* / --color-* / --shadow-whisper 由 theme.ts 下发到      │
-   │ :root（值来自 rakko-tokens.ts 的 GLASS 与 GLASS_SHADOW_WHISPER）。       │
+   │ 它消费的 --glass-* / --color-* 由 theme.ts 下发到 :root（值              │
+   │ 来自 rakko-tokens.ts 的 GLASS 与 GLASS_AERO）。--shadow-whisper          │
+   │ 仍由 theme.ts 下发但本文件已不消费：Aero 化后 panel/inverse              │
+   │ 改用 --glass-lift，它保留在 token 层是因为上游 tokens.css                │
+   │ 仍以它为契约 token，将来某一档用回它时不必重新接线。                     │
    └──────────────────────────────────────────────────────────────────────────┘ */
 
-/* 玻璃材质契约（毛玻璃 / 液态玻璃）。
+/* 明知偏离记录（本地共两处，重拷上游时不要改回）：
+   其一是 WebKit 前缀的写法：「上方框起以下到文件末尾为上游原文」在这点上有例外。
+   上游 src/glass.css（claude/glass-aero）是并列写法：在 [data-glass]:not([data-glass='haze'])
+   同一个规则块里紧挨无前缀声明写一行 -webkit-backdrop-filter，渐显 keyframe 与 haze 的 ::before
+   同理；本项目把这三处并列声明删掉，前缀兜底独立成 @supports not (backdrop-filter: blur(1px))
+   块（@media (prefers-reduced-transparency) 里关前缀的嵌套 @supports 同理），理由见紧邻块旁注释。
+   这不是同步漂移：将来重拷上游原文后，要按上面这一句把并列写法改回独立块，不要照上游一字不差还原。
+   为什么保留独立块：它在 Lightning CSS 与 esbuild 下都安全，是更保守的写法，不依赖压缩器实现细节。
+   实测事实（写准确，别传成上游有 bug）：本项目用 MUI 不用 Tailwind，Vite（v7）默认用 esbuild
+   压缩 CSS，实测 esbuild 不会把并列的前缀/无前缀声明当同一属性去重（两条都幸存），所以上游的并列
+   写法在本项目当下的构建里并不会出问题；保留独立块只是不把正确性押在压缩器行为上——上游写法的
+   表现只在上游自己的使用场景里成立，未经本项目验证。
+   第二处：上游契约注释列举 token 时在 -text-glow 前用了「星号后紧贴斜杠」的写法，把注释从
+   那里提前闭合（esbuild 报 Unexpected /；按 CSS 规范解析更会把紧邻其后的首条规则吞进垃圾
+   选择器而整条丢弃）。本镜像在星号与斜杠之间插入一个空格订正，仅注释文本、行为无关，
+   重拷上游时同样要带这个订正。 */
+
+/* 玻璃材质契约（毛玻璃 / 液态玻璃 / Aero 玻璃片）。
    系统内所有 backdrop-filter 只允许出现在这个文件；组件与模板通过 data-glass 取材质：
-     chrome  — 常驻 chrome（顶栏）：纸底 + Aero 弧光（radial 光泽）+ 顶边 lip 高光 + 底部发丝线，
-               配 data-reveal="scroll" 可滚动渐显
+     chrome  — 常驻 chrome（顶栏）：45% 纸底 + Aero 弧光（radial）+ 底部发丝线，配 data-reveal="scroll" 可滚动渐显
      panel   — 按需挂载的浮层面板（Popover / Menu / Select / Dialog / Sheet）：
-               纸底 + sheen 上亮下暗光泽（46→47% 的陡变是反射分界）+ rim/rim-inner 双层厚度边 +
-               lip/side/bloom 内侧高光与柔光 + lift 外阴影 + 文字光晕（text-glow）
-     inverse — 反色面板（Snackbar）：n-10 底、n-1 字；与主题反相，厚度边与光泽用中性色自适应；
-               不压在壁纸上，不设文字光晕
+                58% 纸底 + Aero 光泽（上亮下暗，46/47% 的陡变是反射分界）+ 双层厚度边
+                （外圈亮边 / 内圈暗线）+ lift 两段式浮起 + 文字光晕
+     inverse — 反色面板（Snackbar）：n-10 底、n-1 字，用 neutral 混出同样的厚度边与光泽；
+                底色自带对比，不设文字光晕
      haze    — 压在图像上的文字块：文字身后一团雾。默认 cloud（多团软椭圆并集的有机云形 + 随风飘散的
                噪声雾边），data-haze="veil" 为软圆角矩形 + 毛绒雾边；无边框无高光，文字颜色跟随纸色语义
    模糊半径、饱和度、alpha 全部来自 tokens.css 的 --glass-*；圆角、尺寸、入退场留给组件。
+   Aero 的观感不来自大模糊：blur 只有 3px，玻璃透过去要能看见后面窗口的轮廓——糊成一片
+   是 iOS 毛玻璃的路子；厚度边、光泽与文字光晕由新增的 --glass-rim/-lip/-sheen-* /-text-glow 提供。
    液态感只用静态 gradient 与 box-shadow 实现，没有折射、没有每帧成本。
    出生规则见 references/anti-patterns.md「Glass surface born on the wrong frame」。 */
 
@@ -124,11 +145,11 @@
     var(--glass-lift);
 }
 
-/* 文字光晕关闭钩子。text-shadow 是继承属性，挂在 panel / chrome 上会传给全部后代文字——玻璃上
-   每一行字都压在壁纸上，都需要光晕。但等宽字体加光晕会明显发糊，而 Markdown 渲染出的行内代码
-   位置无法预先知道，所以材质自己负责：玻璃内的 code / pre / kbd / samp 自动免除光晕（:where()
-   特异性为 0，不会跟消费方自己的 text-shadow 打架）；data-glass-text="off" 留给其余特殊场景
-   （原邮件容器等）手动关闭，随属性挂到全部后代。 */
+/* text-shadow 是继承属性，挂在 panel / chrome 上会传给全部后代文字——这是故意的：
+   玻璃上的每一行字都压在壁纸上，都需要光晕。但等宽字体加光晕会明显发糊，而 Markdown 渲染出的
+   行内代码无法预先知道位置，所以材质自己免除 code / pre / kbd / samp 的光晕
+   （:where() 特异性为 0，不会跟消费方自己的 text-shadow 打架）；
+   其余特殊场景（如原邮件容器）由消费方挂 data-glass-text="off" 手动关。 */
 [data-glass-text='off'],
 [data-glass-text='off'] *,
 [data-glass] :where(code, pre, kbd, samp) {
@@ -246,9 +267,8 @@
   -webkit-mask-composite: source-over;
 }
 
-/* 退化：不支持 backdrop-filter，或用户要求降低透明度时，改为不透明底。玻璃没了，但厚度边
-   （border）与光泽（box-shadow、文字光晕）仍是这套材质的识别特征，保留；prefers-reduced-
-   transparency 块里文字光晕一并关掉——不透明底已把对比度拉满，该用户通常也不需要光晕。 */
+/* 退化：不支持 backdrop-filter，或用户要求降低透明度时，改为不透明底；
+   厚度边（border）、光泽与阴影保留——玻璃没了，边缘与光泽仍是这套材质的识别特征。 */
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   /* 渐显规则的选择器是两个属性（0,2,0），退化块里必须用同等特异性才能关掉动画，
      否则 keyframe 会把透明底与 blur(0) 写回来，渲染表面白白常驻。 */
@@ -266,10 +286,6 @@
         transparent 78%
       ),
       var(--color-paper);
-    box-shadow:
-      inset 0 1px 0 var(--glass-lip),
-      0 1px 0 var(--color-border);
-    text-shadow: var(--glass-text-glow);
   }
 
   [data-glass='panel'] {
@@ -282,16 +298,6 @@
         var(--glass-sheen-4) 100%
       ),
       var(--color-paper);
-    border: 1px solid var(--glass-rim);
-    box-shadow:
-      inset 0 0 0 1px var(--glass-rim-inner),
-      inset 0 1.5px 0 var(--glass-lip),
-      inset 0 -1.5px 0 var(--glass-lip-under),
-      inset 1px 0 0 var(--glass-side),
-      inset -1px 0 0 var(--glass-side),
-      inset 0 0 18px var(--glass-bloom),
-      var(--glass-lift);
-    text-shadow: var(--glass-text-glow);
   }
 
   [data-glass='inverse'] {
@@ -304,16 +310,6 @@
         color-mix(in srgb, var(--color-neutral-10) 5%, transparent) 100%
       ),
       var(--color-neutral-10);
-    color: var(--color-neutral-1);
-    border: 1px solid color-mix(in srgb, var(--color-neutral-1) 20%, transparent);
-    box-shadow:
-      inset 0 0 0 1px color-mix(in srgb, var(--color-neutral-10) 22%, transparent),
-      inset 0 1.5px 0 color-mix(in srgb, var(--color-neutral-1) 34%, transparent),
-      inset 0 -1.5px 0 color-mix(in srgb, var(--color-neutral-1) 10%, transparent),
-      inset 1px 0 0 color-mix(in srgb, var(--color-neutral-1) 9%, transparent),
-      inset -1px 0 0 color-mix(in srgb, var(--color-neutral-1) 9%, transparent),
-      inset 0 0 18px color-mix(in srgb, var(--color-neutral-1) 5%, transparent),
-      var(--glass-lift);
   }
 
   [data-glass='haze']::before {
@@ -352,10 +348,6 @@
         transparent 78%
       ),
       var(--color-paper);
-    box-shadow:
-      inset 0 1px 0 var(--glass-lip),
-      0 1px 0 var(--color-border);
-    text-shadow: none;
   }
 
   [data-glass='panel'] {
@@ -368,16 +360,6 @@
         var(--glass-sheen-4) 100%
       ),
       var(--color-paper);
-    border: 1px solid var(--glass-rim);
-    box-shadow:
-      inset 0 0 0 1px var(--glass-rim-inner),
-      inset 0 1.5px 0 var(--glass-lip),
-      inset 0 -1.5px 0 var(--glass-lip-under),
-      inset 1px 0 0 var(--glass-side),
-      inset -1px 0 0 var(--glass-side),
-      inset 0 0 18px var(--glass-bloom),
-      var(--glass-lift);
-    text-shadow: none;
   }
 
   [data-glass='inverse'] {
@@ -390,15 +372,12 @@
         color-mix(in srgb, var(--color-neutral-10) 5%, transparent) 100%
       ),
       var(--color-neutral-10);
-    color: var(--color-neutral-1);
-    border: 1px solid color-mix(in srgb, var(--color-neutral-1) 20%, transparent);
-    box-shadow:
-      inset 0 0 0 1px color-mix(in srgb, var(--color-neutral-10) 22%, transparent),
-      inset 0 1.5px 0 color-mix(in srgb, var(--color-neutral-1) 34%, transparent),
-      inset 0 -1.5px 0 color-mix(in srgb, var(--color-neutral-1) 10%, transparent),
-      inset 1px 0 0 color-mix(in srgb, var(--color-neutral-1) 9%, transparent),
-      inset -1px 0 0 color-mix(in srgb, var(--color-neutral-1) 9%, transparent),
-      inset 0 0 18px color-mix(in srgb, var(--color-neutral-1) 5%, transparent),
-      var(--glass-lift);
+  }
+
+  /* 要求减少透明度的用户通常也不需要文字光晕，不透明底已把对比度拉满。 */
+  [data-glass='panel'],
+  [data-glass='chrome'],
+  [data-glass='inverse'] {
+    text-shadow: none;
   }
 }
