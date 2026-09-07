@@ -128,3 +128,27 @@ describe('ItemEditor 居中于主内容区的样式', () => {
     expect(cssText).not.toContain('max-width:840px');
   });
 });
+
+describe('ItemEditor 字段区结构（抽成 ItemFieldsForm 后不变）', () => {
+  it('标题多行输入、5 个分类 chip（radiogroup）、日期输入齐全', () => {
+    renderEditor();
+
+    expect(screen.getByLabelText('任务内容')).toBeTruthy();
+    expect(screen.getByRole('radiogroup', { name: '分类' })).toBeTruthy();
+    expect(screen.getAllByRole('radio')).toHaveLength(5);
+    expect(screen.getByLabelText('截止日期')).toBeTruthy();
+  });
+
+  it('设置日期后出现「清除日期」按钮，点击即清空', () => {
+    renderEditor();
+
+    fireEvent.change(screen.getByLabelText('任务内容'), { target: { value: '买牛奶' } });
+    fireEvent.change(screen.getByLabelText('截止日期'), { target: { value: '2026-09-10' } });
+
+    const clear = screen.getByRole('button', { name: '清除日期' });
+    expect(clear).toBeTruthy();
+    fireEvent.click(clear);
+
+    expect((screen.getByLabelText('截止日期') as HTMLInputElement).value).toBe('');
+  });
+});

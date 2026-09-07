@@ -9,26 +9,21 @@
 
 import { useState } from 'react';
 import AppBar from '@mui/material/AppBar';
-import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
-import Chip from '@mui/material/Chip';
 import Dialog from '@mui/material/Dialog';
 import IconButton from '@mui/material/IconButton';
-import Stack from '@mui/material/Stack';
-import TextField from '@mui/material/TextField';
 import Toolbar from '@mui/material/Toolbar';
 import Typography from '@mui/material/Typography';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import { useTheme } from '@mui/material/styles';
 import CloseIcon from '@mui/icons-material/Close';
-import ClearIcon from '@mui/icons-material/Clear';
-import { CATEGORIES } from '../types';
 import type { Category, ItemFields } from '../types';
 import { dialogTransitionProps } from './DialogTransition';
+import ItemFieldsForm from './ItemFieldsForm';
 import { mainAreaDialogSx } from '../lib/layout';
 
 /** 标题上限（与后端 POST/PATCH 契约一致：去首尾空白后 1~128 字符） */
-const MAX_TITLE_LENGTH = 128;
+export const MAX_TITLE_LENGTH = 128;
 
 /**
  * 把编辑器文本拆成标题 + 详情：第一行为标题，其余行 join 保留中间换行；
@@ -108,62 +103,18 @@ export default function ItemEditor({
           </Button>
         </Toolbar>
       </AppBar>
-      <Box sx={{ px: 2, py: 2, pb: 'calc(16px + env(safe-area-inset-bottom))' }}>
-        <TextField
-          label="第一行是标题，从第二行开始是详情"
-          multiline
-          minRows={6}
-          autoFocus
-          fullWidth
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          error={invalid}
-          helperText={helper}
-          inputProps={{ 'aria-label': '任务内容' }}
-        />
-        {/* 分类：单选 chip 行，radiogroup/radio 语义 */}
-        <Stack
-          direction="row"
-          spacing={1}
-          role="radiogroup"
-          aria-label="分类"
-          sx={{ mt: 1.5, flexWrap: 'wrap' }}
-        >
-          {CATEGORIES.map((c) => (
-            <Chip
-              key={c}
-              label={c}
-              variant={category === c ? 'filled' : 'outlined'}
-              color="primary"
-              onClick={() => setCategory(c)}
-              role="radio"
-              aria-checked={category === c}
-            />
-          ))}
-        </Stack>
-        {/* 截止日期：原生 date input + 条件显示的清除按钮 */}
-        <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 2 }}>
-          <TextField
-            type="date"
-            label="截止日期"
-            fullWidth
-            size="small"
-            value={date}
-            onChange={(e) => setDate(e.target.value)}
-            InputLabelProps={{ shrink: true }}
-          />
-          {date !== '' && (
-            <IconButton
-              size="small"
-              aria-label="清除日期"
-              onClick={() => setDate('')}
-              sx={{ flexShrink: 0 }}
-            >
-              <ClearIcon fontSize="small" />
-            </IconButton>
-          )}
-        </Stack>
-      </Box>
+      {/* 字段区：与 AiAddDialog 共用的受控表单（DOM/文案由 ItemFieldsForm 一处定义） */}
+      <ItemFieldsForm
+        text={text}
+        onTextChange={setText}
+        category={category}
+        onCategoryChange={setCategory}
+        date={date}
+        onDateChange={setDate}
+        invalid={invalid}
+        helper={helper}
+        autoFocus
+      />
     </Dialog>
   );
 }
