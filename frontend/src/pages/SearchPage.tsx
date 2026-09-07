@@ -25,6 +25,7 @@ import useMediaQuery from '@mui/material/useMediaQuery';
 import { useTheme } from '@mui/material/styles';
 import { search } from '../lib/api';
 import { columnDialogSx } from '../lib/layout';
+import { GLASS } from '../rakko-tokens';
 import type { SearchCitation, SearchResponse } from '../types';
 import EmailViewer from '../components/EmailViewer';
 import SafeMarkdown from '../components/SafeMarkdown';
@@ -94,13 +95,43 @@ export default function SearchPage() {
         )}
         {result && (
           <Box sx={{ mt: 2 }}>
-            <Box sx={{ typography: 'body1' }}>
+            {/* 整块回答挂一团雾，档位对应上游 showcase 的 .glass-review__note（12px 多行
+                说明文）——AI 回答是多行长文本，雾只按整块给：不给 markdown 的每个段落
+                各挂一团，上游 anti-patterns 的 "Haze on every paragraph" 明令禁止逐段
+                加雾。note 档限宽用 max-width: 72ch 而不是 width: max-content——多行
+                文本本来就要占满可读行宽，限宽只是不让雾随正文无限延伸。bleed 取
+                0.4 × GLASS.hazeBleed（28px → 11.2px），不写死数值、上游改 token 时
+                这里跟着变。形态用上游默认的 cloud——默认不写 data-haze，只有切 veil
+                才写该属性。 */}
+            <Box
+              data-glass="haze"
+              sx={{
+                typography: 'body1',
+                maxWidth: '72ch',
+                '--glass-haze-bleed': `calc(0.4 * ${GLASS.hazeBleed})`,
+              }}
+            >
               <SafeMarkdown>{result.answer_md}</SafeMarkdown>
             </Box>
             {result.citations.length > 0 && (
               <>
                 <Divider sx={{ my: 2 }} />
-                <Typography variant="subtitle2" gutterBottom>
+                {/* 「引用邮件（N）」标题挂雾，档位对应上游 showcase 的
+                    .glass-review__label（同 TasksPage 的分组标题）——单行短标题。
+                    width: max-content 让雾盒收缩贴合文字：宿主是块级盒 width 才生效，
+                    MUI 把 variant="subtitle2" 默认渲染成块级 <h6>（Typography 的
+                    variantMapping），无需显式 component="div"。bleed 取
+                    0.3 × GLASS.hazeBleed（28px → 8.4px），不写死数值。形态用上游默认
+                    的 cloud——默认不写 data-haze，只有切 veil 才写该属性。 */}
+                <Typography
+                  variant="subtitle2"
+                  gutterBottom
+                  data-glass="haze"
+                  sx={{
+                    width: 'max-content',
+                    '--glass-haze-bleed': `calc(0.3 * ${GLASS.hazeBleed})`,
+                  }}
+                >
                   引用邮件（{result.citations.length}）
                 </Typography>
                 <List disablePadding>
