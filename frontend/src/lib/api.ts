@@ -3,6 +3,7 @@
 
 import { authedFetch } from './phainon';
 import { API_BASE_URL } from './env';
+import { localTimeZone } from './time';
 import type {
   CaldavInfo,
   CalendarTokenResponse,
@@ -162,9 +163,10 @@ export async function search(question: string): Promise<SearchResponse> {
   }
 }
 
-/** POST /api/items/parse {text, today}：一句自然语言 → 条目字段，不落库；期望 200。
- *  today 为本地日期 YYYY-MM-DD，作 AI 判读「今天/明天」的基准日。后端没有显式
- *  超时，客户端 180s 兜底（与 search 同值）是唯一防线。 */
+/** POST /api/items/parse {text, today, tz}：一句自然语言 → 条目字段，不落库；期望 200。
+ *  today 为本地日期 YYYY-MM-DD，作 AI 判读「今天/明天」的基准日；tz 为浏览器 IANA
+ *  时区，后端据此把模型产出的提醒墙上时刻换算成带偏移的绝对时刻（在函数内部取，
+ *  调用方不用传）。后端没有显式超时，客户端 180s 兜底（与 search 同值）是唯一防线。 */
 export async function parseTask(text: string, today: string): Promise<ParsedTask> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 180_000);
@@ -172,7 +174,7 @@ export async function parseTask(text: string, today: string): Promise<ParsedTask
     const res = await authedFetch(`${API_BASE}/items/parse`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, today }),
+      body: JSON.stringify({ text, today, tz: localTimeZone() }),
       signal: controller.signal,
     });
     if (res.status !== 200) throw new Error(`HTTP ${res.status}`);
@@ -182,8 +184,9 @@ export async function parseTask(text: string, today: string): Promise<ParsedTask
   }
 }
 
-/** POST /api/items/quick {text, today}：解析并落库；期望 201。AI 解析失败时后端用
- *  原文兜底建条目（ai_parsed === false 仍是正常返回）。同样带 180s 客户端超时。 */
+/** POST /api/items/quick {text, today, tz}：解析并落库；期望 201。AI 解析失败时后端用
+ *  原文兜底建条目（ai_parsed === false 仍是正常返回）。同样带 180s 客户端超时。
+ *  tz 语义同 parseTask：浏览器时区，供后端换算提醒的绝对时刻。 */
 export async function quickAddTask(text: string, today: string): Promise<QuickAddResponse> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 180_000);
@@ -191,7 +194,7 @@ export async function quickAddTask(text: string, today: string): Promise<QuickAd
     const res = await authedFetch(`${API_BASE}/items/quick`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, today }),
+      body: JSON.stringify({ text, today, tz: localTimeZone() }),
       signal: controller.signal,
     });
     if (res.status !== 201) throw new Error(`HTTP ${res.status}`);

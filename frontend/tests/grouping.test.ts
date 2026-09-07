@@ -2,6 +2,8 @@
 
 import { describe, expect, it } from 'vitest';
 import { formatDueDate, groupItems, isNewToday, isOverdue, parseDueDate } from '../src/lib/grouping';
+import { effectiveDate } from '../src/lib/grouping';
+import { fromDatetimeLocalValue } from '../src/lib/time';
 import type { Item } from '../src/types';
 
 /** 固定 today：2026-08-05（本地时区） */
@@ -35,6 +37,11 @@ function makeItem(partial: Partial<Item> = {}): Item {
   };
 }
 
+/** 本地年/月/日/时/分 → 绝对时刻的 ISO 串（解析回本地仍是同一天同一钟点） */
+function remindIso(y: number, mo: number, d: number, h: number, mi: number): string {
+  return new Date(y, mo - 1, d, h, mi).toISOString();
+}
+
 describe('parseDueDate', () => {
   it('解析 YYYY-MM-DD 为本地时区日期', () => {
     const d = parseDueDate('2026-08-05');
@@ -61,6 +68,22 @@ describe('isOverdue', () => {
 
   it('无截止日期 → 不逾期', () => {
     expect(isOverdue(makeItem({ due_date: null }), today)).toBe(false);
+  });
+
+  it('提醒时刻已过、截止日在未来 → 不逾期（isOverdue 只看 due_date）', () => {
+    const item = makeItem({
+      due_date: '2026-09-01',
+      reminders: [{ id: 1, remind_at: remindIso(2026, 7, 1, 9, 0) }],
+    });
+    expect(isOverdue(item, today)).toBe(false);
+  });
+
+  it('截止日已过 → 逾期（即使未来还有提醒）', () => {
+    const item = makeItem({
+      due_date: '2026-08-04',
+      reminders: [{ id: 1, remind_at: remindIso(2026, 9, 1, 9, 0) }],
+    });
+    expect(isOverdue(item, today)).toBe(true);
   });
 });
 
@@ -191,5 +214,173 @@ describe('isNewToday', () => {
 describe('formatDueDate', () => {
   it('输出 M月D日', () => {
     expect(formatDueDate('2026-08-05')).toBe('8月5日');
+  });
+});
+
+describe('groupItems：提醒参与分组（键 = 最早提醒与截止日中较早者）', () => {
+  const weekDay = new Date(today); // 本周内（非周日）的一天
+  weekDay.setDate(weekDay.getDate() + 2);
+  const nextMonth = new Date(2026, 8, 10); // 2026-09-10，超出本周
+
+  it('只有提醒、提醒在今天 → 今天组（不沉到 later）', () => {
+    const item = makeItem({
+      id: 11,
+      due_date: null,
+      reminders: [{ id: 1, remind_at: remindIso(2026, 8, 5, 10, 0) }],
+    });
+    const g = groupItems([item], today);
+    expect(g.today.map((i) => i.id)).toEqual([11]);
+    expect(g.thisWeek).toHaveLength(0);
+    expect(g.important).toHaveLength(0);
+    expect(g.later).toHaveLength(0);
+  });
+
+  it('只有提醒、提醒在本周内 → 本周组', () => {
+    const item = makeItem({
+      id: 12,
+      due_date: null,
+      reminders: [{ id: 1, remind_at: remindIso(weekDay.getFullYear(), weekDay.getMonth() + 1, weekDay.getDate(), 9, 0) }],
+    });
+    const g = groupItems([item], today);
+    expect(g.thisWeek.map((i) => i.id)).toEqual([12]);
+    expect(g.today).toHaveLength(0);
+    expect(g.later).toHaveLength(0);
+  });
+
+  it('提醒比截止早（提醒今天、截止下月）→ 今天组，证明取的是 min', () => {
+    const item = makeItem({
+      id: 13,
+      due_date: dateStr(nextMonth),
+      reminders: [{ id: 1, remind_at: remindIso(2026, 8, 5, 10, 0) }],
+    });
+    const g = groupItems([item], today);
+    expect(g.today.map((i) => i.id)).toEqual([13]);
+    expect(g.thisWeek).toHaveLength(0);
+    expect(g.later).toHaveLength(0);
+  });
+
+  it('截止比提醒早（截止今天、提醒下月）→ 今天组', () => {
+    const item = makeItem({
+      id: 14,
+      due_date: dateStr(today),
+      reminders: [
+        { id: 1, remind_at: remindIso(nextMonth.getFullYear(), nextMonth.getMonth() + 1, nextMonth.getDate(), 9, 0) },
+      ],
+    });
+    const g = groupItems([item], today);
+    expect(g.today.map((i) => i.id)).toEqual([14]);
+    expect(g.thisWeek).toHaveLength(0);
+    expect(g.later).toHaveLength(0);
+  });
+
+  it('多个提醒乱序挂上 → 取最早的那个算分组', () => {
+    // 数组里先放晚的再放早的，模拟后端未按时间升序返回
+    const item = makeItem({
+      id: 15,
+      due_date: null,
+      reminders: [
+        { id: 2, remind_at: remindIso(2026, 8, 9, 9, 0) }, // 本周内晚些时候
+        { id: 1, remind_at: remindIso(2026, 8, 5, 10, 0) }, // 今天（最早）
+      ],
+    });
+    const g = groupItems([item], today);
+    expect(g.today.map((i) => i.id)).toEqual([15]);
+    expect(g.thisWeek).toHaveLength(0);
+    expect(g.later).toHaveLength(0);
+  });
+
+  it('提醒与截止都没有且 high → 重要组（回归，行为不变）', () => {
+    const item = makeItem({ id: 16, due_date: null, importance: 'high' });
+    const g = groupItems([item], today);
+    expect(g.important.map((i) => i.id)).toEqual([16]);
+    expect(g.later).toHaveLength(0);
+  });
+
+  it('提醒与截止都没有且 normal → 无期限组（回归，行为不变）', () => {
+    const item = makeItem({ id: 17, due_date: null, importance: 'normal' });
+    const g = groupItems([item], today);
+    expect(g.later.map((i) => i.id)).toEqual([17]);
+    expect(g.important).toHaveLength(0);
+  });
+});
+
+describe('effectiveDate', () => {
+  it('只有截止 → 返回截止日本地零点', () => {
+    const d = effectiveDate(makeItem({ due_date: '2026-09-10' }));
+    expect(d?.getFullYear()).toBe(2026);
+    expect(d?.getMonth()).toBe(8);
+    expect(d?.getDate()).toBe(10);
+  });
+
+  it('只有提醒 → 返回提醒日本地零点', () => {
+    const d = effectiveDate(
+      makeItem({ reminders: [{ id: 1, remind_at: remindIso(2026, 8, 5, 10, 0) }] }),
+    );
+    expect(d?.getFullYear()).toBe(2026);
+    expect(d?.getMonth()).toBe(7);
+    expect(d?.getDate()).toBe(5);
+  });
+
+  it('提醒与截止都有 → 取更早的那个', () => {
+    const item = makeItem({
+      due_date: '2026-09-10',
+      reminders: [{ id: 1, remind_at: remindIso(2026, 8, 5, 10, 0) }],
+    });
+    const d = effectiveDate(item);
+    expect(d?.getFullYear()).toBe(2026);
+    expect(d?.getMonth()).toBe(7);
+    expect(d?.getDate()).toBe(5);
+  });
+
+  it('两者都没有 → null', () => {
+    expect(effectiveDate(makeItem())).toBeNull();
+  });
+
+  it('非法 remind_at（"nope"）跳过不抛，取剩下合法提醒里的最早', () => {
+    const item = makeItem({
+      due_date: null,
+      reminders: [
+        { id: 2, remind_at: 'nope' },
+        { id: 1, remind_at: remindIso(2026, 8, 6, 9, 0) },
+      ],
+    });
+    const d = effectiveDate(item);
+    expect(d?.getFullYear()).toBe(2026);
+    expect(d?.getMonth()).toBe(7);
+    expect(d?.getDate()).toBe(6);
+  });
+
+  it('remind_at 全部非法且无截止 → null', () => {
+    expect(
+      effectiveDate(makeItem({ reminders: [{ id: 1, remind_at: 'nope' }] })),
+    ).toBeNull();
+  });
+
+  it('remind_at 的 UTC 日期与本地日期不同天时，仍返回本地那天', () => {
+    const offsetMin = new Date(2026, 7, 5, 12, 0).getTimezoneOffset();
+    let remindAt: string;
+    if (offsetMin === 0) {
+      // 本机恰为 UTC：任何时刻的 UTC 日期 == 本地日期，构造不出跨天差异；
+      // 退而用基座 fromDatetimeLocalValue 造一个带偏移的当地时刻，只验证本地日期正确
+      // （该差异无法在本机时区复现，见执行报告 unresolved）。
+      remindAt = fromDatetimeLocalValue('2026-08-05T00:30') as string;
+    } else {
+      // UTC+X（offsetMin<0）：当地凌晨 → UTC 还是前一天；UTC−X（offsetMin>0）：
+      // 当地深夜 → UTC 已翻到次日。两种情况 UTC 日期都与本地日期不同天。
+      const hour = offsetMin < 0 ? 0 : 23;
+      const minute = offsetMin < 0 ? 15 : 30;
+      remindAt = new Date(2026, 7, 5, hour, minute).toISOString();
+      // 前置条件自检：这条 ISO 的 UTC 日期确实 ≠ 2026-08-05（否则本分支没测到跨天差异）
+      const parsed = new Date(remindAt);
+      const utcDay = `${parsed.getUTCFullYear()}-${parsed.getUTCMonth() + 1}-${parsed.getUTCDate()}`;
+      expect(utcDay).not.toBe('2026-08-05');
+    }
+
+    const d = effectiveDate(
+      makeItem({ due_date: null, reminders: [{ id: 1, remind_at: remindAt }] }),
+    );
+    expect(d?.getFullYear()).toBe(2026);
+    expect(d?.getMonth()).toBe(7);
+    expect(d?.getDate()).toBe(5);
   });
 });

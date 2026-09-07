@@ -15,7 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import TasksPage from '../src/pages/TasksPage';
 import { resetLists } from '../src/lib/list-cache';
-import { todayIso } from '../src/lib/time';
+import { localTimeZone, todayIso } from '../src/lib/time';
 import type { Item, ParsedTask } from '../src/types';
 
 const QUICK_MODE_KEY = 'rakkotasks.quick-mode';
@@ -153,6 +153,7 @@ describe('非速记模式：真实对话框 × 真实页面闭环', () => {
     expect(JSON.parse(String(findPost(fetchMock, '/api/items/parse').body))).toEqual({
       text: TEXT,
       today: todayIso(),
+      tz: localTimeZone(),
     });
 
     // 放行解析 → fields 阶段：标题+详情、分类、日期全部由解析结果预填
@@ -258,6 +259,7 @@ describe('速记模式：真实对话框 × 真实页面闭环', () => {
     expect(JSON.parse(String(findPost(fetchMock, '/api/items/quick').body))).toEqual({
       text: TEXT,
       today: todayIso(),
+      tz: localTimeZone(),
     });
 
     // 对话框立刻收回：输入框消失，悬浮按钮还在

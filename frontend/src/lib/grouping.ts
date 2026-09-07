@@ -1,7 +1,8 @@
 // 纯函数：条目分组为 今天 / 本周 / 重要 / 无期限、标记逾期，并负责「今日新邮件」判定。
 // 日期比较一律基于「传入的 today」的本地年/月/日分量，不依赖真实当前时间，便于测试。
-// 分组优先级（每条目只进一个组）：today（due ≤ 今天，含逾期）→ thisWeek（明天~本周日）
-// → important（以上都不属于且 importance==='high'）→ later（其余）。
+// 分组优先级（每条目只进一个组）：today（effectiveDate ≤ 今天，含逾期）→ thisWeek
+// （明天~本周日）→ important（以上都不属于且 importance==='high'）→ later（其余）。
+// effectiveDate = 最早提醒与截止日两者中更早的那个（见下方函数注释）。
 
 import type { Item } from '../types';
 
@@ -23,7 +24,40 @@ export function parseDueDate(date: string): Date {
   return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
 }
 
-/** 条目是否已逾期（due_date 非空且早于 today） */
+/**
+ * 条目「这天要管这件事」的本地日期：最早提醒与截止日两者中更早的那个（当地零点 Date）。
+ *
+ * 为什么取更早的那个（min）：提醒是「这天敲你」、截止是「这天要交」，两者都是
+ * 「这天要管这件事」的信号。分组只看 due_date 的话，「明天 10:00 提醒我修空调、
+ * 没有截止日」这类只有提醒的条目会掉进「无期限」组沉底——明天就要做的事跑到
+ * 列表最底下，没用。
+ *
+ * 提醒是带 UTC 偏移的 ISO 时刻，必须先按本地时区折成当地零点再参与比较（口径与
+ * parseDueDate 一致；不许 slice(0, 10)——那是 UTC 日期，本地时区一偏就差一天）。
+ * 非法/无法解析的 remind_at 直接跳过，不抛。两者都没有返回 null。
+ */
+export function effectiveDate(item: Item): Date | null {
+  // 显式在全部提醒里找最早的那条（按各自本地零点比较），别依赖 reminders 已按时间升序排好
+  let earliestReminder: Date | null = null;
+  for (const reminder of item.reminders) {
+    const at = new Date(reminder.remind_at);
+    if (Number.isNaN(at.getTime())) continue; // 非法时刻跳过，不抛
+    const local = new Date(at.getFullYear(), at.getMonth(), at.getDate());
+    if (earliestReminder === null || local.getTime() < earliestReminder.getTime()) {
+      earliestReminder = local;
+    }
+  }
+  const due = item.due_date ? parseDueDate(item.due_date) : null;
+  if (earliestReminder === null) return due;
+  if (due === null) return earliestReminder;
+  return earliestReminder.getTime() <= due.getTime() ? earliestReminder : due;
+}
+
+/**
+ * 条目是否已逾期（due_date 非空且早于 today）。
+ * 这里只看 due_date、不掺 reminders：「逾期」说的是**过了截止日**；一个提醒时刻
+ * 已过但截止日还在未来的条目不算逾期，红色高亮不该给它（提醒迟了是提醒层的表达）。
+ */
 export function isOverdue(item: Item, today: Date): boolean {
   if (!item.due_date) return false;
   const due = parseDueDate(item.due_date);
@@ -53,13 +87,13 @@ export function endOfThisWeek(today: Date): Date {
   return new Date(t.getFullYear(), t.getMonth(), t.getDate() + offset);
 }
 
-/** 按截止日期分组；today 由调用方传入，保证可测 */
+/** 按 effectiveDate（最早提醒与截止日中较早者）分组；today 由调用方传入，保证可测 */
 export function groupItems(items: Item[], today: Date): GroupedResult {
   const result: GroupedResult = { today: [], thisWeek: [], important: [], later: [] };
   const t = startOfDay(today);
   const weekEnd = endOfThisWeek(today);
   for (const item of items) {
-    const due = item.due_date ? parseDueDate(item.due_date) : null;
+    const due = effectiveDate(item);
     if (!due) {
       // 无日期：high 进「重要」组顶上来，其余进「无期限」
       if (item.importance === 'high') {
