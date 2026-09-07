@@ -32,6 +32,7 @@ import { moveItem, openKey, removeItem, upsertOpenItem, useCachedList } from '..
 import { LEAVE_DURATION, rowSx, useMorphDialog, usePrefersReducedMotion } from '../lib/motion';
 import { cardRowSx } from '../lib/surface';
 import { runViewTransition, shellAttr, VT_NAMES } from '../lib/view-transition';
+import { GLASS } from '../rakko-tokens';
 import type { Category, Item, ItemFields } from '../types';
 import CategoryChips from '../components/CategoryChips';
 import ItemDialog from '../components/ItemDialog';
@@ -73,17 +74,18 @@ function GroupSection({
               雾仍然挂在内层包裹元素上而不是 ListSubheader 本身：haze 配方会给宿主设
               position: relative 与 isolation: isolate，挂外层会改变 ListSubheader 自身
               的定位与层叠语义，内层承载更内聚。每个分组标题各一团雾是可以的——组与
-              组之间隔着整组卡片，距离远超 bleed（14px），雾不会互相重叠；上游禁止的
-              是给相邻的每一行各挂一团。haze 配方会把文字色设成 n9（color:
+              组之间隔着整组卡片，距离远超 bleed，雾不会互相重叠；上游禁止的是给相邻的
+              每一行各挂一团。haze 配方会把文字色设成 n9（color:
               var(--color-neutral-9)），比原 ListSubheader 的 secondary（n7）更深：压在
-              图像上的文字需要更高对比度，这是刻意的。形态取 veil（软圆角矩形），不用
-              配方默认的 cloud——cloud 的九团椭圆按盒子百分比布局，在小标签与宽扁盒子
-              上会被拉变形；上游要求一页只用一种形态，故与 chips 行一致。 */}
+              图像上的文字需要更高对比度，这是刻意的。形态用上游默认的 cloud——cloud 是
+              默认形态，默认不写 data-haze，只有切 veil 才写该属性。宽度与 bleed 照搬
+              上游 showcase 的 .glass-review__label：width: max-content 让盒子收缩贴合
+              文字（宿主是块级盒 width 才生效，行内盒不吃 width；上游同一档的宿主也是
+              块级 p），bleed 取 0.3 × GLASS.hazeBleed（28px → 8.4px）——这一档就是给
+              12px 小标签用的，分组标题正是这个场景。 */}
           <Box
-            component="span"
             data-glass="haze"
-            data-haze="veil"
-            sx={{ display: 'inline-block', '--glass-haze-bleed': '14px' }}
+            sx={{ width: 'max-content', '--glass-haze-bleed': `calc(0.3 * ${GLASS.hazeBleed})` }}
           >
             {title}
           </Box>
