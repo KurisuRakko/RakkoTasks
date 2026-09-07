@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 import json
-from datetime import date
+from datetime import date, datetime
 
 from openai import OpenAI
 
@@ -105,11 +105,24 @@ PARSE_TASK_SYSTEM = """你是 RakkoTasks 的快速记事助手。用户用一句
 - summary：只在用户原话里有标题装不下的额外信息时才写（地点、联系人、金额、具体要求）。
   没有额外信息就留空字符串。绝对不要把标题换个说法复述一遍。
 - category：固定为以下之一：学业、工作、个人、账单、其他。
-- due_date：格式 YYYY-MM-DD，或 null。
-  用户说了明确的时间就换算成绝对日期（「明天」「下周三」「9 号」都要算出来）。
+- due_date：格式 YYYY-MM-DD，或 null。与 reminders 分工：这里只放「截止/到期」这类
+  有 deadline 含义的日期，不放提醒时刻。
+  用户给了明确的截止日期就换算成绝对日期（「下周三交」「9 号之前」→「下周三」「9 号」）。
   用户说的是模糊区间（「这两天」「最近」「这周内」）时，取该区间里最早的那一天，
   不要跨多天、不要拆成多条。
+  只说哪天提醒、没有截止含义（「明天提醒我」）→ due_date 为 null，时刻进 reminders。
   用户完全没提时间就返回 null，不要替他猜一个。
+- reminders：提醒时刻数组，每项格式 YYYY-MM-DDTHH:MM（用户本地时间，不带时区偏移），
+  最多 3 个；没有提醒就返回空数组 []。
+  用户说「提醒我」「叫我」「记得」「别忘了」→ 进 reminders。
+  用户说「截止」「之前」「deadline」「到期」「最晚」→ 进 due_date。
+  两者是两件事，不要因为填了一个就顺手把另一个也填上。
+  例：「明天提醒我去把空调修了」→ reminders 有明天一项，due_date 为 null；
+      「周五之前交签证材料」→ reminders 为空数组，due_date 是周五；
+      「周二提醒一次，周五再提醒一次，周日到期」→ reminders 有周二和周五两项，
+      due_date 是周日。
+  用户没说几点就用 10:00。说了「早上」用 09:00、「中午」用 12:00、
+  「下午」用 14:00、「傍晚」「晚上」用 19:00；说了具体时刻就用那个时刻。
 - actionable：这件事是否需要用户亲自动手做？
   需要动手（修空调、交作业、付账单）→ true；
   只是记下一件将会发生、他无需动作的事（维修工要上门、快递会到、某人来访）→ false。
@@ -124,6 +137,7 @@ PARSE_TASK_SYSTEM = """你是 RakkoTasks 的快速记事助手。用户用一句
 只输出 JSON，不要输出任何其他文字，格式：
 {"title": "任务标题", "summary": "补充信息或空字符串",
  "category": "学业|工作|个人|账单|其他", "due_date": "YYYY-MM-DD 或 null",
+ "reminders": ["YYYY-MM-DDTHH:MM", ...],
  "actionable": true, "importance": "high|normal|low"}
 
 安全约束：
@@ -289,6 +303,10 @@ def normalize_parsed_task(data: dict) -> dict:
     parsed.isoformat() == 原串（fromisoformat 容忍带时间/偏移的串，这里只收
     YYYY-MM-DD）；任一步失败或原值非串 → None，绝不抛异常。
 
+    reminders 这里只做形状清洗并**保持本地墙上时刻字符串原样**：逐项要求是 str
+    且 datetime.fromisoformat 能解析、且不带 tzinfo（墙上时刻不该带偏移），
+    非法项丢弃、不抛异常；截断到 3 个。UTC 换算在 api.py（只有那里握着时区）。
+
     这是模块的公开契约而非内部细节：API 层在测试用 FakeLLM 顶替 get_llm 时
     不会经过 LLMClient.parse_task 自带的归一化，端点层需要直接调用本函数，
     让白名单/兜底规则在端点层真正可测。
@@ -314,11 +332,28 @@ def normalize_parsed_task(data: dict) -> dict:
         else:
             if parsed.isoformat() != due:  # 只收 YYYY-MM-DD 纯日期串
                 due = None
+    reminders = data.get("reminders")
+    if not isinstance(reminders, list):
+        reminders = []
+    else:
+        cleaned: list[str] = []
+        for value in reminders:
+            if not isinstance(value, str):
+                continue
+            try:
+                parsed_rem = datetime.fromisoformat(value)
+            except ValueError:
+                continue
+            if parsed_rem.tzinfo is not None:
+                continue  # 墙上时刻不该带偏移；带了说明模型没照格式走，丢弃
+            cleaned.append(value)
+        reminders = cleaned[:3]
     return {
         "title": title,
         "summary": str(data.get("summary") or "")[:300],
         "category": category,
         "due_date": due,
+        "reminders": reminders,
         "importance": importance,
         "actionable": bool(data.get("actionable", True)),
     }

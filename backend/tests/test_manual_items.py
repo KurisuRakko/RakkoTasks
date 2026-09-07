@@ -10,7 +10,7 @@ from sqlalchemy import select
 from app.api import create_app
 from app.auth import CurrentUser, require_auth
 from app.config import Settings
-from app.models import Account, Email, Item, User
+from app.models import Account, Email, Item, Reminder, User
 
 
 def _settings() -> Settings:
@@ -334,3 +334,55 @@ def test_create_manual_item_bad_importance_400(session_factory, monkeypatch):
     with session_factory() as s:
         manual = s.execute(select(Item).where(Item.email_id.is_(None))).scalars().all()
         assert manual == []
+
+
+def test_create_manual_item_with_reminders(session_factory, monkeypatch):
+    """POST 带提醒：响应 reminders 升序、带偏移，库里是换算后的 naive UTC。"""
+    _seed(session_factory)
+    client = _client(session_factory, monkeypatch)
+
+    resp = client.post(
+        "/api/items",
+        json={
+            "title": "修空调", "category": "个人",
+            "reminders": ["2026-09-08T22:30:00+10:00", "2026-09-08T10:00:00+10:00"],
+        },
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert [r["remind_at"] for r in data["reminders"]] == [
+        "2026-09-08T00:00:00+00:00", "2026-09-08T12:30:00+00:00",
+    ]
+    with session_factory() as s:
+        rows = s.execute(select(Reminder).order_by(Reminder.remind_at)).scalars().all()
+        assert [(r.item_id, r.remind_at) for r in rows] == [
+            (data["id"], datetime(2026, 9, 8, 0, 0)),
+            (data["id"], datetime(2026, 9, 8, 12, 30)),
+        ]
+
+
+def test_patch_manual_item_reminders_replaced(session_factory, monkeypatch):
+    """PATCH reminders 是整体替换；不带 reminders 键则一个都不动。"""
+    _seed(session_factory)
+    manual_id = _add_manual(session_factory)
+    client = _client(session_factory, monkeypatch)
+
+    resp = client.patch(
+        f"/api/items/{manual_id}",
+        json={"reminders": ["2026-09-08T10:00:00+10:00", "2026-09-09T09:00:00+10:00"]},
+    )
+    assert resp.status_code == 200
+    assert len(resp.json()["reminders"]) == 2
+
+    # 整体替换成 1 个，旧的真的从表里消失
+    resp = client.patch(f"/api/items/{manual_id}", json={"reminders": ["2026-10-01T08:00:00+10:00"]})
+    assert resp.status_code == 200
+    assert [r["remind_at"] for r in resp.json()["reminders"]] == ["2026-09-30T22:00:00+00:00"]
+    # 不传 reminders 键：提醒一个都不动（整体替换只发生在显式传入时）
+    resp = client.patch(f"/api/items/{manual_id}", json={"title": "只改标题"})
+    assert resp.status_code == 200
+    assert [r["remind_at"] for r in resp.json()["reminders"]] == ["2026-09-30T22:00:00+00:00"]
+    # 传 [] 清空
+    resp = client.patch(f"/api/items/{manual_id}", json={"reminders": []})
+    assert resp.status_code == 200
+    assert resp.json()["reminders"] == []

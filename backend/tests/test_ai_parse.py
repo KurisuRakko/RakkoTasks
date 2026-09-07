@@ -104,17 +104,33 @@ def test_parse_returns_normalized_dict(session_factory, monkeypatch):
 
     resp = client.post("/api/items/parse", json={"text": "明天修空调"})
     assert resp.status_code == 200
-    # 六个字段与 FakeLLM 的输出一致，没有 filtered/filter_reason 之类的杂键
+    # 字段与 FakeLLM 的输出一致（reminders 归一化兜底为空数组），没有
+    # filtered/filter_reason 之类的杂键
     assert resp.json() == {
         "title": "修空调",
         "summary": "客厅那台，周三师傅上门",
         "category": "个人",
         "due_date": "2026-03-06",
+        "reminders": [],
         "importance": "normal",
         "actionable": True,
     }
     # 不落库：库里没有任何条目
     assert _db_items(session_factory) == []
+
+
+def test_parse_system_prompt_carries_reminders_rules(session_factory, monkeypatch):
+    """系统提示被送进 LLM 时必须带 reminders 规则段（与 due_date 分两件事）。"""
+    _seed(session_factory)
+    fake = FakeLLM(result=_ok_result())
+    client = _client(session_factory, monkeypatch, llm=fake)
+
+    resp = client.post("/api/items/parse", json={"text": "周二提一次、周五再提一次、周日到期"})
+    assert resp.status_code == 200
+    system = fake.messages[-1][0]["content"]
+    assert "用户说「提醒我」「叫我」「记得」「别忘了」→ 进 reminders" in system
+    assert "两者是两件事，不要因为填了一个就顺手把另一个也填上" in system
+    assert '"reminders": ["YYYY-MM-DDTHH:MM", ...]' in system
 
 
 def test_parse_llm_error_502_without_error_details(session_factory, monkeypatch):

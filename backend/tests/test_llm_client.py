@@ -273,6 +273,54 @@ def test_parse_system_forbids_fabrication():
     assert "不要编造用户没说的任何信息" in PARSE_TASK_SYSTEM
 
 
+def test_parse_system_reminder_words_go_to_reminders():
+    """「提醒我」「叫我」「记得」「别忘了」这类词 → reminders，规则段必须原样锁住。"""
+    from app.llm import PARSE_TASK_SYSTEM
+
+    assert "用户说「提醒我」「叫我」「记得」「别忘了」→ 进 reminders" in PARSE_TASK_SYSTEM
+
+
+def test_parse_system_reminders_and_due_date_are_separate():
+    """reminders 与 due_date 是两件事：填了提醒不得顺手填截止日，措辞必须原样锁住。"""
+    from app.llm import PARSE_TASK_SYSTEM
+
+    assert "两者是两件事，不要因为填了一个就顺手把另一个也填上" in PARSE_TASK_SYSTEM
+    assert "reminders" in PARSE_TASK_SYSTEM.split("- actionable：")[0]  # 规则段在 actionable 之前
+    assert '"reminders": ["YYYY-MM-DDTHH:MM", ...]' in PARSE_TASK_SYSTEM  # 输出例子带 reminders 且可解析
+    # due_date 段不再拿「明天」当 due_date 的例子（那是纯提醒，该进 reminders）
+    due_block = PARSE_TASK_SYSTEM.partition("- due_date：")[2].partition("- reminders：")[0]
+    assert "「明天」「下周三」「9 号」都要算出来" not in due_block
+
+
+def test_normalize_parsed_task_reminders_cleaning():
+    """reminders 归一化：非 list → []；脏项（非串/不可解析）丢弃；带 tzinfo 的丢弃。"""
+    from app.llm import normalize_parsed_task
+
+    base = {"title": "修空调", "category": "个人"}
+    # 非 list 一律 []
+    assert normalize_parsed_task({**base, "reminders": "2026-09-08T10:00"})["reminders"] == []
+    assert normalize_parsed_task({**base, "reminders": None})["reminders"] == []
+    # 脏项逐条丢弃、不抛异常，合法项原样保留（墙上时刻串）
+    dirty = normalize_parsed_task(
+        {**base, "reminders": ["明天", 123, "2026-09-08T10:00", "2026-09-08"]}
+    )
+    assert dirty["reminders"] == ["2026-09-08T10:00", "2026-09-08"]
+    # 带偏移的时刻不是墙上时刻，丢弃
+    offset = normalize_parsed_task(
+        {**base, "reminders": ["2026-09-08T10:00+08:00", "2026-09-08T09:30"]}
+    )
+    assert offset["reminders"] == ["2026-09-08T09:30"]
+
+
+def test_normalize_parsed_task_reminders_capped_at_three():
+    """reminders 归一化：截断到 3 个（LLM 输出不可信，超出即丢）。"""
+    from app.llm import normalize_parsed_task
+
+    many = [f"2026-09-0{i}T10:00" for i in range(1, 6)]
+    out = normalize_parsed_task({"title": "x", "category": "个人", "reminders": many})
+    assert out["reminders"] == many[:3]
+
+
 def test_parse_system_keeps_today_placeholder_literal():
     """PARSE_TASK_SYSTEM 必须保留 {today} 字面占位符：正文有 JSON 花括号，
     只能用 str.replace 注入日期；用 .format() 或写死日期都会让这条变红。"""
