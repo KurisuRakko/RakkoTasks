@@ -208,8 +208,21 @@ CalDAV 路径 /caldav/* 与 /.well-known/caldav 不在其列——走 HTTP Basic
 ```
 GET  /api/health                    公开存活探针
 GET  /api/items?status=&category=   条目列表（默认 open；每项含 related 关联邮件）
-POST /api/items                     新建手动条目（email_id=null）：{"title","summary","category","due_date"}，
-                                    校验失败 400 bad_title|bad_summary|bad_category|bad_due_date；成功 201
+POST /api/items                     新建手动条目（email_id=null）：{"title","summary","category","due_date",
+                                    "importance"?,"actionable"?}，后两个省略时落 normal / true
+                                    （AI 快速添加的预览阶段用它们透传 AI 判断，界面上无编辑控件）；
+                                    校验失败 400 bad_title|bad_summary|bad_category|bad_due_date|bad_importance；成功 201
+POST /api/items/parse               一句自然语言 → 条目字段，**不落库**（限流 20/60s）：
+                                    {"text"（≤2000 字）, "today"?（YYYY-MM-DD，用户本地日期）}
+                                    → 200 {"title","summary","category","due_date","importance","actionable"}
+                                    LLM 失败 → 502 parse_error；超长 text → 422
+POST /api/items/quick               解析并落库，速记模式用（限流与 /parse 共用同一个 20/60s 计数）：
+                                    请求体同 /parse → 201 {"item": {...}, "ai_parsed": bool}
+                                    解析失败不报错：用原文兜底落库（title=原文截 128、category="其他"、
+                                    due_date=null、importance=normal、actionable=true），仍 201 且 ai_parsed=false。
+                                    兜底放在服务端而非前端：请求一旦到达就会跑完（同步 def 端点在
+                                    starlette 线程池里，客户端断连不杀线程），所以用户点完确定
+                                    立刻关掉 PWA，条目照样入库
 PATCH /api/items/{id}               {"status"} 任何条目可改；{"title","summary","category","due_date"}
                                     只对手动条目（email_id=null）开放，邮件条目改这四个字段 400 not_editable；
                                     空请求体 400 bad_request；成功 200

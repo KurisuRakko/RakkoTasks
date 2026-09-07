@@ -105,6 +105,35 @@ export interface ItemFields {
   summary: string;
   category: Category;
   due_date: string | null;
+  /**
+   * AI 解析出的重要度；省略时后端落 normal。界面上没有编辑控件，
+   * 只用于把 AI 的判断从预览阶段透传到保存请求，避免两种模式行为不一致。
+   */
+  importance?: Importance;
+  /** AI 解析出的「是否要亲自动手」；省略时后端落 true。同样只透传不编辑。 */
+  actionable?: boolean;
+}
+
+/**
+ * POST /api/items/parse 返回体：把一句自然语言解析成条目字段，不落库。
+ * 字段语义与 ItemFields 一致，但这里全部必填——它是 AI 的完整判断，
+ * 由前端决定是原样保存还是让用户改过再存。
+ */
+export interface ParsedTask {
+  title: string;
+  summary: string;
+  category: Category;
+  /** YYYY-MM-DD 或 null（AI 判定用户没提时间，不替他猜） */
+  due_date: string | null;
+  importance: Importance;
+  actionable: boolean;
+}
+
+/** POST /api/items/quick 返回体：解析并落库；解析失败时后端用原文兜底建条目 */
+export interface QuickAddResponse {
+  item: Item;
+  /** false = AI 解析失败，item 是按原文兜底建出来的 */
+  ai_parsed: boolean;
 }
 
 /** GET /api/calendar、POST /api/calendar/rotate 返回体 */

@@ -10,24 +10,35 @@ from __future__ import annotations
 from datetime import date, datetime
 
 CATEGORIES: tuple[str, ...] = ("学业", "工作", "个人", "账单", "其他")
+# 重要度白名单：与 models.Item.importance 默认值、llm._normalize_classify 的归一化同源
+IMPORTANCES: tuple[str, ...] = ("high", "normal", "low")
 TITLE_MAX = 128
 SUMMARY_MAX = 5000
 DEFAULT_TITLE = "未命名任务"
 
 
 class ItemFieldError(Exception):
-    """条目字段非法；code 与 REST 错误码一致（bad_title/bad_summary/bad_category/bad_due_date）。"""
+    """条目字段非法；code 与 REST 错误码一致（bad_title/bad_summary/bad_category/bad_due_date/bad_importance）。"""
 
     def __init__(self, code: str):
         super().__init__(code)
         self.code = code
 
 
-def validate_item_fields(title: str, summary: str, category: str, due_date: str | None) -> date | None:
+def validate_item_fields(
+    title: str,
+    summary: str,
+    category: str,
+    due_date: str | None,
+    importance: str | None = None,
+) -> date | None:
     """手动条目字段校验（POST 与 PATCH 共用）：非法抛 ItemFieldError；返回解析后的 date 或 None。
 
     逻辑与 api.py 现 _validate_item_fields 完全一致，只是抛 ItemFieldError
     而非 HTTPException（HTTP 层由调用方捕获后转 400，错误码不变）。
+
+    importance 为 None 表示调用方不打算改这个字段（不校验、不参与判定），
+    与「传了个空串」区分开：后者是非法值，要报 bad_importance。
     """
     title = title.strip()
     if not title or len(title) > TITLE_MAX:
@@ -36,6 +47,8 @@ def validate_item_fields(title: str, summary: str, category: str, due_date: str 
         raise ItemFieldError("bad_summary")
     if category not in CATEGORIES:
         raise ItemFieldError("bad_category")
+    if importance is not None and importance not in IMPORTANCES:
+        raise ItemFieldError("bad_importance")
     if due_date is None:
         return None
     try:
