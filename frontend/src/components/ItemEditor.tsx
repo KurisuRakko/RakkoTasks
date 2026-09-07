@@ -2,7 +2,8 @@
 // md 起居中于主内容区（mainAreaDialogSx）：编辑器从悬浮按钮长出而非列表行，宽度保持
 // sm、不与内容列对齐，只做居中这一半，避免同屏两个对话框一个对齐列、一个对齐视口。
 // 编辑框是普通多行文本框：第一行 = 标题（1~128 字，必填），其余行 = 详情；
-// 另有分类 chip 单选（radiogroup/radio）与原生 date input 截止日期（不引日期库）。
+// 另有分类 chip 单选与重要度 chip 单选（radiogroup/radio）及原生 date input 截止日期
+// （不引日期库）。重要度三档（重要/普通/次要）与列表页/分组口径一致。
 // 不做富文本/所见即所得；保存动作与提示交给父组件（TasksPage 添加 / ItemDialog 编辑）。
 // viewTransitionName：容器变换时让 Dialog paper 顶替来源元素的名字（来源元素同时让名）；
 // 不传则 paper 不带共享名（ItemDialog 内部编辑场景不参与容器变换）。
@@ -17,7 +18,7 @@ import Typography from '@mui/material/Typography';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import { useTheme } from '@mui/material/styles';
 import CloseIcon from '@mui/icons-material/Close';
-import type { Category, ItemFields } from '../types';
+import type { Category, Importance, ItemFields } from '../types';
 import { dialogTransitionProps } from './DialogTransition';
 import ItemFieldsForm from './ItemFieldsForm';
 import { mainAreaDialogSx } from '../lib/layout';
@@ -59,6 +60,9 @@ export default function ItemEditor({
     initial ? [initial.title, initial.summary].filter(Boolean).join('\n') : '',
   );
   const [category, setCategory] = useState<Category>(initial?.category ?? '个人');
+  const [importance, setImportance] = useState<Importance>(
+    initial?.importance ?? 'normal',
+  );
   const [date, setDate] = useState<string>(initial?.due_date ?? '');
   // 提醒时刻（带 UTC 偏移的绝对时刻串）：初值只在挂载时取自 initial.reminders，
   // 此后由 ItemFieldsForm 提醒编辑区的外发回调更新（它的草案行 state 同样只在
@@ -86,6 +90,11 @@ export default function ItemEditor({
       // 「用户看着完整表单按下保存」，总是显式带当前数组（哪怕空）——省略会让
       // 「把最后一个提醒删掉再保存」变成静默无操作（后端以为你不想动提醒）。
       reminders,
+      // importance 同理：省略 = 不改。这里是「用户看着完整表单按下保存」，总是
+      // 显式带当前档位（哪怕没动过）——控件显示哪一档就保存哪一档，界面所见即
+      // 提交载荷；POST 新建时后端对缺省落 normal，PATCH 时省略 = 保持旧值，两种
+      // 路径语义不同，不做「没改就省略」就不必把这种差异留给调用方去赌。
+      importance,
     });
   };
 
@@ -123,6 +132,8 @@ export default function ItemEditor({
         onTextChange={setText}
         category={category}
         onCategoryChange={setCategory}
+        importance={importance}
+        onImportanceChange={setImportance}
         date={date}
         onDateChange={setDate}
         reminders={reminders}

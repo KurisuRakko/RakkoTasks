@@ -1,8 +1,9 @@
 // 条目详情 Dialog：元信息 + AI 详情（懒生成，仅邮件条目）+ 关联邮件（点击展开 EmailViewer）
 // + 底部「显示原邮件/复制给 AI」（复制产物为 Markdown 纯文本，供粘贴给 AI）。
 // 手动条目（email_id === null）降级：无 AI 详情/关联邮件/原邮件，summary 用 breaks
-// 渲染保留换行；AppBar 提供「编辑」（ItemEditor + PATCH）与「删除」（确认后 DELETE），
-// 成功后经 onChanged/onDeleted 通知父组件同步列表。
+// 渲染保留换行；AppBar 提供「编辑」（ItemEditor + PATCH，任何条目都有，字段与提醒
+// 均可改）与「删除」（确认后 DELETE，仅手动条目），成功后经 onChanged/onDeleted
+// 通知父组件同步列表。
 // 移动端全屏、桌面端限宽（md）；paper 挂 VT_NAMES.sheet，与来源列表行做容器变换。
 // md 起经 columnDialogSx 与内容列重合（同宽、居中于主内容区），列表行长成对话框时
 // 容器只在纵向生长，不再露出空白条。
@@ -57,9 +58,9 @@ import { VT_NAMES } from '../lib/view-transition';
 interface Props {
   item: Item;
   onClose: () => void;
-  /** 手动条目编辑保存成功（条目已变化，父组件用它同步列表项） */
+  /** 条目编辑保存成功（条目已变化，父组件用它同步列表项；手动/邮件条目皆可触发） */
   onChanged?: (item: Item) => void;
-  /** 手动条目删除成功（父组件用它把条目移出列表） */
+  /** 条目删除成功（父组件用它把条目移出列表；仅手动条目会触发） */
   onDeleted?: (id: number) => void;
 }
 
@@ -81,7 +82,7 @@ export default function ItemDialog({ item, onClose, onChanged, onDeleted }: Prop
   const [showEmail, setShowEmail] = useState(false);
   const [copying, setCopying] = useState(false);
   const [snack, setSnack] = useState<string | null>(null);
-  // 手动条目的编辑 / 删除流程
+  // 编辑 / 删除流程（编辑对所有条目可用；删除仅手动条目，邮件条目无删除按钮）
   const [editorOpen, setEditorOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -147,7 +148,7 @@ export default function ItemDialog({ item, onClose, onChanged, onDeleted }: Prop
       .finally(() => setCopying(false));
   };
 
-  /** 编辑保存：PATCH 手动条目；成功后本组件与父组件列表同步更新 */
+  /** 编辑保存：PATCH 条目字段；成功后本组件与父组件列表同步更新 */
   const handleSaveEdit = (fields: ItemFields) => {
     setSaving(true);
     patchItem(current.id, fields)
@@ -198,15 +199,14 @@ export default function ItemDialog({ item, onClose, onChanged, onDeleted }: Prop
           <Typography variant="h6" sx={{ ml: 1, flexGrow: 1 }} noWrap>
             任务详情
           </Typography>
+          {/* 编辑：任何条目都能改字段与提醒；删除：仅手动条目（邮件条目后端仍拒删） */}
+          <IconButton color="inherit" aria-label="编辑" onClick={() => setEditorOpen(true)}>
+            <EditIcon />
+          </IconButton>
           {manual && (
-            <>
-              <IconButton color="inherit" aria-label="编辑" onClick={() => setEditorOpen(true)}>
-                <EditIcon />
-              </IconButton>
-              <IconButton color="inherit" aria-label="删除" onClick={() => setConfirmDelete(true)}>
-                <DeleteOutlineIcon />
-              </IconButton>
-            </>
+            <IconButton color="inherit" aria-label="删除" onClick={() => setConfirmDelete(true)}>
+              <DeleteOutlineIcon />
+            </IconButton>
           )}
         </Toolbar>
       </AppBar>
@@ -218,10 +218,10 @@ export default function ItemDialog({ item, onClose, onChanged, onDeleted }: Prop
           <Chip label={current.category} size="small" variant="outlined" />
           {current.due_date && <Chip label={formatDueDate(current.due_date)} size="small" />}
         </Stack>
-        {/* 提醒列表：只读展示。手动条目点右上角「编辑」真的能改——ItemEditor 经
-            initial.reminders 拿到现有提醒，保存时整体替换；邮件条目暂无编辑入口，
-            这里保持只读。按绝对时刻升序渲染，空则不出现。后端契约虽是升序，
-            展示方不赌调用方守约，这里显式排一次。 */}
+        {/* 提醒列表：只读展示。任何条目点右上角「编辑」都能改字段与提醒——ItemEditor
+            经 initial.reminders 拿到现有提醒，保存时整体替换——这里的列表本身只是
+            只读展示，不提供行内编辑。按绝对时刻升序渲染，空则不出现。后端契约
+            虽是升序，展示方不赌调用方守约，这里显式排一次。 */}
         {current.reminders.length > 0 && (
           <Box aria-label="提醒列表" sx={{ mb: 1.5, typography: 'body2' }}>
             {[...current.reminders]
@@ -377,6 +377,9 @@ export default function ItemDialog({ item, onClose, onChanged, onDeleted }: Prop
             summary: current.summary ?? '',
             category: current.category,
             due_date: current.due_date,
+            // 重要度：把条目现值带进编辑器（控件初始选中这一档），否则打开邮件
+            // 条目编辑器时重要度会退回默认 normal，一保存就把 AI 的判断洗掉了。
+            importance: current.importance,
             // ItemFieldsForm 的草案只在挂载时初始化，这里必须按绝对时刻升序喂好
             // （别赌调用方守约，与上面只读展示同一套显式排序写法）。
             reminders: [...current.reminders]
