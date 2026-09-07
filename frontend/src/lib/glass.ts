@@ -1,6 +1,6 @@
 // 玻璃接线层：材质配方来自 rakko-glass.css（design-system/src/glass.css 的逐字镜像），
-// 本文件只剩壁纸接线——图源变量名（WALLPAPER_VAR）、壁纸布尔属性标记（WALLPAPER_ATTR）
-// 与驯化层浓度（WALLPAPER_TAME_OPACITY）。
+// 本文件只剩壁纸接线——图源变量名（WALLPAPER_VAR）与壁纸布尔属性标记（WALLPAPER_ATTR）。
+// 驯化层纸色叠加已随产品决定移除：壁纸显示用户原图，不再垫纸色。
 //
 // 现存的玻璃表面：三块 chrome（顶栏 / 桌面侧边栏 / 移动端底栏）加每个可见列表行一块
 // panel。列表行自身就是 data-glass="panel" 的玻璃，直接压在壁纸上；盖住内容列的整块
@@ -24,16 +24,3 @@ export const WALLPAPER_VAR = '--rtk-wallpaper';
  *  import 带模块级副作用的 wallpaper.tsx（模块加载即读 localStorage 并写 <html>），
  *  这是不必要的依赖方向。 */
 export const WALLPAPER_ATTR = 'data-wallpaper';
-
-/**
- * 驯化层浓度：壁纸之上、玻璃之下的一层纸色叠加。
- *
- * Rakko Design 的玻璃档位是按「玻璃身后是纸色系页面内容」调校的（chrome 45% /
- * panel 58% 纸底）。用户壁纸是任意图像：深色图会把顶栏标题的对比度压到 2.6:1，
- * 过不了 AA。先用这层把任意图像压进可控亮度区间，玻璃档位随后按原设计工作，
- * 最坏情况（纯黑 / 纯白壁纸）对比度回到 5.2:1 以上，深浅色主题都过 AA。
- *
- * 它与壁纸合成同一个元素的两层 background（纸色渐变叠在图上），不占额外 DOM，
- * 也不产生额外合成层。
- */
-export const WALLPAPER_TAME_OPACITY = '35%';
