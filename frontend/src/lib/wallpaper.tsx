@@ -14,6 +14,12 @@ import { WALLPAPER_VAR } from './glass';
  *  （那边不能 import 常量），tests/wallpaper.test.tsx 会断言两处一致。 */
 export const WALLPAPER_STORAGE_KEY = 'rakkotasks.wallpaper';
 
+/** <html> 上「有没有壁纸」的布尔属性标记（有壁纸时存在、无壁纸时移除）。CSS 没法对
+ *  自定义属性的值做条件判断——WALLPAPER_VAR 只分 url(...) 与 none 两种值，主题层选择器
+ *  匹配不到——所以除了图源变量还要这个属性标记，供主题层用
+ *  :root:not([data-wallpaper]) 在无壁纸时改写玻璃高光。 */
+export const WALLPAPER_ATTR = 'data-wallpaper';
+
 /** 压缩上限：最长边 1920px，等比缩放、比 1920 小的不放大；JPEG 质量 0.75。
  *  可以压这么狠：壁纸身后还要被玻璃模糊一遍，清晰度不敏感；而 localStorage 只有
  *  5MB 上限，data URL 的 base64 还要再膨胀三分之一。 */
@@ -43,6 +49,10 @@ function applyToRoot(dataUrl: string | null): void {
   const root = document.documentElement;
   const safe = dataUrl !== null && SAFE_DATA_URL.test(dataUrl);
   root.style.setProperty(WALLPAPER_VAR, safe ? `url("${dataUrl}")` : 'none');
+  // 属性标记跟 safe 同一判定（脏值同样算没有壁纸），由主题层用
+  // :root:not([data-wallpaper]) 消费：没有壁纸时玻璃身后没有图像可透，透镜渐变与
+  // 内侧高光只剩无来由的光泽，应被禁用。
+  root.toggleAttribute(WALLPAPER_ATTR, safe);
 }
 
 /** 同步读 localStorage 里的壁纸 data URL；读失败（隐私模式等）或形状不符返回 null */
