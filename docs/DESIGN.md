@@ -148,6 +148,55 @@ AI 搜索同一套 `search_emails` / `read_emails`）：若邮件涉及来历不
 - 最终输出 JSON `{"answer_md": "...", "citations": [email_id, ...]}`。
   前端把 citations 渲染为可点击邮件引用。
 
+### 4.4 自然语言快速记事（一句话 → 条目）
+
+用户在「+」打开的对话框里说一句话（手机上直接用 iOS 键盘听写），LLM 解析成结构化
+条目。系统提示 `PARSE_TASK_SYSTEM` 在 `backend/app/llm.py`，单轮调用走已有的
+`_chat_json`（`json_object` 模式 + `temperature=0.2`），非法 JSON 追加纠错消息重试
+一次——与 4.1 邮件分类完全同一套机制，**不走 agent.py 的工具循环**（这里不需要检索）。
+
+输出 JSON（经 `llm.normalize_parsed_task` 归一化后才交给调用方）：
+
+```json
+{"title": "≤60字任务标题", "summary": "补充信息或空字符串",
+ "category": "学业|工作|个人|账单|其他", "due_date": "2026-09-08 或 null",
+ "actionable": true, "importance": "high|normal|low"}
+```
+
+字段口径：
+
+- `title` 要提炼出那件事、剥掉「提醒我」「记一下」这类元语言
+  （「明天提醒我去把空调修了」→「修空调」）；
+- `summary` 只在原话里有标题装不下的信息（地点、联系人、金额、具体要求）时才写，
+  **不许把标题换个说法复述一遍**——否则每条都是标题的回声；
+- `actionable=false` 用于「记下一件将会发生、本人无需动手的事」（维修工要上门、
+  快递会到），与 4.1 的语义一致；
+- 模糊区间（「这两天」「最近」「这周内」）取区间里**最早**的一天，不跨多天、
+  不拆成多条——数据模型只有单个 `due_date`，拆多条会让同一件事占好几行。
+
+**与 4.1 刻意相反的一点：这里必须解析相对日期。** 4.1 明令「不得推测日期」，因为
+邮件没写日期就是真没写，猜了会造出用户没承诺的截止日；而这里用户说「明天」就是
+明确指定，不换算成绝对日期的话记下来就是张废纸。这条分歧是刻意的，`llm.py` 的
+常量上方有同样的注释，不要有人来「统一」它。
+
+**「今天」的来源与时区**：请求体里前端传的浏览器本地日期（`todayIso()`，按本地
+年/月/日分量手拼，不用 `toISOString()`）优先；缺省或非法则回落到
+`ZoneInfo(settings.local_timezone)` 的今天，该时区配错（空串/查无此区/绝对路径）
+时再退一步用 UTC。**这条链上任何一环都不许用 `date.today()`**：容器 `TZ=UTC` 而
+`local_timezone` 默认悉尼，悉尼上午 10 点前 `date.today()` 还是「昨天」，解析
+「明天」会直接差一天。（`detail.py` 与 `search.py` 现有的 `date.today()` 是既有隐患，
+它们只把日期喂给检索类提示，错一天不产生错误数据，暂不改。）
+
+**提示注入**：用户输入照样过 `wrap_untrusted`（第 7 节）。用户自己敲的字属可信输入，
+但他可能把一段邮件正文粘进输入框；哨兵的代价接近零，堵住这条路。输出只落成结构化
+字段、不渲染 Markdown，所以不经 `strip_markdown_media`。
+
+**两种模式**（前端，第 8 节）：对话框右上角「速记」开关（默认关，存 localStorage）。
+关时走 `POST /api/items/parse` 拿字段填进预览编辑器、用户确认后才 `POST /api/items`；
+开时点「确定」立刻关窗，`POST /api/items/quick` 在后台解析并落库，结果回来弹
+Snackbar（带「查看」按钮）。`/quick` 的兜底放在服务端而非前端：请求一旦到达就会
+跑完，用户点完确定立刻关掉 PWA，条目照样入库。
+
 ## 5. 数据模型（SQLite，WAL）
 
 ```
@@ -288,6 +337,23 @@ CalDAV 例外：`/caldav/*` 与 `/.well-known/caldav` 不走上述 Bearer 中间
 - 条目详情（全屏 Dialog）：AI 详情（通常已预生成；未生成时首开现场生成，加载态）→ 底部「显示原邮件」展开 sandbox iframe
   → iframe 内「显示远程图片」开关。
 - 搜索页：问题输入 → 回答（Markdown 渲染）+ 引用邮件列表，点击打开邮件查看器。
+- 右下角「+」→ AI 快速添加（`AiAddDialog`，经 `expand-fab` 容器变换从按钮长出，
+  移动端全屏）。三阶段 `input → parsing → fields`，阶段过渡用 Collapse/Fade 走
+  `MOTION` token，**不新增 `VtKind`**（新增会连带改 `motion-styles.ts` 的转场契约）：
+  - `input`：**只有一个输入框**（无分类无日期），过渡结束后手动 `focus()` 让 iOS
+    键盘弹起（Dialog 内 `autoFocus` 在 iOS Safari 上不可靠）。Cmd/Ctrl+Enter = 确定，
+    裸 Enter 保持换行。
+  - `parsing`：Skeleton 骨架，容器带 `aria-busy` / `aria-label="正在解析"`。
+  - `fields`：`ItemFieldsForm`（与 `ItemEditor` 共用的受控字段区，DOM 与文案一处
+    定义），值由解析结果预填；`importance` / `actionable` 存进组件 state 于保存时
+    原样带进载荷，**界面上不给编辑控件**。
+  右上角「速记」Switch（`role="switch"`，默认关，localStorage 键
+  `rakkotasks.quick-mode`）：开则跳过 `parsing`/`fields`，点「确定」立刻关窗并把原文
+  交给编排层走 `/api/items/quick`。解析失败回 `input`、**保留用户原文不清空**，
+  给一个「按原文添加」兜底按钮——绝不让用户白打一遍。
+- 速记落库的 Promise **故意不绑组件生命周期**（不接 AbortController、卸载时不取消）：
+  请求一旦到达服务端就会跑完并入库，用户切页也该让它继续；卸载时取消只会白丢条目。
+  结果回来弹 Snackbar，带「查看」按钮（文案就是「查看」两个字）直接开该条详情。
 - 状态页：账户健康、上次同步、错误信息。
 - PWA：vite-plugin-pwa，manifest 名称 RakkoTasks，可添加到主屏幕。
 - 移动优先；MUI 默认主题即可，8dp 间距体系。
@@ -304,8 +370,13 @@ CalDAV 例外：`/caldav/*` 与 `/.well-known/caldav` 不走上述 Bearer 中间
 
 ## 10. 非目标（v1 明确不做）
 
-英文界面；手动添加/编辑任务；发件人静音规则；勾选回写邮箱已读；除 INBOX 外的文件夹；
-附件下载；推送通知；网页端管理邮箱账户（只走 CLI）；用户审批流程。
+英文界面；发件人静音规则；勾选回写邮箱已读；除 INBOX 外的文件夹；附件下载；
+推送通知；用户审批流程。
+
+已反转（曾列为非目标、后来做了，留档以免有人照旧文档判断）：**手动添加/编辑任务**
+（`POST /api/items` 与 `ItemEditor`，2026-08 起）；**网页端管理邮箱账户**
+（`/api/accounts*` 与设置页自助管理，2026-09-06 起）；**自然语言快速记事**
+（4.4 节，2026-09-07 起）。
 
 ## 11. CalDAV（iPhone 提醒事项同步）
 
@@ -482,6 +553,13 @@ CalDAV 例外：`/caldav/*` 与 `/.well-known/caldav` 不走上述 Bearer 中间
 - 不支持子任务、在 iPhone 上新建列表/分类（集合固定、新任务归「个人」）；
 - 不做 scheduling（无 ATTENDEE/邀请往来）；CalDAV 被当作本清单的只读镜像加回写
   通道，不做日历事件、不做闹钟的服务端存储（闹钟随客户端原文透传）。
+
+> **待重新审视**：产品侧已经要「一个条目挂多个提醒时间 + 一个独立截止日」
+> （周二提一次、周五提一次、周日到期）。那要求推翻上面最后一条——服务端一旦拥有
+> VALARM，`_apply_owned` 的 `_OWNED_NAMES` 与时间簇规则都要重写，且**用户在
+> iPhone 上手动加的闹钟会被服务端覆盖**。还有个更前置的问题：本项目没有任何通知
+> 通道（第 10 节非目标里「推送通知」仍在），存了多个 `remind_at` 之后靠什么敲用户
+> 需要先定。因此它不在 4.4 那一轮的范围内，单独一轮做；动手前先回来改这一节。
 
 ### 11.11 已知行为
 
