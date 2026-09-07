@@ -12,13 +12,12 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, renderHook } from '@testing-library/react';
-import { WALLPAPER_VAR } from '../src/lib/glass';
+import { WALLPAPER_ATTR, WALLPAPER_VAR } from '../src/lib/glass';
 import {
   compressWallpaper,
   readWallpaper,
   setWallpaper,
   useWallpaper,
-  WALLPAPER_ATTR,
   WALLPAPER_STORAGE_KEY,
 } from '../src/lib/wallpaper';
 import htmlSource from '../index.html?raw';
