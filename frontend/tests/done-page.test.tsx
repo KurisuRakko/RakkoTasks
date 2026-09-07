@@ -177,3 +177,89 @@ describe('列表行玻璃视觉（cardRowSx）', () => {
     expect(rowBtn.className).toMatch(/(?:^|\s)css-[A-Za-z0-9_-]+/);
   });
 });
+
+describe('DonePage 行上下文菜单', () => {
+  /** 找到指定标题所在行的 ListItemButton（行玻璃） */
+  function rowButton(title: string): HTMLElement {
+    const btn = screen.getByText(title).closest('.MuiListItemButton-root');
+    expect(btn).not.toBeNull();
+    return btn as HTMLElement;
+  }
+
+  it('右键行弹出上下文菜单：菜单纸面带 data-glass="panel"，含 恢复为待办/编辑/删除 三项', async () => {
+    const fetchMock = vi.fn(async (_url: string | URL, _init?: RequestInit) =>
+      json({ items: ITEMS }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<DonePage />);
+    await screen.findByText('任务一');
+
+    fireEvent.contextMenu(rowButton('任务一'), { clientX: 210, clientY: 96 });
+
+    // 菜单出现，纸面挂 panel 玻璃（材质由 rakko-glass.css 配方提供）
+    const menu = await screen.findByRole('menu');
+    const paper = menu.closest('.MuiPaper-root');
+    expect(paper).not.toBeNull();
+    expect(paper!.getAttribute('data-glass')).toBe('panel');
+    // 三项文案按顺序在菜单里（操作列表：DropdownMenu 档）
+    for (const label of ['恢复为待办', '编辑', '删除']) {
+      expect(screen.getByRole('menuitem', { name: label })).toBeTruthy();
+    }
+  });
+
+  it('点菜单「恢复为待办」走既有恢复流程：离场后 PATCH {"status":"open"} 且行移出列表', async () => {
+    const fetchMock = vi.fn(async (url: string | URL, init?: RequestInit) => {
+      const u = String(url);
+      if (init?.method === 'PATCH') return json({ id: 1, status: 'open' });
+      if (u.startsWith('/api/items')) return json({ items: ITEMS });
+      return json({}, 404);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<DonePage />);
+    await screen.findByText('任务一');
+
+    fireEvent.contextMenu(rowButton('任务一'), { clientX: 40, clientY: 40 });
+    fireEvent.click(await screen.findByRole('menuitem', { name: '恢复为待办' }));
+
+    // 与取消勾选 checkbox 同一流程：离场动画（LEAVE_DURATION）结束后才 PATCH open
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.some(([, init]) => init?.method === 'PATCH')).toBe(true);
+    });
+    const patchCall = fetchMock.mock.calls.find(
+      ([, init]) => init?.method === 'PATCH',
+    ) as [string, RequestInit] | undefined;
+    expect(patchCall).toBeDefined();
+    const [url, init] = patchCall!;
+    expect(url).toBe('/api/items/1');
+    expect(JSON.parse(String(init.body))).toEqual({ status: 'open' });
+    await waitFor(() => expect(screen.queryByText('任务一')).toBeNull());
+  });
+
+  it('菜单打开时全页只有一份 RowContextMenu（菜单纸面 ≤1），且不构成嵌套玻璃', async () => {
+    const fetchMock = vi.fn(async (_url: string | URL, _init?: RequestInit) =>
+      json({ items: ITEMS }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<DonePage />);
+    await screen.findByText('任务一');
+
+    // 打开前页面上没有菜单纸面（按需挂载）
+    expect(document.querySelectorAll('.MuiMenu-paper[data-glass="panel"]')).toHaveLength(0);
+
+    fireEvent.contextMenu(rowButton('任务二'), { clientX: 30, clientY: 30 });
+    await screen.findByRole('menu');
+
+    // 只挂一份：菜单纸面（.MuiMenu-paper）恰好一个。列表行的 panel 玻璃在
+    // ListItemButton 上，不是菜单实例，不计入
+    expect(document.querySelectorAll('.MuiMenu-paper[data-glass="panel"]')).toHaveLength(1);
+
+    // 打开时不构成嵌套玻璃：没有一个 data-glass 元素是另一个 data-glass 的后代
+    // （菜单 portal 到 body，与行只是视觉重叠；行玻璃之间也互不为后代）
+    for (const el of Array.from(document.querySelectorAll('[data-glass]'))) {
+      expect(el.parentElement?.closest('[data-glass]') ?? null).toBeNull();
+    }
+  });
+});
