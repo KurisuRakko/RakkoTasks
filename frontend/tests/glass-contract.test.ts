@@ -43,6 +43,39 @@ async function walkSrc(): Promise<string[]> {
   return out;
 }
 
+/** 从 CSS 文本取出某个规则块的完整文本：起始行 trim 后须与 selector 整行相等（避免误中
+ * 选择器更长的变体，如 chrome 的 data-reveal 规则），再按大括号配对取到对应结束 }。 */
+function blockOf(css: string, selector: string): string {
+  const lines = css.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].trim() !== selector) continue;
+    const out: string[] = [];
+    let depth = 0;
+    let opened = false;
+    for (let j = i; j < lines.length; j++) {
+      out.push(lines[j]);
+      depth += (lines[j].match(/\{/g) ?? []).length;
+      depth -= (lines[j].match(/\}/g) ?? []).length;
+      if (depth > 0) opened = true;
+      if (opened && depth <= 0) break;
+    }
+    return out.join('\n');
+  }
+  throw new Error(`规则块未找到：${selector}`);
+}
+
+/** 两条退化块的文本切片：@supports-not（无 backdrop-filter）与 prefers-reduced-transparency */
+function degradeRegions(css: string): { supports: string; reduce: string } {
+  const supportsStart = css.indexOf('@supports not ((backdrop-filter');
+  const reduceStart = css.indexOf('@media (prefers-reduced-transparency: reduce)');
+  expect(supportsStart).toBeGreaterThan(-1);
+  expect(reduceStart).toBeGreaterThan(-1);
+  return {
+    supports: css.slice(supportsStart, reduceStart),
+    reduce: css.slice(reduceStart),
+  };
+}
+
 describe('rakko-glass.css 镜像完整性', () => {
   it('4a. 四档材质配方选择器都在', async () => {
     const glassCss = (await loadFs()).readFileSync('src/rakko-glass.css', 'utf-8');
@@ -120,9 +153,11 @@ describe('变量下发守卫', () => {
   it('4e. rakko-glass.css 消费的每个 CSS 变量都能在 theme.ts 里找到下发', async () => {
     const glassCss = (await loadFs()).readFileSync('src/rakko-glass.css', 'utf-8');
 
-    // 任务书 3a 的 :root 下发清单（共 14 个键；任务书行文称 15，按实际清单断言）。
-    // css 实际消费的非 --rk- 变量为 13 个：--glass-scrim-opacity 由主题层 MuiBackdrop
-    // 消费（不在玻璃样式表里），故总下发数比 css 消费数多 1，两条都逐字断言。
+    // 任务书 3a 的 :root 下发清单（原 14 键）+ Aero 化新增的 12 个（--glass-rim …
+    // --glass-text-glow），共 26 键，逐字断言。css 实际消费的非 --rk- 变量为 23 个；
+    // --glass-scrim-opacity（主题层 MuiBackdrop 消费）、--glass-highlight（新配方已不消费，
+    // 主题层仍下发）与 --shadow-whisper（haze 等场景仍用）不在玻璃样式表里，
+    // 故总下发数比 css 消费数多 3。
     const providedByTheme = [
       '--color-paper',
       '--color-border',
@@ -137,6 +172,18 @@ describe('变量下发守卫', () => {
       '--glass-highlight',
       '--glass-haze-opacity',
       '--glass-haze-bleed',
+      '--glass-rim',
+      '--glass-rim-inner',
+      '--glass-lip',
+      '--glass-lip-under',
+      '--glass-side',
+      '--glass-bloom',
+      '--glass-sheen-1',
+      '--glass-sheen-2',
+      '--glass-sheen-3',
+      '--glass-sheen-4',
+      '--glass-lift',
+      '--glass-text-glow',
       '--shadow-whisper',
     ];
     for (const v of providedByTheme) {
@@ -157,5 +204,95 @@ describe('变量下发守卫', () => {
     for (const v of contractVars) {
       expect(themeTs, `${v} 被玻璃样式消费，须在 theme.ts 有对应下发`).toContain(`'${v}'`);
     }
+  });
+});
+
+describe('Aero 玻璃配方契约（新材质接线）', () => {
+  it('5a. panel 配方含 rim / lip / bloom / lift / text-glow', async () => {
+    const glassCss = (await loadFs()).readFileSync('src/rakko-glass.css', 'utf-8');
+    const panel = blockOf(glassCss, "[data-glass='panel'] {");
+    for (const v of ['--glass-rim', '--glass-lip', '--glass-bloom', '--glass-lift', '--glass-text-glow']) {
+      expect(panel, `panel 配方应含 ${v}`).toContain(v);
+    }
+    // 旧「左上透镜」radial 已被 sheen 光泽取代：不得残留为第二层，否则上半部过曝
+    expect(panel).not.toContain('120% 90% at 18% 0%');
+    expect(panel).not.toContain('--glass-highlight');
+  });
+
+  it('5b. chrome 配方保留 radial，但换成 Aero 弧光，并带文字光晕', async () => {
+    const glassCss = (await loadFs()).readFileSync('src/rakko-glass.css', 'utf-8');
+    const chrome = blockOf(glassCss, "[data-glass='chrome'] {");
+    expect(chrome).toContain('ellipse 150% 200% at 14% -74%');
+    expect(chrome).toContain('var(--glass-sheen-1)');
+    expect(chrome).toContain('--glass-lip');
+    expect(chrome).toContain('--glass-text-glow');
+  });
+
+  it('5c. inverse 配方不含 --glass-text-glow（不压在壁纸上，不设文字光晕）', async () => {
+    const glassCss = (await loadFs()).readFileSync('src/rakko-glass.css', 'utf-8');
+    const inverse = blockOf(glassCss, "[data-glass='inverse'] {");
+    expect(inverse).not.toContain('--glass-text-glow');
+    expect(inverse).not.toContain('text-shadow');
+  });
+
+  it('5d. 文字光晕关闭钩子：data-glass-text="off" 置 none，等宽元素自动免除', async () => {
+    const glassCss = (await loadFs()).readFileSync('src/rakko-glass.css', 'utf-8');
+    const hook = blockOf(glassCss, "[data-glass-text='off'],");
+    expect(hook).toContain('text-shadow: none');
+    expect(hook).toContain("[data-glass-text='off'] *");
+    // 等宽字由材质自动免除光晕；:where() 特异性为 0，不与消费方自己的 text-shadow 打架
+    expect(glassCss).toContain('[data-glass] :where(code, pre, kbd, samp)');
+  });
+
+  it('5e. 退化块底色换成不透明 --color-paper / --color-neutral-10，border 与 box-shadow 仍完整', async () => {
+    const glassCss = (await loadFs()).readFileSync('src/rakko-glass.css', 'utf-8');
+    const { supports, reduce } = degradeRegions(glassCss);
+    for (const [region, name] of [
+      [supports, '@supports-not（无 backdrop-filter）'] as const,
+      [reduce, '@media reduce'] as const,
+    ]) {
+      for (const selector of ["[data-glass='chrome'] {", "[data-glass='panel'] {"]) {
+        expect(blockOf(region, selector), `${name} 的 ${selector} 应是不透明纸底`).toContain('var(--color-paper);');
+      }
+      expect(blockOf(region, "[data-glass='inverse'] {"), `${name} 的 inverse 应是不透明反色底`).toContain('var(--color-neutral-10);');
+      // 厚度边与光泽仍在：border / box-shadow 全量声明（退化不丢识别特征）
+      const panel = blockOf(region, "[data-glass='panel'] {");
+      expect(panel).toContain('border: 1px solid var(--glass-rim);');
+      expect(panel).toContain('inset 0 0 0 1px var(--glass-rim-inner),');
+      expect(panel).toContain('var(--glass-lift);');
+      expect(blockOf(region, "[data-glass='chrome'] {")).toContain('inset 0 1px 0 var(--glass-lip),');
+      const inverse = blockOf(region, "[data-glass='inverse'] {");
+      expect(inverse).toContain('border: 1px solid');
+      expect(inverse).toContain('var(--glass-lift);');
+    }
+  });
+
+  it('5f. reduced-transparency 退化块把文字光晕置 none；无 blur 支持的退化块保留光晕', async () => {
+    const glassCss = (await loadFs()).readFileSync('src/rakko-glass.css', 'utf-8');
+    const { supports, reduce } = degradeRegions(glassCss);
+    for (const selector of ["[data-glass='chrome'] {", "[data-glass='panel'] {"]) {
+      expect(blockOf(reduce, selector), `${selector} 在 reduce 块应关掉文字光晕`).toContain('text-shadow: none;');
+      expect(blockOf(supports, selector), `${selector} 在无 blur 块应保留文字光晕`).toContain('text-shadow: var(--glass-text-glow);');
+    }
+  });
+
+  it('5g. haze 原样未动：九团云、噪声贴图、两种形态的规则都在', async () => {
+    const glassCss = (await loadFs()).readFileSync('src/rakko-glass.css', 'utf-8');
+    const haze = blockOf(glassCss, "[data-glass='haze'] {");
+    // cloud 的九团：三团主体 + 六团外围凸起，全部收在盒内
+    const blobs = haze.split('\n').filter((line) => line.includes('radial-gradient('));
+    expect(blobs).toHaveLength(9);
+    expect(haze).toContain('--rk-glass-haze-cloud-core, 33%');
+    expect(glassCss).toContain('feTurbulence');
+    for (const selector of [
+      "[data-glass='haze']::before {",
+      "[data-glass='haze']::after {",
+      "[data-glass='haze'][data-haze='veil']::before {",
+      "[data-glass='haze'][data-haze='veil']::after {",
+    ]) {
+      expect(() => blockOf(glassCss, selector), `缺少 ${selector}`).not.toThrow();
+    }
+    // 雾边 = 九团并集 ∩ 分形噪声
+    expect(glassCss).toContain('mask-composite: intersect');
   });
 });
