@@ -21,6 +21,7 @@ function makeItem(partial: Partial<Item>): Item {
     status: 'open',
     detail_md: null,
     related: [],
+    reminders: [],
     created_at: '2026-08-01T00:00:00Z',
     done_at: null,
     ...partial,

@@ -14,6 +14,19 @@ export type Category = '学业' | '工作' | '个人' | '账单' | '其他';
 /** 可选分类常量（编辑器与筛选共用同一份） */
 export const CATEGORIES: readonly Category[] = ['学业', '工作', '个人', '账单', '其他'];
 
+/** 单个提醒时刻（reminders 表一行） */
+export interface Reminder {
+  id: number;
+  /** ISO 8601 带 UTC 偏移（后端存 naive UTC，序列化时补 +00:00）；渲染按浏览器本地时区 */
+  remind_at: string;
+}
+
+/** 每个条目最多几个提醒（与后端 itemrules.REMINDERS_MAX 一致） */
+export const REMINDERS_MAX = 5;
+
+/** 没指定时刻时的默认提醒小时（本地时间，与后端 DEFAULT_REMIND_HOUR 一致） */
+export const DEFAULT_REMIND_HOUR = 10;
+
 /** 条目重要度（与 due_date 无关；high 无日期也不沉底） */
 export type Importance = 'high' | 'normal' | 'low';
 
@@ -36,6 +49,8 @@ export interface Item {
   detail_md: string | null;
   /** AI 详情生成时检索到的关联邮件（可为空数组） */
   related: RelatedEmail[];
+  /** 提醒时刻，按时间升序；与 due_date 是两件事（截止 vs 敲人） */
+  reminders: Reminder[];
   created_at: string;
   done_at: string | null;
 }
@@ -112,6 +127,12 @@ export interface ItemFields {
   importance?: Importance;
   /** AI 解析出的「是否要亲自动手」；省略时后端落 true。同样只透传不编辑。 */
   actionable?: boolean;
+  /**
+   * 提醒时刻，**带 UTC 偏移的完整 ISO 8601**（如 "2026-09-08T10:00:00+10:00"）。
+   * 后端拒收不带偏移的串——没有偏移它就不知道你在哪个时区。省略 = 不改；
+   * 传 [] = 清空全部提醒。
+   */
+  reminders?: string[];
 }
 
 /**
@@ -127,6 +148,12 @@ export interface ParsedTask {
   due_date: string | null;
   importance: Importance;
   actionable: boolean;
+  /**
+   * AI 解析出的提醒时刻，带 UTC 偏移的 ISO 8601。模型产出的是本地墙上时刻
+   * （它不知道偏移），后端用请求里的 tz 换算好才返回，所以前端拿到的已是绝对时刻，
+   * 可以直接塞进 ItemFields.reminders。
+   */
+  reminders: string[];
 }
 
 /** POST /api/items/quick 返回体：解析并落库；解析失败时后端用原文兜底建条目 */

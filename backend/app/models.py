@@ -1,4 +1,4 @@
-"""SQLAlchemy 2.0 声明式模型：users / accounts / emails / items（见 DESIGN.md 第 5 节）。"""
+"""SQLAlchemy 2.0 声明式模型：users / accounts / emails / items / reminders（见 DESIGN.md 第 5 节）。"""
 from __future__ import annotations
 
 import uuid
@@ -112,3 +112,42 @@ class Item(Base):
     updated_at: Mapped[datetime | None] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)
 
     email: Mapped["Email | None"] = relationship(back_populates="item")
+    # 提醒时刻列表，按时间升序。cascade 与 FK 的 ondelete 两道都要：三处删条目
+    # （api/cli/caldav store）走的都是 ORM session.delete，靠 cascade 生效；
+    # ondelete 兜住将来可能出现的批量 DELETE（db.py 已开 PRAGMA foreign_keys=ON）。
+    reminders: Mapped[list["Reminder"]] = relationship(
+        back_populates="item",
+        cascade="all, delete-orphan",
+        order_by="Reminder.remind_at",
+        passive_deletes=False,
+    )
+
+
+class Reminder(Base):
+    """条目的提醒时刻（一条目多提醒）。
+
+    与 items.due_date 是**两件事**：due_date 是「什么时候到期」（全天、无时刻），
+    这里是「什么时候敲用户」（有时刻）。分开的理由见 DESIGN.md 4.4 与 11.5——
+    「明天提醒我修空调」只该产生提醒、不该产生一个假的截止日。
+
+    remind_at 为 naive datetime、按 UTC 解释（与全库 DateTime 列同口径）；
+    本地时刻 ↔ UTC 的换算发生在 API 边界（见 itemrules.validate_reminders）。
+    """
+
+    __tablename__ = "reminders"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    item_id: Mapped[int] = mapped_column(
+        ForeignKey("items.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    remind_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.now, server_default=func.now(), nullable=False
+    )
+
+    item: Mapped["Item"] = relationship(back_populates="reminders")
+
+    __table_args__ = (
+        # 同一条目同一时刻只留一个：去重在 validate_reminders 里做，这里是兜底
+        UniqueConstraint("item_id", "remind_at", name="uq_reminders_item_at"),
+    )

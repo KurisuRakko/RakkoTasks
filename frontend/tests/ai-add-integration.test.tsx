@@ -30,6 +30,7 @@ const PARSED: ParsedTask = {
   due_date: '2026-09-08',
   importance: 'high',
   actionable: false,
+  reminders: [],
 };
 
 function makeItem(partial: Partial<Item>): Item {
@@ -46,6 +47,7 @@ function makeItem(partial: Partial<Item>): Item {
     status: 'open',
     detail_md: null,
     related: [],
+    reminders: [],
     created_at: '2026-08-01T00:00:00Z',
     done_at: null,
     ...partial,

@@ -108,9 +108,17 @@ def _migrate_items_manual(engine: Engine) -> None:
 
     为什么重建：手动条目（无源邮件）没有 email_id，旧结构 email_id NOT NULL 写
     不进去，而 SQLite 的 ALTER TABLE 不能改既有列的约束（去 NOT NULL），只能
-    重建表。为什么安全：items 上没有 FTS 触发器（FTS 只挂在 emails 上），也
-    没有别的表引用 items，重建不牵动其他表。模型（Base.metadata）是唯一 schema
-    来源，新表的 CREATE TABLE / CREATE INDEX 都由模型编译，不手写 DDL。
+    重建表。items 上没有 FTS 触发器（FTS 只挂在 emails 上）。模型
+    （Base.metadata）是唯一 schema 来源，新表的 CREATE TABLE / CREATE INDEX
+    都由模型编译，不手写 DDL。
+
+    **reminders 表引用 items**（2026-09-07 加），所以「没有别的表引用 items」
+    这个原始前提已经不成立了：现代 SQLite 的 ALTER TABLE ... RENAME 会顺手把
+    其他表的外键定义改指向新名字（items_old），随后 DROP TABLE items_old 就
+    留下一个指向已删表的悬空外键。靠 legacy_alter_table=ON 关掉这个「贴心」
+    行为——它让 RENAME 退回纯改名语义，不碰任何引用方。
+    reminders 在这条路径上恒为空表（create_all 在本函数之前刚建出来，而需要
+    本迁移的老库根本没有 reminders 数据），所以不需要搬数据。
     归属推导链已从 Item→Email→Account.user_sub 换成 items.user_sub 直挂，旧行
     的归属在迁移里回填：某行邮件链断裂（邮件/账户已不存在）导致归属无法推导时
     抛 RuntimeError 回滚整个事务——宁可启动失败也不能静默丢条目。
@@ -126,8 +134,11 @@ def _migrate_items_manual(engine: Engine) -> None:
             # pysqlite 的隐式事务只包 DML 不包 DDL，engine.begin() 的回滚管不住
             # RENAME/CREATE/DROP，所以迁移开显式事务并全部走裸 cursor（绕开
             # sqlite3 模块的隐式事务状态机），失败整体 ROLLBACK，表结构原样保留。
+            # 必须在事务外设置：SQLite 不允许在事务中改这个 pragma
+            cur.execute("PRAGMA legacy_alter_table=ON")
             cur.execute("BEGIN IMMEDIATE")
             try:
+                # legacy 语义：只改名，不去改写 reminders 等引用方的外键定义
                 cur.execute("ALTER TABLE items RENAME TO items_old")
                 table = Base.metadata.tables["items"]
                 cur.execute(str(CreateTable(table).compile(dialect=engine.dialect)))
@@ -157,6 +168,9 @@ def _migrate_items_manual(engine: Engine) -> None:
             except BaseException:
                 cur.execute("ROLLBACK")
                 raise
+            finally:
+                # 只影响本连接，但别把非默认状态留给后续 DDL
+                cur.execute("PRAGMA legacy_alter_table=OFF")
         finally:
             cur.close()
 

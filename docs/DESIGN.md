@@ -218,6 +218,10 @@ items(id, email_id→emails UNIQUE|null（null=手动条目，无源邮件）, u
       caldav_ics|null（客户端最近一次 PUT 的原始 VCALENDAR 文本，透传载体）,
       updated_at|null（ORM onupdate 维护，内容 ETag 的时间来源））
       user_sub 建索引（手动条目没有邮件链，归属直接落在条目上）
+reminders(id, item_id→items ON DELETE CASCADE, remind_at datetime（naive UTC）, created_at)
+      item_id 建索引；UNIQUE(item_id, remind_at)
+      与 items.due_date 是两件事：due_date = 何时到期（全天、无时刻），
+      remind_at = 何时敲用户（有时刻）。每条目最多 REMINDERS_MAX=5 个
 ```
 
 - CalDAV 资源名 = `coalesce(caldav_name, caldav_uid)`：iPhone 侧寻址、ctag 排序都
@@ -232,6 +236,17 @@ items(id, email_id→emails UNIQUE|null（null=手动条目，无源邮件）, u
   SQLite 的 ALTER 不能去掉既有列的 NOT NULL，而 items 上没有 FTS 触发器、也没有表引用它，
   所以可以 `RENAME → 按模型建新表 → 搬行 → 计数核对 → DROP` 整表重建；旧行的归属在迁移里
   经邮件链推导回填进 `user_sub`，邮件链断裂的行宁可启动失败（回滚）也不静默丢弃。
+- `reminders` 是**新表**，不需要就地 ALTER 迁移：`init_db` 里 `Base.metadata.create_all`
+  跑在最前面，缺表直接建出来。删条目时提醒跟着走，两道都要：关系上
+  `cascade="all, delete-orphan"`（三处删条目——`api.py` / `cli.py` / `caldav/store.py`
+  ——走的都是 ORM `session.delete`，靠它生效），FK 上 `ondelete="CASCADE"`
+  （兜住将来可能出现的批量 DELETE，`db.py` 已开 `PRAGMA foreign_keys=ON`）。
+- ⚠ `reminders` 引用 items，把 `_migrate_items_manual` docstring 里原来那句
+  「没有别的表引用 items」作废了。现代 SQLite 的 `ALTER TABLE ... RENAME` 会顺手把
+  引用方的外键定义改指向新名（`items_old`），随后 `DROP TABLE items_old` 就留下悬空
+  外键。该迁移已加 `PRAGMA legacy_alter_table=ON` 把 RENAME 退回纯改名语义。
+  （该路径在 2026-08-30 之后的库上因幂等检查永不执行，但更老的库上是活的——
+  `create_all` 跑在它前面，`reminders` 会先被建出来。）
 - `users`：登录 Phainon 的用户，首次访问自动创建（准入见第 6 节）。
 - `users.calendar_token`：日历订阅密钥（`/api/calendar/{token}.ics`），链接即凭据；
   旧库由 `_ensure_columns` 补普通列（ADD COLUMN 加不了 UNIQUE，新建库才有 UNIQUE 约束），
@@ -258,12 +273,21 @@ CalDAV 路径 /caldav/* 与 /.well-known/caldav 不在其列——走 HTTP Basic
 GET  /api/health                    公开存活探针
 GET  /api/items?status=&category=   条目列表（默认 open；每项含 related 关联邮件）
 POST /api/items                     新建手动条目（email_id=null）：{"title","summary","category","due_date",
-                                    "importance"?,"actionable"?}，后两个省略时落 normal / true
+                                    "importance"?,"actionable"?,"reminders"?}
+                                    reminders 是**带 UTC 偏移的 ISO 8601** 串数组
+                                    （"2026-09-08T10:00:00+10:00"）；不带偏移一律 400
+                                    bad_reminders——没偏移就是歧义时刻，不替用户猜。
+                                    省略 = 无提醒，[] = 清空。超过 5 个 → 400
+                                    too_many_reminders。后两个省略时落 normal / true
                                     （AI 快速添加的预览阶段用它们透传 AI 判断，界面上无编辑控件）；
                                     校验失败 400 bad_title|bad_summary|bad_category|bad_due_date|bad_importance；成功 201
 POST /api/items/parse               一句自然语言 → 条目字段，**不落库**（限流 20/60s）：
-                                    {"text"（≤2000 字）, "today"?（YYYY-MM-DD，用户本地日期）}
-                                    → 200 {"title","summary","category","due_date","importance","actionable"}
+                                    {"text"（≤2000 字）, "today"?（YYYY-MM-DD，用户本地日期）,
+                                     "tz"?（IANA 时区名，如 "Australia/Sydney"）}
+                                    → 200 {"title","summary","category","due_date","importance",
+                                           "actionable","reminders"}
+                                    reminders 已由服务端用 tz 把模型输出的本地墙上时刻
+                                    换算成带偏移的绝对时刻，前端可直接回填进 POST /api/items
                                     LLM 失败 → 502 parse_error；超长 text → 422
 POST /api/items/quick               解析并落库，速记模式用（限流与 /parse 共用同一个 20/60s 计数）：
                                     请求体同 /parse → 201 {"item": {...}, "ai_parsed": bool}
@@ -274,7 +298,9 @@ POST /api/items/quick               解析并落库，速记模式用（限流�
                                     立刻关掉 PWA，条目照样入库
 PATCH /api/items/{id}               {"status"} 任何条目可改；{"title","summary","category","due_date"}
                                     只对手动条目（email_id=null）开放，邮件条目改这四个字段 400 not_editable；
-                                    空请求体 400 bad_request；成功 200
+                                    {"reminders"} **任何条目都可改**（含邮件条目）——提醒是用户
+                                    自己挂上去的东西，与条目内容归谁无关；传入即整体替换
+                                    （不是增量），[] 清空；空请求体 400 bad_request；成功 200
 DELETE /api/items/{id}              手动条目 → 204；邮件条目 → 400 not_editable
 GET  /api/items/{id}                含 detail_md（可能为 null）与 related
 POST /api/items/{id}/detail         生成并缓存详情与关联邮件（agentic，多轮 LLM），
@@ -304,6 +330,9 @@ GET  /api/calendar/{token}.ics      公开（令牌即凭据，不需要 Bearer�
   `user_sub` 直接挂在条目上；`/api/calendar/{token}.ics` 按令牌对应用户的 sub 过滤条目。
 - `/api/status` 的账户对象新增 `enabled: boolean`（CLI 停用后为 false，账户仍返回）；
   任何 API 响应都不含 `app_password` / `token_cache`。
+- 条目对象一律带 `reminders: [{id, remind_at}]`（按 `remind_at` 升序，空则 `[]`）；
+  `remind_at` 是带 `+00:00` 的 ISO 8601（库内 naive UTC 序列化时补偏移），前端按浏览器
+  本地时区渲染。
 - 手动条目对象：`email_id: null`（前端据此区分手动/邮件条目），`email_subject` /
   `email_sender` / `email_sent_at` 为 null，`detail_md` 恒为 null、`related` 恒为 []。
 
@@ -551,15 +580,46 @@ CalDAV 例外：`/caldav/*` 与 `/.well-known/caldav` 不走上述 Bearer 中间
 - 不支持 RRULE/重复任务（只处理主 VTODO；带 RECURRENCE-ID 的实例只随时间簇整体
   保留或删除，不解析不生成）；
 - 不支持子任务、在 iPhone 上新建列表/分类（集合固定、新任务归「个人」）；
-- 不做 scheduling（无 ATTENDEE/邀请往来）；CalDAV 被当作本清单的只读镜像加回写
-  通道，不做日历事件、不做闹钟的服务端存储（闹钟随客户端原文透传）。
+- 不做 scheduling（无 ATTENDEE/邀请往来）；CalDAV 被当作本清单的只读镜像加回写通道，
+  不做日历事件。
+- **闹钟不再是纯透传**（2026-09-07 起，见 11.12 的双车道）：服务端拥有自己那条车道，
+  客户端手设的闹钟仍原样透传保留。
 
-> **待重新审视**：产品侧已经要「一个条目挂多个提醒时间 + 一个独立截止日」
-> （周二提一次、周五提一次、周日到期）。那要求推翻上面最后一条——服务端一旦拥有
-> VALARM，`_apply_owned` 的 `_OWNED_NAMES` 与时间簇规则都要重写，且**用户在
-> iPhone 上手动加的闹钟会被服务端覆盖**。还有个更前置的问题：本项目没有任何通知
-> 通道（第 10 节非目标里「推送通知」仍在），存了多个 `remind_at` 之后靠什么敲用户
-> 需要先定。因此它不在 4.4 那一轮的范围内，单独一轮做；动手前先回来改这一节。
+### 11.12 VALARM 双车道（提醒的落地方式）
+
+`reminders` 表要变成 iPhone 上真的会响的东西，只有 CalDAV 这条路——VALARM。
+难点是现状的透传哲学：客户端 PUT 的原文整体存进 `caldav_ics`，VALARM / `X-APPLE-*`
+服务端一根手指都不碰。直接改成「服务端拥有 VALARM」会**洗掉用户在 iPhone 上手加的
+闹钟**，那是真实的功能退化。
+
+所以分两条车道，靠一个自有标记属性区分：
+
+- **服务端车道**：每条 `reminders` 生成一个 VALARM，内含
+  `X-RAKKOTASKS-REMINDER:1` 标记。序列化时先删掉透传体里**带这个标记的** VALARM
+  子组件，再按库内提醒重新写入。
+- **客户端车道**：不带标记的 VALARM（用户在提醒事项 App 里自己设的）原样保留在
+  透传体里，服务端不读、不改、不删。
+
+实现要点：
+
+- VALARM 是**子组件**不是属性行，所以它不进 `_OWNED_NAMES`（那套是行级替换），
+  要单独处理 `vtodo.children`。
+- `TRIGGER` 用**绝对时刻**（`TRIGGER;VALUE=DATE-TIME:20260908T000000Z`）而不是相对
+  偏移。两个理由：`remind_at` 本身就是绝对时刻，相对偏移得挂在 DTSTART/DUE 上；
+  而 `_apply_time_cluster` 在 DUE 变化时会整簇删除，锚在簇上的闹钟会被连带删掉。
+- 每个 VALARM 带 `UID:<caldav_uid>-R<序号>`（序号按 `remind_at` 升序，从 1 起）。
+  RFC 9074 建议闹钟有 UID，且序号来自排序后的位置——**不许用随机数或时间戳**，
+  否则同一条目每次序列化字节都变、ETag 跟着变，客户端会无限重下（同
+  `serialize` 那条「不许出现 `datetime.now()`」的硬约束）。
+- `read_fields` **不读 VALARM**（保持现状）。后果说清楚：用户在 iPhone 上手加的闹钟
+  不会出现在网页端——它只活在透传体里。这是刻意的，服务端不试图理解 Apple 的闹钟
+  语义（snooze 链、`RELATED-TO`、`X-APPLE-*` 一整套）。
+- `_serialize_fresh`（无透传体时）同样要输出服务端车道的 VALARM。
+
+**iCal 订阅源（`/api/calendar/{token}.ics`）这一轮不动。** 它是「把截止日摊在日历上」
+的只读视图，提醒走 CalDAV 那条双向车道。给它也塞一遍提醒会造出两条半通的路径，而
+`calendar.py` 的 RFC 折行逻辑很脆，不值得为次要通道去动。后果：只订阅了 ics、没配
+CalDAV 的设备收不到提醒。
 
 ### 11.11 已知行为
 

@@ -15,6 +15,7 @@ const PARSED: ParsedTask = {
   due_date: '2026-09-10',
   importance: 'high',
   actionable: false,
+  reminders: [],
 };
 
 function deferred() {
