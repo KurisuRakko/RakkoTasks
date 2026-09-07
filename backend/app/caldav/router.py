@@ -433,10 +433,10 @@ def register_caldav(app: FastAPI, settings: Settings, limiter: RateLimiter) -> N
         if item is None and parsed.uid:
             item = store.find_by_uid(session, user.sub, parsed.uid)  # 同一对象换了文件名
         check_preconditions(request, store.body_and_etag(item, zone)[1] if item is not None else None)
-        item, created, ignored = store.apply_put(session, user.sub, item, stem, parsed, text, now=now)
+        item, created = store.apply_put(session, user.sub, item, stem, parsed, text, now=now)
         session.commit()
         _body, etag = store.body_and_etag(item, zone)
-        logger.info("caldav put action=%s item_id=%s ignored=%s", "create" if created else "update", item.id, ignored)
+        logger.info("caldav put action=%s item_id=%s", "create" if created else "update", item.id)
         return Response(status_code=201 if created else 204, headers={"ETag": etag})
 
     def _delete(request: Request, session: Session, user: User, target: Target, now: datetime) -> Response:
