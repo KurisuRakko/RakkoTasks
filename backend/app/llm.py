@@ -209,7 +209,7 @@ class LLMClient:
         for attempt in range(2):
             out = self._chat_json(messages)
             try:
-                return _normalize_parsed_task(json.loads(out))
+                return normalize_parsed_task(json.loads(out))
             except (json.JSONDecodeError, TypeError, ValueError):
                 if attempt == 0:
                     # 重试一次：追加纠错指令
@@ -281,13 +281,17 @@ def _normalize_classify(data: dict) -> dict:
     }
 
 
-def _normalize_parsed_task(data: dict) -> dict:
+def normalize_parsed_task(data: dict) -> dict:
     """规范化快速记事解析输出：截断 + 白名单兜底 + due_date 非法一律置 None。
 
     不含 filtered / filter_reason（那是邮件分类才有的键）。due_date 判定方式
     与 itemrules.validate_item_fields 保持一致：先 date.fromisoformat，再回查
     parsed.isoformat() == 原串（fromisoformat 容忍带时间/偏移的串，这里只收
     YYYY-MM-DD）；任一步失败或原值非串 → None，绝不抛异常。
+
+    这是模块的公开契约而非内部细节：API 层在测试用 FakeLLM 顶替 get_llm 时
+    不会经过 LLMClient.parse_task 自带的归一化，端点层需要直接调用本函数，
+    让白名单/兜底规则在端点层真正可测。
     """
     title_raw = data.get("title")
     title = normalize_title(

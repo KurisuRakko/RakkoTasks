@@ -78,8 +78,10 @@ def _resolve_today(raw: str | None, settings) -> str:
             return raw
     try:
         return datetime.now(ZoneInfo(settings.local_timezone)).date().isoformat()
-    except ZoneInfoNotFoundError:
-        # local_timezone 配置项非法时退一步用 UTC，不要让端点 500
+    except (ZoneInfoNotFoundError, ValueError):
+        # 配错 local_timezone 的两种形态都兜：ZoneInfoNotFoundError（查无此区，
+        # KeyError 子类）与 ValueError（空串/绝对路径/越界路径——如 .env 里
+        # LOCAL_TIMEZONE= 留空），统一退一步用 UTC，不要让端点 500
         return datetime.now(timezone.utc).date().isoformat()
 
 
@@ -231,10 +233,10 @@ def create_app(
         monkeypatch.setattr("app.llm.get_llm", lambda settings=None: FakeLLM())
         打桩，模块顶层导入会让打桩失效。
         """
-        from app.llm import _normalize_parsed_task, get_llm  # 延迟导入，便于测试 monkeypatch
+        from app.llm import get_llm, normalize_parsed_task  # 延迟导入，便于测试 monkeypatch
 
         llm = get_llm(settings)
-        return _normalize_parsed_task(llm.parse_task(text, _resolve_today(today, settings)))
+        return normalize_parsed_task(llm.parse_task(text, _resolve_today(today, settings)))
 
     @app.post("/api/items/parse")
     def parse_item(
@@ -267,7 +269,7 @@ def create_app(
             raise HTTPException(status_code=429, detail={"code": "rate_limited"})
         try:
             parsed = _ai_parse(body.text, body.today)
-            # 第二道保险：_normalize_parsed_task 理论上已兜住字段非法，这里再校一次
+            # 第二道保险：normalize_parsed_task 理论上已兜住字段非法，这里再校一次
             due = validate_item_fields(
                 parsed["title"], parsed["summary"], parsed["category"],
                 parsed["due_date"], parsed["importance"],

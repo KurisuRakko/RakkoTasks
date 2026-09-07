@@ -7,7 +7,7 @@ FakeLLM 按生产 parse_task 的消息形状重建并记录（system 用生产�
 parse_task_system、user 用生产的 wrap_untrusted），供 today 注入与哨兵断言。
 """
 import json
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
@@ -247,6 +247,43 @@ def test_parse_invalid_today_falls_back(session_factory, monkeypatch):
         assert resp.status_code == 200, bad  # 不报错
         assert fake.calls[-1][1] == expected, bad
         assert f"今天是 {expected}" in fake.messages[-1][0]["content"], bad
+
+
+def test_parse_today_falls_back_when_local_timezone_empty(session_factory, monkeypatch):
+    """local_timezone 配置为空串（.env 里 LOCAL_TIMEZONE= 留空是最常见的配错）：
+    ZoneInfo("") 抛 ValueError，_resolve_today 必须回落 UTC 当天而不是 500。
+
+    先隔离 CalDAV 挂载：register_caldav 在启动期对同一 settings 做 ZoneInfo
+    解析、配错宁可启动失败（caldav/router.py 的既有契约），本测试的目标是
+    _resolve_today 的兜底分支，不涉及 caldav 路由本身。
+    """
+    _seed(session_factory)
+    fake = FakeLLM(result=_ok_result())
+    monkeypatch.setattr("app.api.register_caldav", lambda app, settings, limiter: None)
+    client = _client(session_factory, monkeypatch, llm=fake, settings=_settings(local_timezone=""))
+
+    resp = client.post("/api/items/parse", json={"text": "修空调"})
+    assert resp.status_code == 200
+    expected = datetime.now(timezone.utc).date().isoformat()
+    assert fake.calls[-1][1] == expected
+    assert f"今天是 {expected}" in fake.messages[-1][0]["content"]
+
+
+def test_parse_today_falls_back_when_local_timezone_not_found(session_factory, monkeypatch):
+    """local_timezone 查无此区（ZoneInfoNotFoundError 分支）同样回落 UTC 当天。
+
+    与空串用例一样先隔离 CalDAV 挂载（启动期 ZoneInfo 解析会让 app 建不起来）。
+    """
+    _seed(session_factory)
+    fake = FakeLLM(result=_ok_result())
+    monkeypatch.setattr("app.api.register_caldav", lambda app, settings, limiter: None)
+    client = _client(session_factory, monkeypatch, llm=fake, settings=_settings(local_timezone="Not/AZone"))
+
+    resp = client.post("/api/items/parse", json={"text": "修空调"})
+    assert resp.status_code == 200
+    expected = datetime.now(timezone.utc).date().isoformat()
+    assert fake.calls[-1][1] == expected
+    assert f"今天是 {expected}" in fake.messages[-1][0]["content"]
 
 
 # ── 输入校验与限流 ─────────────────────────────────────────────
