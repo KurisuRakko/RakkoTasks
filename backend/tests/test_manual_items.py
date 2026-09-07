@@ -157,28 +157,90 @@ def test_patch_manual_item_fields_and_clear_due_date(session_factory, monkeypatc
     assert resp.json()["done_at"] is not None
 
 
-def test_patch_email_item_not_editable_and_status_ok(session_factory, monkeypatch):
+def test_patch_email_item_title_summary_category_due_date_ok(session_factory, monkeypatch):
+    """邮件条目在 PATCH 上与手动条目同权：内容字段都能改，且真的落库（GET 复核）。"""
     email_item_id, _em_id, _acc_id = _seed(session_factory)
     client = _client(session_factory, monkeypatch)
 
-    resp = client.patch(f"/api/items/{email_item_id}", json={"title": "改邮件任务"})
-    assert resp.status_code == 400
-    assert resp.json() == {"code": "not_editable"}
+    resp = client.patch(f"/api/items/{email_item_id}", json={"title": "新标题"})
+    assert resp.status_code == 200
+    assert resp.json()["title"] == "新标题"
+    # 落库了，不是只回显在 PATCH 响应里
+    assert client.get(f"/api/items/{email_item_id}").json()["title"] == "新标题"
 
-    resp = client.patch(f"/api/items/{email_item_id}", json={"due_date": "2026-12-31"})
-    assert resp.status_code == 400
-    assert resp.json() == {"code": "not_editable"}
+    resp = client.patch(
+        f"/api/items/{email_item_id}",
+        json={"summary": "新摘要", "category": "工作", "due_date": "2026-10-01"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["summary"] == "新摘要"
+    assert data["category"] == "工作"
+    assert data["due_date"] == "2026-10-01"
+    got = client.get(f"/api/items/{email_item_id}").json()
+    assert got["summary"] == "新摘要"
+    assert got["category"] == "工作"
+    assert got["due_date"] == "2026-10-01"
 
-    # 邮件条目的 status 仍可改（与现状一致）
+    # 邮件条目的 status 仍可改
     resp = client.patch(f"/api/items/{email_item_id}", json={"status": "done"})
     assert resp.status_code == 200
     assert resp.json()["status"] == "done"
 
-    # 手动条目同样按 POST 校验规则报错
+
+def test_patch_email_item_importance_ok_and_bad(session_factory, monkeypatch):
+    """importance 补进 PATCH 且邮件条目同样能改：合法值生效并落库，非法值 400 bad_importance。"""
+    email_item_id, _em_id, _acc_id = _seed(session_factory)
+    client = _client(session_factory, monkeypatch)
+
+    resp = client.patch(f"/api/items/{email_item_id}", json={"importance": "high"})
+    assert resp.status_code == 200
+    assert resp.json()["importance"] == "high"
+    assert client.get(f"/api/items/{email_item_id}").json()["importance"] == "high"
+
+    resp = client.patch(f"/api/items/{email_item_id}", json={"importance": "urgent"})
+    assert resp.status_code == 400
+    assert resp.json() == {"code": "bad_importance"}
+    # 校验失败没写进库：importance 还是 high
+    assert client.get(f"/api/items/{email_item_id}").json()["importance"] == "high"
+
+
+def test_patch_manual_item_actionable_false_applies(session_factory, monkeypatch):
+    """actionable 补进 PATCH：显式 false 必须生效（回归：真值判断会把 False 吞成静默无操作）。"""
+    _seed(session_factory)
+    manual_id = _add_manual(session_factory)  # 默认 actionable=True
+    client = _client(session_factory, monkeypatch)
+
+    resp = client.patch(f"/api/items/{manual_id}", json={"actionable": False})
+    assert resp.status_code == 200
+    assert resp.json()["actionable"] is False
+    assert client.get(f"/api/items/{manual_id}").json()["actionable"] is False
+
+
+def test_patch_validation_applies_to_email_and_manual_alike(session_factory, monkeypatch):
+    """放开的是权限不是校验：两类条目都走 POST 同款规则，非法值照样 400。"""
+    email_item_id, _em_id, _acc_id = _seed(session_factory)
     manual_id = _add_manual(session_factory)
+    client = _client(session_factory, monkeypatch)
+
+    resp = client.patch(f"/api/items/{email_item_id}", json={"title": ""})
+    assert resp.status_code == 400
+    assert resp.json() == {"code": "bad_title"}
+    assert client.get(f"/api/items/{email_item_id}").json()["title"] == "交学费"  # 没写进去
+
     resp = client.patch(f"/api/items/{manual_id}", json={"category": "不存在"})
     assert resp.status_code == 400
     assert resp.json() == {"code": "bad_category"}
+
+
+def test_patch_other_users_email_item_404(session_factory, monkeypatch):
+    """放开编辑不放开归属：B PATCH A 的邮件条目仍 404（不暴露存在性）。"""
+    email_item_id, _em_id, _acc_id = _seed(session_factory)
+    client_b = _client(session_factory, monkeypatch, sub="user-2")
+
+    resp = client_b.patch(f"/api/items/{email_item_id}", json={"title": "越权改"})
+    assert resp.status_code == 404
+    assert resp.json() == {"code": "not_found"}
 
 
 def test_patch_empty_body_and_bad_status(session_factory, monkeypatch):

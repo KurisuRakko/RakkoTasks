@@ -333,8 +333,8 @@ def test_patch_empty_clears_and_missing_key_keeps(session_factory, monkeypatch):
     assert _reminder_rows(session_factory, other_id) == []
 
 
-def test_patch_email_item_reminders_ok_but_title_still_not(session_factory, monkeypatch):
-    """reminders 不受 not_editable 限制：邮件条目也能加/改提醒；改 title 仍是 400。"""
+def test_patch_email_item_reminders_and_title_both_ok(session_factory, monkeypatch):
+    """邮件条目对 reminders 与内容字段（title）都能 PATCH：两类编辑都已放开。"""
     email_item_id = _seed(session_factory)
     client = _client(session_factory, monkeypatch)
 
@@ -346,10 +346,10 @@ def test_patch_email_item_reminders_ok_but_title_still_not(session_factory, monk
     rows = _reminder_rows(session_factory, email_item_id)
     assert len(rows) == 1
 
-    # 同一个邮件条目改 title 仍然 not_editable（证明只放开了提醒）
+    # 同一个邮件条目改 title 同样 200，且已挂上的提醒不受影响（字段改动与提醒互不牵连）
     resp = client.patch(f"/api/items/{email_item_id}", json={"title": "改邮件任务"})
-    assert resp.status_code == 400
-    assert resp.json() == {"code": "not_editable"}
+    assert resp.status_code == 200
+    assert resp.json()["title"] == "改邮件任务"
     assert len(_reminder_rows(session_factory, email_item_id)) == 1  # 提醒没被动
 
 
