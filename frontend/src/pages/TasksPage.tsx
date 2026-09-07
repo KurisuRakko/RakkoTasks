@@ -8,11 +8,17 @@
 // 右下角悬浮按钮经 portal 挂到 body——路由转场内层动画盒的 transform 会成为
 // fixed 后代的包含块，换页后按钮会跟着内容漂移。按钮只打 data-vt-shell 标记，
 // 与编辑器共用名字的持名时机由样式层按转场种类决定（见 FAB 处注释）。
+// 「+」打开的是 AI 快速添加对话框（AiAddDialog）：非速记模式先让 AI 把一句话解析
+// 成字段、预览可改后再保存；速记模式点「确定」立刻关窗（打完就走，不让用户等
+// LLM），落库请求（POST /api/items/quick）在后台跑完再弹结果提示。速记请求故意
+// 不绑组件生命周期：请求一旦到达服务端就会跑完并落库，前端切页/卸载也让它继续，
+// 卸载时取消只会白丢条目——真正的兜底在服务端。
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
+import Button from '@mui/material/Button';
 import Checkbox from '@mui/material/Checkbox';
 import Chip from '@mui/material/Chip';
 import CircularProgress from '@mui/material/CircularProgress';
@@ -26,17 +32,31 @@ import Snackbar from '@mui/material/Snackbar';
 import Stack from '@mui/material/Stack';
 import Typography from '@mui/material/Typography';
 import AddIcon from '@mui/icons-material/Add';
-import { createItem, fetchItems, patchItem } from '../lib/api';
+import { createItem, fetchItems, parseTask, patchItem, quickAddTask } from '../lib/api';
 import { formatDueDate, groupItems, isNewToday, isOverdue } from '../lib/grouping';
 import { moveItem, openKey, removeItem, upsertOpenItem, useCachedList } from '../lib/list-cache';
 import { LEAVE_DURATION, rowSx, useMorphDialog, usePrefersReducedMotion } from '../lib/motion';
 import { cardRowSx } from '../lib/surface';
+import { todayIso } from '../lib/time';
 import { runViewTransition, shellAttr, VT_NAMES } from '../lib/view-transition';
 import { GLASS } from '../rakko-tokens';
 import type { Category, Item, ItemFields } from '../types';
+import AiAddDialog from '../components/AiAddDialog';
 import CategoryChips from '../components/CategoryChips';
 import ItemDialog from '../components/ItemDialog';
-import ItemEditor from '../components/ItemEditor';
+
+/** 速记模式开关的 localStorage 键（值只写 'on' / 'off'） */
+const QUICK_MODE_KEY = 'rakkotasks.quick-mode';
+
+/** 读速记开关：读不到或不是 'on' 一律回落「关」。读写都要 try/catch：隐私模式下
+ *  localStorage 访问会抛异常，不能让整页崩。 */
+function readQuickMode(): boolean {
+  try {
+    return localStorage.getItem(QUICK_MODE_KEY) === 'on';
+  } catch {
+    return false;
+  }
+}
 
 function GroupSection({
   title,
@@ -175,12 +195,16 @@ function GroupSection({
   );
 }
 
+/** Snackbar 内容：text 是提示文案；item 非 null 时右侧多一个「查看」按钮开详情 */
+type Snack = { text: string; item: Item | null };
+
 export default function TasksPage() {
   const [category, setCategory] = useState<Category | null>(null);
   const [leavingIds, setLeavingIds] = useState<number[]>([]);
   const [addOpen, setAddOpen] = useState(false);
   const [creating, setCreating] = useState(false);
-  const [snack, setSnack] = useState<string | null>(null);
+  const [snack, setSnack] = useState<Snack | null>(null);
+  const [quickMode, setQuickMode] = useState<boolean>(readQuickMode);
   const reduced = usePrefersReducedMotion();
   // 详情容器变换：current 非空即详情对话框打开（来源行与 paper 共享 VT_NAMES.sheet）
   const { current, open, close, sourceName } = useMorphDialog<Item>((item) => item.id);
@@ -205,10 +229,45 @@ export default function TasksPage() {
           upsertOpenItem(item);
           // 保存成功后编辑器关闭同样走容器变换，缩回悬浮按钮
           runViewTransition('collapse-fab', () => setAddOpen(false), reduced);
-          setSnack('已添加');
+          setSnack({ text: '已添加', item: null });
         })
-        .catch(() => setSnack('添加失败'))
+        .catch(() => setSnack({ text: '添加失败', item: null }))
         .finally(() => setCreating(false));
+    },
+    [reduced],
+  );
+
+  // 速记开关变更：写状态并持久化（写失败仅本次会话生效，不崩页面）
+  const handleQuickModeChange = useCallback((next: boolean) => {
+    setQuickMode(next);
+    try {
+      localStorage.setItem(QUICK_MODE_KEY, next ? 'on' : 'off');
+    } catch {
+      // 隐私模式下写不进去，下次进页回落默认「关」
+    }
+  }, []);
+
+  // 非速记模式：一句话 → 字段交给 AiAddDialog 预览。失败由对话框自己捕获并显示
+  // 兜底 UI（契约如此），这里不处理 reject。
+  const handleParse = useCallback((text: string) => parseTask(text, todayIso()), []);
+
+  // 速记模式：点「确定」立刻关窗——速记的全部意义就是打完就走，不让用户等 LLM。
+  // 落库在后台跑，这个 Promise 故意不绑组件生命周期（不接 AbortController、卸载时
+  // 不取消）：请求一旦到达服务端就会跑完并入库，用户切页也要让它继续。结果回来
+  // 再弹提示：ai_parsed === false 是正常返回（HTTP 201，后端用原文兜底建了条目），
+  // 只有网络失败 / 非 201 才进 catch。
+  const handleQuickSubmit = useCallback(
+    (text: string) => {
+      runViewTransition('collapse-fab', () => setAddOpen(false), reduced);
+      quickAddTask(text, todayIso())
+        .then(({ item, ai_parsed }) => {
+          upsertOpenItem(item);
+          setSnack({
+            text: ai_parsed ? `已添加：${item.title}` : 'AI 解析失败，已按原文添加',
+            item,
+          });
+        })
+        .catch(() => setSnack({ text: '添加失败', item: null }));
     },
     [reduced],
   );
@@ -231,7 +290,7 @@ export default function TasksPage() {
         patchItem(item.id, { status: 'done' }).catch(() => {
           setLeavingIds((p) => p.filter((id) => id !== item.id));
           moveItem(item, 'open');
-          setSnack('操作失败，已恢复');
+          setSnack({ text: '操作失败，已恢复', item: null });
         });
       }, reduced ? 0 : LEAVE_DURATION);
       timers.current.push(timer);
@@ -338,10 +397,13 @@ export default function TasksPage() {
         document.body,
       )}
       {addOpen && (
-        <ItemEditor
-          heading="添加任务"
-          submitting={creating}
+        <AiAddDialog
+          quickMode={quickMode}
+          onQuickModeChange={handleQuickModeChange}
+          onParse={handleParse}
           onSubmit={handleCreate}
+          onQuickSubmit={handleQuickSubmit}
+          submitting={creating}
           onClose={() => runViewTransition('collapse-fab', () => setAddOpen(false), reduced)}
           viewTransitionName={VT_NAMES.fab}
         />
@@ -350,7 +412,23 @@ export default function TasksPage() {
         open={snack !== null}
         autoHideDuration={3000}
         onClose={() => setSnack(null)}
-        message={snack}
+        message={snack ? snack.text : null}
+        action={
+          snack?.item ? (
+            <Button
+              color="inherit"
+              size="small"
+              onClick={() => {
+                if (snack?.item) {
+                  open(snack.item);
+                  setSnack(null);
+                }
+              }}
+            >
+              查看
+            </Button>
+          ) : undefined
+        }
       />
     </Box>
   );

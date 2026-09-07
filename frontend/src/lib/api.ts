@@ -12,6 +12,8 @@ import type {
   ItemFields,
   ItemsResponse,
   ItemStatus,
+  ParsedTask,
+  QuickAddResponse,
   RelatedEmail,
   SearchResponse,
   StatusResponse,
@@ -155,6 +157,45 @@ export async function search(question: string): Promise<SearchResponse> {
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return (await res.json()) as SearchResponse;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** POST /api/items/parse {text, today}：一句自然语言 → 条目字段，不落库；期望 200。
+ *  today 为本地日期 YYYY-MM-DD，作 AI 判读「今天/明天」的基准日。后端没有显式
+ *  超时，客户端 180s 兜底（与 search 同值）是唯一防线。 */
+export async function parseTask(text: string, today: string): Promise<ParsedTask> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 180_000);
+  try {
+    const res = await authedFetch(`${API_BASE}/items/parse`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, today }),
+      signal: controller.signal,
+    });
+    if (res.status !== 200) throw new Error(`HTTP ${res.status}`);
+    return (await res.json()) as ParsedTask;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** POST /api/items/quick {text, today}：解析并落库；期望 201。AI 解析失败时后端用
+ *  原文兜底建条目（ai_parsed === false 仍是正常返回）。同样带 180s 客户端超时。 */
+export async function quickAddTask(text: string, today: string): Promise<QuickAddResponse> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 180_000);
+  try {
+    const res = await authedFetch(`${API_BASE}/items/quick`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, today }),
+      signal: controller.signal,
+    });
+    if (res.status !== 201) throw new Error(`HTTP ${res.status}`);
+    return (await res.json()) as QuickAddResponse;
   } finally {
     clearTimeout(timer);
   }

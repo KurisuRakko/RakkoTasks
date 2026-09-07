@@ -4,10 +4,14 @@
 // 且条目从列表消失；切回页面命中模块级缓存（list-cache）时不再闪加载圈。
 // haze 底衬覆盖：分组标题的雾挂 ListSubheader 内层（外层 sticky 不动、无 data-glass）、
 // chips 行的雾在滚动容器外层（滚动留在内层 Stack）、全页 haze 数 = 分组数 + 1。
+// 加号现在打开的是 AiAddDialog——基座占位实现渲染 null，保存路径的用例改用 vi.mock
+// 替身驱动其 onSubmit（替身细节见「TasksPage 手动添加」describe 上方），只验证
+// TasksPage 的编排；AiAddDialog 内部渲染由 quick-add.test.tsx 同款替身专测。
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import TasksPage from '../src/pages/TasksPage';
+import type { AiAddDialogProps } from '../src/components/AiAddDialog';
 import chipsSource from '../src/components/CategoryChips.tsx?raw';
 import tasksSource from '../src/pages/TasksPage.tsx?raw';
 import { resetLists } from '../src/lib/list-cache';
@@ -16,6 +20,21 @@ import { cardRowSx } from '../src/lib/surface';
 import { RADIUS } from '../src/rakko-tokens';
 import { VT_SHELL_ATTR, VT_NAMES } from '../src/lib/view-transition';
 import type { Item } from '../src/types';
+
+// vi.mock 工厂提升到 import 之前执行，只能引用字面量，文案在此内联
+vi.mock('../src/components/AiAddDialog', () => ({
+  default: (props: AiAddDialogProps) => (
+    <div>
+      <button
+        onClick={() =>
+          props.onSubmit({ title: '买牛奶', summary: '两盒', category: '个人', due_date: null })
+        }
+      >
+        替身-保存
+      </button>
+    </div>
+  ),
+}));
 
 function makeItem(partial: Partial<Item>): Item {
   return {
@@ -139,7 +158,7 @@ describe('TasksPage 手动添加', () => {
     expect(await screen.findByRole('button', { name: '添加任务' })).toBeTruthy();
   });
 
-  it('点「添加任务」打开编辑器，保存后 POST /api/items 且新标题出现在列表', async () => {
+  it('点「添加任务」打开 AI 添加对话框（替身驱动 onSubmit），保存后 POST /api/items 且新标题出现在列表', async () => {
     const fetchMock = vi.fn(async (url: string | URL, init?: RequestInit) => {
       const u = String(url);
       if (init?.method === 'POST') {
@@ -163,10 +182,9 @@ describe('TasksPage 手动添加', () => {
 
     render(<TasksPage />);
 
+    // 加号打开的是 AiAddDialog（占位实现渲染 null），用替身的「保存」驱动 onSubmit
     fireEvent.click(await screen.findByRole('button', { name: '添加任务' }));
-    const textarea = await screen.findByLabelText('任务内容');
-    fireEvent.change(textarea, { target: { value: '买牛奶\n两盒' } });
-    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+    fireEvent.click(await screen.findByRole('button', { name: '替身-保存' }));
 
     await waitFor(() => {
       expect(fetchMock.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(true);
