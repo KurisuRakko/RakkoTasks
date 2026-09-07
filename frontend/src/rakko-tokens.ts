@@ -127,6 +127,43 @@ export const GLASS = {
   hazeBleed: '28px',
 } as const;
 
+/** Aero 玻璃的十二个新增 token（镜像上游 tokens.css 的 --glass-rim … --glass-text-glow）。
+ * 键名 camelCase，与 CSS 变量一一对应：rim→--glass-rim、rimInner→--glass-rim-inner、
+ * lip→--glass-lip、lipUnder→--glass-lip-under、side→--glass-side、bloom→--glass-bloom、
+ * sheen1…sheen4→--glass-sheen-1…4、lift→--glass-lift、textGlow→--glass-text-glow。
+ * 深色那套不是浅色的简单缩放，是重新定的档位；textGlow 的反相（深色用黑光晕）是硬约束：
+ * 深底沿用白光晕会让亮色正文与光晕同色，对比度从 4.69 崩到 1.07（等于看不见）。 */
+export const GLASS_AERO = {
+  light: {
+    rim: 'rgba(255, 255, 255, 0.58)',
+    rimInner: 'rgba(0, 0, 0, 0.06)',
+    lip: 'rgba(255, 255, 255, 0.92)',
+    lipUnder: 'rgba(255, 255, 255, 0.34)',
+    side: 'rgba(255, 255, 255, 0.26)',
+    bloom: 'rgba(255, 255, 255, 0.15)',
+    sheen1: 'rgba(255, 255, 255, 0.34)',
+    sheen2: 'rgba(255, 255, 255, 0.14)',
+    sheen3: 'rgba(255, 255, 255, 0.02)',
+    sheen4: 'rgba(255, 255, 255, 0.06)',
+    lift: '0 1px 2px rgba(0, 0, 0, 0.07), 0 6px 18px rgba(0, 0, 0, 0.1)',
+    textGlow: '0 0 2px rgba(255, 255, 255, 0.5), 0 0 6px rgba(255, 255, 255, 0.5)',
+  },
+  dark: {
+    rim: 'rgba(255, 255, 255, 0.2)',
+    rimInner: 'rgba(0, 0, 0, 0.22)',
+    lip: 'rgba(255, 255, 255, 0.34)',
+    lipUnder: 'rgba(255, 255, 255, 0.1)',
+    side: 'rgba(255, 255, 255, 0.09)',
+    bloom: 'rgba(255, 255, 255, 0.05)',
+    sheen1: 'rgba(255, 255, 255, 0.13)',
+    sheen2: 'rgba(255, 255, 255, 0.05)',
+    sheen3: 'rgba(0, 0, 0, 0.02)',
+    sheen4: 'rgba(0, 0, 0, 0.05)',
+    lift: '0 1px 2px rgba(0, 0, 0, 0.3), 0 6px 18px rgba(0, 0, 0, 0.34)',
+    textGlow: '0 0 2px rgba(0, 0, 0, 0.5), 0 0 6px rgba(0, 0, 0, 0.5)',
+  },
+} as const;
+
 /** 玻璃面板的 whisper 阴影（上游 --shadow-whisper）；深色主题按契约加深一档。
  * 与上面的 WHISPER_SHADOW 是两回事：那一档是 MUI elevation 用的紧凑阴影，
  * 本项目早先镜像时取的值与上游 --shadow-whisper 不一致，此次不动它以免波及全部 elevation。 */

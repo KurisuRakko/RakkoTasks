@@ -13,6 +13,7 @@ import {
   BORDER,
   FONT_SANS,
   GLASS,
+  GLASS_AERO,
   GLASS_SHADOW_WHISPER,
   MOTION,
   NEUTRAL_DARK,
@@ -143,6 +144,21 @@ function buildThemeOptions(mode: Mode): ThemeOptions {
             '--glass-highlight': GLASS.highlight,
             '--glass-haze-opacity': GLASS.hazeOpacity,
             '--glass-haze-bleed': GLASS.hazeBleed,
+            // Aero 化新增的十二个材质 token（rakko-glass.css 的厚度边/光泽/文字光晕消费，
+            // 变量名 rim→--glass-rim、rimInner→--glass-rim-inner … textGlow→--glass-text-glow）。
+            // 深浅各自求值：深色是重新定的档位，不是浅色的简单缩放；textGlow 反相是硬约束。
+            '--glass-rim': GLASS_AERO[mode].rim,
+            '--glass-rim-inner': GLASS_AERO[mode].rimInner,
+            '--glass-lip': GLASS_AERO[mode].lip,
+            '--glass-lip-under': GLASS_AERO[mode].lipUnder,
+            '--glass-side': GLASS_AERO[mode].side,
+            '--glass-bloom': GLASS_AERO[mode].bloom,
+            '--glass-sheen-1': GLASS_AERO[mode].sheen1,
+            '--glass-sheen-2': GLASS_AERO[mode].sheen2,
+            '--glass-sheen-3': GLASS_AERO[mode].sheen3,
+            '--glass-sheen-4': GLASS_AERO[mode].sheen4,
+            '--glass-lift': GLASS_AERO[mode].lift,
+            '--glass-text-glow': GLASS_AERO[mode].textGlow,
             '--shadow-whisper': GLASS_SHADOW_WHISPER[mode],
           },
           // 无壁纸时玻璃没有图像可透（body 退回纯纸色，模糊读不出），透镜渐变与内侧
