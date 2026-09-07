@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import TasksPage from '../src/pages/TasksPage';
 import chipsSource from '../src/components/CategoryChips.tsx?raw';
+import tasksSource from '../src/pages/TasksPage.tsx?raw';
 import { resetLists } from '../src/lib/list-cache';
 import { LEAVE_DURATION } from '../src/lib/motion';
 import { cardRowSx } from '../src/lib/surface';
@@ -300,6 +301,19 @@ describe('列表行玻璃视觉（cardRowSx）', () => {
 });
 
 describe('TasksPage haze 底衬（分组标题与 chips 行）', () => {
+  // 从 ?raw 源码里取出 data-glass="haze" 所在 JSX 开标签的整段文本（含属性与 sx）。
+  // jsdom 对 emotion 生成的样式给不出可靠的 computed 值，宽度/bleed 这类写法断言
+  // 一律落回源码原文，否则会写出永远为真的假断言。
+  function hazeHostTag(source: string): string {
+    const attrStart = source.indexOf('data-glass="haze"');
+    expect(attrStart).toBeGreaterThan(-1);
+    const tagStart = source.lastIndexOf('<Box', attrStart);
+    expect(tagStart).toBeGreaterThan(-1);
+    const tagEnd = source.indexOf('>', attrStart);
+    expect(tagEnd).toBeGreaterThan(-1);
+    return source.slice(tagStart, tagEnd);
+  }
+
   it('分组标题文字被 data-glass="haze" 包着，且 haze 在 ListSubheader 内层而非其本身', async () => {
     const fetchMock = vi.fn(async () => json({ items: ITEMS }));
     vi.stubGlobal('fetch', fetchMock);
@@ -371,12 +385,13 @@ describe('TasksPage haze 底衬（分组标题与 chips 行）', () => {
     // （含其 sx）里不许有 overflowX，滚动必须落在它后面紧跟的 Stack 开标签上。
     // 若有人把滚动挪回外层雾盒（负 inset 溢出会被裁成硬边方块）或把 data-glass 挪进
     // Stack，此断言会先翻。
-    const hazeTagStart = chipsSource.indexOf('<Box data-glass="haze"');
-    expect(hazeTagStart).toBeGreaterThan(-1);
-    const hazeTagEnd = chipsSource.indexOf('>', hazeTagStart);
-    const hazeTag = chipsSource.slice(hazeTagStart, hazeTagEnd);
+    const hazeTag = hazeHostTag(chipsSource);
     expect(hazeTag).not.toContain('overflowX');
 
+    // haze 开标签结束后紧跟内层滚动 Stack（data-glass 没被挪进 Stack）
+    const attrStart = chipsSource.indexOf('data-glass="haze"');
+    const hazeTagEnd = chipsSource.indexOf('>', attrStart);
+    expect(hazeTagEnd).toBeGreaterThan(-1);
     const stackStart = chipsSource.indexOf('<Stack', hazeTagEnd);
     expect(stackStart).toBeGreaterThan(-1);
     const stackTag = chipsSource.slice(stackStart, chipsSource.indexOf('>', stackStart));
@@ -396,33 +411,48 @@ describe('TasksPage haze 底衬（分组标题与 chips 行）', () => {
     expect(container.querySelectorAll('[data-glass="haze"]')).toHaveLength(groupCount + 1);
   });
 
-  it('页面上每个 data-glass="haze" 元素都带 data-haze="veil"（一页一种形态，不混 cloud）', async () => {
+  it('没有任何 data-glass="haze" 元素带 data-haze 属性（cloud 是默认形态，不写该属性）', async () => {
     const fetchMock = vi.fn(async () => json({ items: ITEMS }));
     vi.stubGlobal('fetch', fetchMock);
 
     const { container } = render(<TasksPage />);
     await screen.findByText('重要任务');
 
-    // 分组标题雾 + chips 行雾各一团（前述用例已断言数量）
+    // 分组标题雾 + chips 行雾各一团（前述用例已断言数量）。cloud 是上游配方默认形态，
+    // 默认不写 data-haze——只有切到 veil 才写该属性（对照上游 showcase 的
+    // `data-haze={hazeShape}`，hazeShape 平时就是 undefined）
     const hazes = Array.from(container.querySelectorAll('[data-glass="haze"]'));
     expect(hazes.length).toBeGreaterThan(0);
     for (const haze of hazes) {
-      expect(haze.getAttribute('data-haze')).toBe('veil');
+      expect(haze.hasAttribute('data-haze')).toBe(false);
     }
   });
 
-  it('chips 行雾盒收缩到内容宽度：sx 含 inline-block，bleed 为 10px', () => {
+  it('chips 行雾盒收缩不再靠 inline-block：源码开标签含 max-content、不含 inline-block', () => {
     // jsdom 对 emotion 编译出的类名给不出可靠的 computed display，退回源码断言：
-    // 定位 CategoryChips 里 data-glass="haze" 所在的开标签，它必须同时带 inline-block
-    // 与 10px bleed——少了任何一项（有人改回撑满整列的块级、或加回 14px 溢出）此断言先翻。
-    const hazeTagStart = chipsSource.indexOf('<Box data-glass="haze"');
-    expect(hazeTagStart).toBeGreaterThan(-1);
-    const hazeTagEnd = chipsSource.indexOf('>', hazeTagStart);
-    expect(hazeTagEnd).toBeGreaterThan(-1);
-    const hazeTag = chipsSource.slice(hazeTagStart, hazeTagEnd);
-    expect(hazeTag).toContain('data-haze="veil"');
-    // 源码里 sx 的属性值带引号（display: 'inline-block'），按源码原文断言
-    expect(hazeTag).toContain("display: 'inline-block'");
-    expect(hazeTag).toContain("'--glass-haze-bleed': '10px'");
+    // 定位 CategoryChips 里 data-glass="haze" 所在的开标签——宽度必须走上游 showcase 的
+    // width: max-content 写法。本项目旧的 display: inline-block 收缩已被上游用法取代，
+    // 谁把它加回来（或把雾盒改回撑满整列的块级）此断言先翻。
+    const hazeTag = hazeHostTag(chipsSource);
+    expect(hazeTag).toContain('max-content');
+    expect(hazeTag).not.toContain('inline-block');
+  });
+
+  it('两处 haze 的 bleed 都是 calc(0.3 × 上游 token) 形式：引用 GLASS.hazeBleed、无写死 px', () => {
+    // 分组标题与 chips 行的雾都取上游 .glass-review__label 档（0.3 × 28px = 8.4px）。
+    // 引用 token 才能让上游改 bleed 时这里跟着变——任何人写回本项目旧的 14px / 10px，
+    // 或把 0.3×28 手工折成 8.4px，此断言先翻。
+    for (const [label, tag] of [
+      ['分组标题（TasksPage）', hazeHostTag(tasksSource)],
+      ['chips 行（CategoryChips）', hazeHostTag(chipsSource)],
+    ] as const) {
+      expect(tag, `${label}: bleed 必须是 0.3 × token 的 calc 形式`).toContain('calc(0.3 *');
+      expect(tag, `${label}: 必须引用 GLASS.hazeBleed，不许写死数值`).toContain(
+        '${GLASS.hazeBleed}',
+      );
+      expect(tag, `${label}: bleed 不许出现写死的 px 数值`).not.toMatch(
+        /--glass-haze-bleed[^,]*?\dpx/,
+      );
+    }
   });
 });
