@@ -160,7 +160,13 @@ export default function SearchPage() {
                       <ListItemText
                         primary={c.subject}
                         secondary={c.sent_at ?? '时间未知'}
-                        secondaryTypographyProps={{ noWrap: true }}
+                        // 时间摘要压在自己这块 data-glass="panel" 行玻璃上（纸色 58%
+                        // 仍透壁纸）：text.secondary（n7）实测只有 2.4–2.6，过不了 AA
+                        // 4.5。玻璃上没有次级色空间，层级靠字号字重，颜色取 text.primary（n9）
+                        secondaryTypographyProps={{
+                          noWrap: true,
+                          color: 'text.primary',
+                        }}
                       />
                     </ListItemButton>
                   ))}

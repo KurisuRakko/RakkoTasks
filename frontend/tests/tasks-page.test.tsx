@@ -17,9 +17,10 @@ import tasksSource from '../src/pages/TasksPage.tsx?raw';
 import { resetLists } from '../src/lib/list-cache';
 import { LEAVE_DURATION } from '../src/lib/motion';
 import { cardRowSx } from '../src/lib/surface';
-import { RADIUS } from '../src/rakko-tokens';
+import { NEUTRAL_LIGHT, RADIUS } from '../src/rakko-tokens';
 import { VT_SHELL_ATTR, VT_NAMES } from '../src/lib/view-transition';
 import type { Item } from '../src/types';
+import { allStyleText, ownEmotionClass, renderWithAppTheme, ruleTextOf } from './glass-text-contrast.test-utils';
 
 // vi.mock 工厂提升到 import 之前执行，只能引用字面量，文案在此内联
 vi.mock('../src/components/AiAddDialog', () => ({
@@ -551,6 +552,36 @@ describe('TasksPage 行上下文菜单', () => {
     // （菜单 portal 到 body，与行只是视觉重叠；行玻璃之间也互不为后代）
     for (const el of Array.from(document.querySelectorAll('[data-glass]'))) {
       expect(el.parentElement?.closest('[data-glass]') ?? null).toBeNull();
+    }
+  });
+});
+
+describe('列表行摘要文字色（玻璃上没有次级色的守卫）', () => {
+  // 行摘要直接压在 data-glass="panel" 玻璃上（纸色 58% 仍透壁纸）：MUI 默认给
+  // ListItemText secondary 的 text.secondary（n7）在四张壁纸 × 深浅主题下实测对比度
+  // 只有 2.4–2.6，AA 正文要 ≥4.5；玻璃上没有次级色空间，层级只靠字号字重，摘要
+  // 必须用 text.primary（n9 = NEUTRAL_LIGHT[8]）。jsdom 解析不了 emotion 的级联与
+  // computed，但规则文本（非 speedy 插入 <style>）可逐字断言（utils 文件头说明）。
+  it('摘要 Typography 的样式规则颜色是 n9（text.primary），不是 n7（text.secondary）', async () => {
+    const withSummary: Item[] = [
+      makeItem({ id: 1, title: '任务甲', summary: '两盒牛奶，记得看保质期' }),
+      makeItem({ id: 2, title: '任务乙', summary: '下周三前交实验报告' }),
+    ];
+    vi.stubGlobal('fetch', vi.fn(async () => json({ items: withSummary })));
+    const { container } = renderWithAppTheme(<TasksPage />);
+    await screen.findByText('任务甲');
+
+    // 摘要节点：ListItemText 的 secondary 渲染成 .MuiListItemText-secondary span
+    const summaries = container.querySelectorAll('.MuiListItemText-secondary');
+    expect(summaries).toHaveLength(withSummary.length);
+    const css = allStyleText();
+    for (const span of Array.from(summaries)) {
+      expect(ownEmotionClass(span), '摘要 Typography 应带 emotion 局部类').not.toBeNull();
+      const rule = ruleTextOf(css, span);
+      expect(rule, '摘要颜色必须是 text.primary（n9）').toContain(`color:${NEUTRAL_LIGHT[8]}`);
+      expect(rule, '摘要不得回落到 MUI 默认的 text.secondary（n7）').not.toContain(
+        `color:${NEUTRAL_LIGHT[6]}`,
+      );
     }
   });
 });

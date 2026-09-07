@@ -6,7 +6,8 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import DonePage from '../src/pages/DonePage';
 import { resetLists } from '../src/lib/list-cache';
 import { cardRowSx } from '../src/lib/surface';
-import { RADIUS } from '../src/rakko-tokens';
+import { NEUTRAL_LIGHT, RADIUS } from '../src/rakko-tokens';
+import { allStyleText, ownEmotionClass, renderWithAppTheme, ruleTextOf } from './glass-text-contrast.test-utils';
 
 const ITEMS = [
   {
@@ -260,6 +261,37 @@ describe('DonePage 行上下文菜单', () => {
     // （菜单 portal 到 body，与行只是视觉重叠；行玻璃之间也互不为后代）
     for (const el of Array.from(document.querySelectorAll('[data-glass]'))) {
       expect(el.parentElement?.closest('[data-glass]') ?? null).toBeNull();
+    }
+  });
+});
+
+describe('列表行摘要文字色（玻璃上没有次级色的守卫）', () => {
+  // 摘要压在自己的 data-glass="panel" 行玻璃上（纸色 58% 仍透壁纸）：MUI 默认给
+  // secondary 的 text.secondary（n7）实测对比度只有 2.4–2.6，AA 正文要 ≥4.5——
+  // 玻璃上没有次级色空间，层级靠字号字重，摘要必须用 text.primary（n9）。
+  // 断言机制同 tasks-page.test.tsx 的守卫（emotion 规则文本逐字断言）。
+  it('摘要 Typography 的样式规则颜色是 n9（text.primary），不是 n7（text.secondary）', async () => {
+    const withSummary = ITEMS.map((it, i) => ({
+      ...it,
+      summary: ['两盒牛奶，记得看保质期', '下周三前交实验报告'][i] as string,
+    }));
+    const fetchMock = vi.fn(async (_url: string | URL, _init?: RequestInit) =>
+      json({ items: withSummary }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const { container } = renderWithAppTheme(<DonePage />);
+    await screen.findByText('任务一');
+
+    const summaries = container.querySelectorAll('.MuiListItemText-secondary');
+    expect(summaries).toHaveLength(withSummary.length);
+    const css = allStyleText();
+    for (const span of Array.from(summaries)) {
+      expect(ownEmotionClass(span), '摘要 Typography 应带 emotion 局部类').not.toBeNull();
+      const rule = ruleTextOf(css, span);
+      expect(rule, '摘要颜色必须是 text.primary（n9）').toContain(`color:${NEUTRAL_LIGHT[8]}`);
+      expect(rule, '摘要不得回落到 MUI 默认的 text.secondary（n7）').not.toContain(
+        `color:${NEUTRAL_LIGHT[6]}`,
+      );
     }
   });
 });

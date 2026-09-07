@@ -10,7 +10,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import SearchPage from '../src/pages/SearchPage';
 import searchSource from '../src/pages/SearchPage.tsx?raw';
+import { NEUTRAL_LIGHT } from '../src/rakko-tokens';
 import type { SearchCitation, SearchResponse } from '../src/types';
+import { allStyleText, ownEmotionClass, renderWithAppTheme, ruleTextOf } from './glass-text-contrast.test-utils';
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -195,5 +197,34 @@ describe('SearchPage haze 底衬（AI 回答 note 档 + 引用标题 label 档�
     // cloud 默认形态：宿主开标签里没有 data-haze 属性
     expect(labelTag).not.toContain('data-haze=');
     expect(labelTag).not.toMatch(/--glass-haze-bleed[^,]*?\dpx/);
+  });
+});
+
+describe('引用行时间摘要文字色（玻璃上没有次级色的守卫）', () => {
+  // 时间摘要压在自己这块 data-glass="panel" 行玻璃上（纸色 58% 仍透壁纸）：MUI
+  // 默认给 secondary 的 text.secondary（n7）实测对比度只有 2.4–2.6，AA 正文要
+  // ≥4.5——玻璃上没有次级色空间，层级靠字号字重，摘要必须用 text.primary（n9）。
+  // 断言机制同 tasks-page.test.tsx 的守卫（emotion 规则文本逐字断言）。
+  it('摘要 Typography 的样式规则颜色是 n9（text.primary），不是 n7（text.secondary）', async () => {
+    const question = '摘要颜色守卫问题';
+    vi.stubGlobal('fetch', makeFetchMock(makeResult(question, CITATIONS)));
+    const { container } = renderWithAppTheme(<SearchPage />);
+    const textarea = await screen.findByPlaceholderText(/问你的邮件库/);
+    fireEvent.change(textarea, { target: { value: question } });
+    fireEvent.click(screen.getByRole('button', { name: '搜索' }));
+    await screen.findByText(`${question} 的第一段正文。`);
+
+    // 每条引用一行，每行一条时间摘要（sent_at 为 null 的那条是「时间未知」）
+    const summaries = container.querySelectorAll('.MuiListItemText-secondary');
+    expect(summaries).toHaveLength(CITATIONS.length);
+    const css = allStyleText();
+    for (const span of Array.from(summaries)) {
+      expect(ownEmotionClass(span), '摘要 Typography 应带 emotion 局部类').not.toBeNull();
+      const rule = ruleTextOf(css, span);
+      expect(rule, '摘要颜色必须是 text.primary（n9）').toContain(`color:${NEUTRAL_LIGHT[8]}`);
+      expect(rule, '摘要不得回落到 MUI 默认的 text.secondary（n7）').not.toContain(
+        `color:${NEUTRAL_LIGHT[6]}`,
+      );
+    }
   });
 });

@@ -9,13 +9,16 @@
 // tests/setup.ts 的 matchMedia 永不匹配（模拟移动端），桌面用例在渲染前替换它。
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { createTheme, ThemeProvider } from '@mui/material/styles';
 import { MemoryRouter } from 'react-router-dom';
 import AppShell from '../src/components/AppShell';
 import { ThemeModeProvider } from '../src/lib/theme-mode';
+import { NAV_ITEMS } from '../src/lib/nav';
+import { ACCENT, NEUTRAL_LIGHT } from '../src/rakko-tokens';
 import { VT_SHELL_ATTR, VT_NAMES } from '../src/lib/view-transition';
 import { setWallpaper } from '../src/lib/wallpaper';
+import { AppThemeProvider, allStyleText } from './glass-text-contrast.test-utils';
 import type { Item } from '../src/types';
 
 /** 已删除的内容玻璃底板的旧共享元素名。VT_NAMES 里对应项已随底板一并移除，
@@ -94,6 +97,26 @@ function renderShell(items: Item[] = []) {
         </MemoryRouter>
       </ThemeProvider>
     </ThemeModeProvider>,
+  );
+}
+
+/** 与 renderShell 相同但挂应用真实主题（浅色）：底栏文字色守卫断言 token 原值用 */
+function renderRealThemeShell(items: Item[] = []) {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (input: RequestInfo | URL) => {
+      const u = String(input);
+      if (u.includes('/api/status')) return json({ accounts: [], pending_llm: 0 });
+      if (u.includes('/api/items')) return json({ items });
+      return json({}, 404);
+    }),
+  );
+  return render(
+    <AppThemeProvider>
+      <MemoryRouter initialEntries={['/']} useTransitions={false}>
+        <AppShell />
+      </MemoryRouter>
+    </AppThemeProvider>,
   );
 }
 
@@ -259,5 +282,60 @@ describe('AppShell 壳层与列表行玻璃', () => {
     for (const el of Array.from(all)) {
       expect(el.parentElement?.closest('[data-glass]') ?? null).toBeNull();
     }
+  });
+});
+
+// 底栏未选中标签的文字色守卫：底栏整块 data-glass="chrome"（纸色 45%，比列表行的
+// panel 更透），MUI 默认给 BottomNavigationAction 未选中态的 text.secondary（n7）
+// 实测对比度低到 1.67（亮壁纸浅色），AA 正文要 ≥4.5，只有 text.primary（n9）才有
+// 数量级改善。选中态是 accent（primary.main），与可读性无关——覆盖必须用
+// :not(.Mui-selected) 精确排除选中项。样式规则文本断言机制同列表页守卫
+// （jsdom 解析不了 emotion 级联，但规则文本可逐字读，见 glass-text-contrast.test-utils）。
+describe('底栏未选中标签文字色（chrome 玻璃上没有次级色的守卫）', () => {
+  it('未选中项的样式覆盖存在：:not(.Mui-selected) 精确选择器，颜色 = text.primary（n9）', async () => {
+    renderRealThemeShell(SHELL_ITEMS);
+    await screen.findByText('任务一');
+
+    const css = allStyleText();
+    // 覆盖规则只落在未选中项上（:not(.Mui-selected)），颜色解析成 n9
+    expect(css).toContain(
+      `.MuiBottomNavigationAction-root:not(.Mui-selected){color:${NEUTRAL_LIGHT[8]}`,
+    );
+    // 不许出现不带 :not 的整盖规则：谁把它写成 `& .MuiBottomNavigationAction-root`
+    // （selector 到 `-root{` 为止），这条断言先翻
+    expect(css).not.toContain('.MuiBottomNavigationAction-root{color:');
+    // 选中态规则仍在（MUI 默认链：`.Mui-selected → primary.main`），没被覆盖抹掉
+    expect(css).toContain(`MuiBottomNavigationAction-root.Mui-selected{color:${ACCENT.light}`);
+  });
+
+  it('点「已完成」后 Mui-selected 只落在该项上（选中态机制完好，覆盖没把选中态一起盖掉）', async () => {
+    renderRealThemeShell(SHELL_ITEMS);
+    await screen.findByText('任务一');
+
+    const nav = document.querySelector('.MuiBottomNavigation-root');
+    expect(nav).not.toBeNull();
+    const bar = nav as HTMLElement;
+
+    // 初始选中「任务」（/ → 索引 0）
+    const initiallySelected = within(bar)
+      .getAllByRole('button')
+      .filter((b) => b.classList.contains('Mui-selected'));
+    expect(initiallySelected).toHaveLength(1);
+    expect(initiallySelected[0]!.textContent).toContain(NAV_ITEMS[0].label);
+
+    fireEvent.click(within(bar).getByRole('button', { name: NAV_ITEMS[2].label }));
+    await waitFor(() => {
+      const selected = within(bar)
+        .getAllByRole('button')
+        .filter((b) => b.classList.contains('Mui-selected'));
+      expect(selected).toHaveLength(1);
+      expect(selected[0]!.textContent).toContain(NAV_ITEMS[2].label);
+    });
+
+    // 选中态的颜色仍由 MUI 默认链提供（primary.main = accent）：我们的覆盖只存在于
+    // :not(.Mui-selected) 形态（上个用例已断言），jsdom 内用规则文本锁定 accent 值
+    expect(allStyleText()).toContain(
+      `MuiBottomNavigationAction-root.Mui-selected{color:${ACCENT.light}`,
+    );
   });
 });

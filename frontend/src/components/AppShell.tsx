@@ -178,6 +178,16 @@ export default function AppShell() {
           value={navIndex}
           onChange={(_e, v) => go(NAV_ITEMS[v].path)}
           showLabels
+          // 未选中标签压在同一块 data-glass="chrome" 玻璃上（纸色 45%，比列表行的
+          // panel 更透）：MUI 默认的 text.secondary（n7）实测对比度低到 1.67（亮壁纸
+          // 浅色主题），远低于 AA 4.5，只有提到 text.primary（n9）才有数量级改善。
+          // 选中态是 accent（primary.main），与可读性无关——覆盖必须用精确选择器
+          // 排除选中项，不能把选中态一起盖掉
+          sx={{
+            '& .MuiBottomNavigationAction-root:not(.Mui-selected)': {
+              color: 'text.primary',
+            },
+          }}
         >
           {NAV_ITEMS.map((item) => (
             <BottomNavigationAction key={item.path} label={item.label} icon={<item.icon />} />
