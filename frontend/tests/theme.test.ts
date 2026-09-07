@@ -9,6 +9,7 @@ import type { ReactNode } from 'react';
 import AppBar from '@mui/material/AppBar';
 import { ThemeProvider } from '@mui/material/styles';
 import { ThemeModeProvider } from '../src/lib/theme-mode';
+import { WALLPAPER_ATTR } from '../src/lib/wallpaper';
 import {
   ACCENT,
   GLASS,
@@ -277,5 +278,33 @@ describe('玻璃材质变量下发与让位', () => {
     const rootStyles =
       typeof rootOverride === 'function' ? rootOverride({ theme }) : (rootOverride ?? {});
     expect(rootStyles.backgroundColor).toBe('transparent');
+  });
+});
+
+describe('无壁纸时禁用玻璃高光（:root:not([data-wallpaper])）', () => {
+  // theme.ts 依赖 lib/wallpaper 在 <html> 上维护的 data-wallpaper 属性标记：没有壁纸时
+  // 玻璃身后没有图像可透，透镜渐变与内侧高光只剩无来由的光泽，token 应被置透明。
+  it('6a. 存在无壁纸改写块，且 --glass-highlight 为 transparent', () => {
+    for (const mode of ['light', 'dark'] as const) {
+      const styles = globalStyles(mode);
+      const block = styles[`:root:not([${WALLPAPER_ATTR}])`] as
+        | Record<string, unknown>
+        | undefined;
+      expect(block, `${mode}: 应下发 ':root:not([data-wallpaper])' 块`).toBeDefined();
+      expect(block!['--glass-highlight']).toBe('transparent');
+    }
+  });
+
+  it('6b. 有壁纸的 :root 块高光不受影响，仍是 GLASS.highlight', () => {
+    expect(rootVars('light')['--glass-highlight']).toBe(GLASS.highlight);
+    expect(rootVars('dark')['--glass-highlight']).toBe(GLASS.highlight);
+  });
+
+  it('6c. 无壁纸改写块不碰 --shadow-whisper（阴影不是高光，保留）', () => {
+    for (const mode of ['light', 'dark'] as const) {
+      const styles = globalStyles(mode);
+      const block = styles[`:root:not([${WALLPAPER_ATTR}])`] as Record<string, unknown>;
+      expect(block['--shadow-whisper']).toBeUndefined();
+    }
   });
 });

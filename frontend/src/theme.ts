@@ -24,6 +24,7 @@ import {
   WHISPER_SHADOW,
 } from './rakko-tokens';
 import { WALLPAPER_TAME_OPACITY, WALLPAPER_VAR } from './lib/glass';
+import { WALLPAPER_ATTR } from './lib/wallpaper';
 
 type Mode = 'light' | 'dark';
 
@@ -147,6 +148,15 @@ function buildThemeOptions(mode: Mode): ThemeOptions {
             '--glass-haze-opacity': GLASS.hazeOpacity,
             '--glass-haze-bleed': GLASS.hazeBleed,
             '--shadow-whisper': GLASS_SHADOW_WHISPER[mode],
+          },
+          // 无壁纸时玻璃没有图像可透（body 退回纯纸色，模糊读不出），透镜渐变与内侧
+          // 高光只剩无来由的光泽——本块把高光 token 置 transparent 而非删掉声明：配方里
+          // 两处消费都是 var(--glass-highlight)（panel 档的左上透镜渐变与 1px 内侧高光），
+          // token 置透明即可让两者同时失效，不必碰 rakko-glass.css 的镜像配方；
+          // :root:not(...) 特异性 (0,2,0) 高于 :root 的 (0,1,0)，能盖住上面的下发值。
+          // --shadow-whisper 不动：阴影不是高光，无壁纸时浮层仍需它托起。
+          [`:root:not([${WALLPAPER_ATTR}])`]: {
+            '--glass-highlight': 'transparent',
           },
           // body 两层背景：第一层是驯化层（把用户壁纸压进可控亮度区间，理由见 lib/glass 注释），
           // 第二层是壁纸本身，由 lib/wallpaper 写到 <html> 上；无壁纸时该变量为 none，
