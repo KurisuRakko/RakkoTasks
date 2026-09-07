@@ -8,17 +8,11 @@
 // backdrop 读回。
 
 import { useSyncExternalStore } from 'react';
-import { WALLPAPER_VAR } from './glass';
+import { WALLPAPER_ATTR, WALLPAPER_VAR } from './glass';
 
 /** localStorage 存储键。index.html 的首帧内联脚本在模块系统之外只能手抄同一份
  *  （那边不能 import 常量），tests/wallpaper.test.tsx 会断言两处一致。 */
 export const WALLPAPER_STORAGE_KEY = 'rakkotasks.wallpaper';
-
-/** <html> 上「有没有壁纸」的布尔属性标记（有壁纸时存在、无壁纸时移除）。CSS 没法对
- *  自定义属性的值做条件判断——WALLPAPER_VAR 只分 url(...) 与 none 两种值，主题层选择器
- *  匹配不到——所以除了图源变量还要这个属性标记，供主题层用
- *  :root:not([data-wallpaper]) 在无壁纸时改写玻璃高光。 */
-export const WALLPAPER_ATTR = 'data-wallpaper';
 
 /** 压缩上限：最长边 1920px，等比缩放、比 1920 小的不放大；JPEG 质量 0.75。
  *  可以压这么狠：壁纸身后还要被玻璃模糊一遍，清晰度不敏感；而 localStorage 只有
