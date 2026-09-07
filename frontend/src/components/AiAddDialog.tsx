@@ -88,6 +88,9 @@ export default function AiAddDialog({
   // AI 解析出的重要度/是否亲自动手：预览界面不给编辑控件，只在保存时原样带进载荷
   const [importance, setImportance] = useState<Importance>('normal');
   const [actionable, setActionable] = useState(true);
+  // 提醒时刻（带 UTC 偏移的绝对时刻串）：fields 阶段交给 ItemFieldsForm 编辑，
+  // 保存时原样带进载荷。初值来自解析结果，之后由编辑区的出参更新。
+  const [reminders, setReminders] = useState<string[]>([]);
   const [parseError, setParseError] = useState(false);
   // 阶段 input 的输入框：iOS Safari 上 Dialog 内 autoFocus 不可靠，改在过渡
   // 结束后手动 focus() 让键盘弹起
@@ -123,6 +126,7 @@ export default function AiAddDialog({
       setDate(parsed.due_date ?? '');
       setImportance(parsed.importance);
       setActionable(parsed.actionable);
+      setReminders(parsed.reminders);
       setPhase('fields');
     } catch {
       // 解析失败回 input 并保留用户原文：绝不让用户白打一遍
@@ -133,7 +137,20 @@ export default function AiAddDialog({
 
   const handleSave = () => {
     if (invalid || submitting) return;
-    onSubmit({ title, summary, category, due_date: date || null, importance, actionable });
+    const fields: ItemFields = {
+      title,
+      summary,
+      category,
+      due_date: date || null,
+      importance,
+      actionable,
+    };
+    // 提醒只在非空时带：创建场景下「没提醒」与「省略 reminders」对后端等价，
+    // 载荷形状保持与解析结果为空时完全一致（配对测试按无 reminders 键断言）。
+    if (reminders.length > 0) {
+      fields.reminders = reminders;
+    }
+    onSubmit(fields);
   };
 
   const handleMainClick = () => {
@@ -296,6 +313,8 @@ export default function AiAddDialog({
                 onDateChange={setDate}
                 invalid={invalid}
                 helper={helper}
+                reminders={reminders}
+                onRemindersChange={setReminders}
               />
             )}
           </Box>

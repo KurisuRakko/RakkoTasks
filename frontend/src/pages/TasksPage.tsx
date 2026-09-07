@@ -37,10 +37,10 @@ import { formatDueDate, groupItems, isNewToday, isOverdue } from '../lib/groupin
 import { moveItem, openKey, removeItem, upsertOpenItem, useCachedList } from '../lib/list-cache';
 import { LEAVE_DURATION, rowSx, useMorphDialog, usePrefersReducedMotion } from '../lib/motion';
 import { cardRowSx } from '../lib/surface';
-import { todayIso } from '../lib/time';
+import { formatReminder, todayIso } from '../lib/time';
 import { runViewTransition, shellAttr, VT_NAMES } from '../lib/view-transition';
 import { GLASS } from '../rakko-tokens';
-import type { Category, Item, ItemFields } from '../types';
+import type { Category, Item, ItemFields, Reminder } from '../types';
 import AiAddDialog from '../components/AiAddDialog';
 import CategoryChips from '../components/CategoryChips';
 import ItemDialog from '../components/ItemDialog';
@@ -56,6 +56,20 @@ function readQuickMode(): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * 行上提醒 chip 的展示：🔔 最早一条提醒的展示文案，多于一条时追加「 +N」。
+ * 显式按 remind_at 的绝对时刻排序取最早，不依赖后端数组顺序（后端契约虽是升序，
+ * 展示方不赌调用方守约）。返回可见文案（label）与 aria-label 用的纯文案。
+ */
+function reminderChipLabel(reminders: Reminder[]): { text: string; label: string } {
+  const sorted = [...reminders].sort(
+    (a, b) => new Date(a.remind_at).getTime() - new Date(b.remind_at).getTime(),
+  );
+  const text = formatReminder(sorted[0].remind_at);
+  const extra = sorted.length > 1 ? ` +${sorted.length - 1}` : '';
+  return { text, label: `🔔 ${text}${extra}` };
 }
 
 function GroupSection({
@@ -115,6 +129,9 @@ function GroupSection({
     >
       {items.map((item, index) => {
         const leaving = leavingIds.includes(item.id);
+        // 提醒 chip 的展示（最早一条 + 超出条数）；无提醒时不渲染
+        const reminder =
+          item.reminders.length > 0 ? reminderChipLabel(item.reminders) : null;
         return (
           <ListItem
             key={item.id}
@@ -184,6 +201,13 @@ function GroupSection({
                     label={formatDueDate(item.due_date)}
                     size="small"
                     color={isOverdue(item, today) ? 'error' : 'default'}
+                  />
+                )}
+                {reminder && (
+                  <Chip
+                    label={reminder.label}
+                    size="small"
+                    aria-label={`提醒 ${reminder.text}`}
                   />
                 )}
               </Stack>

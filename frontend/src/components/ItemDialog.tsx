@@ -46,6 +46,7 @@ import {
 import { copyText } from '../lib/clipboard';
 import { formatDueDate } from '../lib/grouping';
 import { columnDialogSx } from '../lib/layout';
+import { formatReminder } from '../lib/time';
 import type { AccountInfo, Email, Item, ItemFields, RelatedEmail } from '../types';
 import EmailViewer from './EmailViewer';
 import ItemEditor from './ItemEditor';
@@ -217,6 +218,22 @@ export default function ItemDialog({ item, onClose, onChanged, onDeleted }: Prop
           <Chip label={current.category} size="small" variant="outlined" />
           {current.due_date && <Chip label={formatDueDate(current.due_date)} size="small" />}
         </Stack>
+        {/* 提醒列表：只读展示（编辑走 ItemEditor）。按绝对时刻升序渲染，空则不出现。
+            后端契约虽是升序，展示方不赌调用方守约，这里显式排一次。 */}
+        {current.reminders.length > 0 && (
+          <Box aria-label="提醒列表" sx={{ mb: 1.5, typography: 'body2' }}>
+            {[...current.reminders]
+              .sort(
+                (a, b) =>
+                  new Date(a.remind_at).getTime() - new Date(b.remind_at).getTime(),
+              )
+              .map((r) => (
+                <Box key={r.id} component="div">
+                  🔔 {formatReminder(r.remind_at)}
+                </Box>
+              ))}
+          </Box>
+        )}
         {manual ? (
           <>
             {/* 手动条目：无来源邮件；summary 是用户随手敲的纯文本，breaks 保留换行 */}
