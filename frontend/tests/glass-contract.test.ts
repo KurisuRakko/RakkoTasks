@@ -13,6 +13,7 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import themeTs from '../src/theme.ts?raw';
+import { GLASS, GLASS_AERO } from '../src/rakko-tokens';
 
 interface DirentLike {
   name: string;
@@ -244,36 +245,52 @@ describe('Aero 玻璃配方契约（新材质接线）', () => {
     expect(glassCss).toContain('[data-glass] :where(code, pre, kbd, samp)');
   });
 
-  it('5e. 退化块底色换成不透明 --color-paper / --color-neutral-10，border 与 box-shadow 仍完整', async () => {
+  it('5e. 退化块只换不透明底色，不声明 border / box-shadow——识别特征靠层叠从主配方保留', async () => {
     const glassCss = (await loadFs()).readFileSync('src/rakko-glass.css', 'utf-8');
     const { supports, reduce } = degradeRegions(glassCss);
     for (const [region, name] of [
       [supports, '@supports-not（无 backdrop-filter）'] as const,
       [reduce, '@media reduce'] as const,
     ]) {
+      // 底色换成不透明纸底（背景叠层最后一段以纯色收尾，与上游原文一致）
       for (const selector of ["[data-glass='chrome'] {", "[data-glass='panel'] {"]) {
         expect(blockOf(region, selector), `${name} 的 ${selector} 应是不透明纸底`).toContain('var(--color-paper);');
       }
       expect(blockOf(region, "[data-glass='inverse'] {"), `${name} 的 inverse 应是不透明反色底`).toContain('var(--color-neutral-10);');
-      // 厚度边与光泽仍在：border / box-shadow 全量声明（退化不丢识别特征）
-      const panel = blockOf(region, "[data-glass='panel'] {");
-      expect(panel).toContain('border: 1px solid var(--glass-rim);');
-      expect(panel).toContain('inset 0 0 0 1px var(--glass-rim-inner),');
-      expect(panel).toContain('var(--glass-lift);');
-      expect(blockOf(region, "[data-glass='chrome'] {")).toContain('inset 0 1px 0 var(--glass-lip),');
-      const inverse = blockOf(region, "[data-glass='inverse'] {");
-      expect(inverse).toContain('border: 1px solid');
-      expect(inverse).toContain('var(--glass-lift);');
+      // haze 主体在退化里也有 85% 纸色兜底（雾底不随玻璃一起消失）
+      expect(region, `${name} 应给 haze 主体不透明纸色兜底`).toContain('var(--color-paper) 85%, transparent);');
+      // 退化块只允许覆盖 background：主配方在前面同特异性先声明，谁后写谁生效——
+      // 退化块里一旦出现 border / box-shadow / text-shadow，就会盖掉主配方的厚度边与光泽
+      const overrides = /(^|\n)\s*(?:-webkit-)?(?:border|box-shadow|text-shadow)\s*:/m;
+      for (const selector of ["[data-glass='chrome'] {", "[data-glass='panel'] {", "[data-glass='inverse'] {"]) {
+        expect(blockOf(region, selector), `${name} 的 ${selector} 不得覆盖 border / box-shadow / text-shadow`).not.toMatch(overrides);
+      }
     }
+    // 识别特征本身在主配方里完整在位（退化块靠层叠沿用它们）
+    const panel = blockOf(glassCss, "[data-glass='panel'] {");
+    expect(panel).toContain('border: 1px solid var(--glass-rim);');
+    expect(panel).toContain('inset 0 0 0 1px var(--glass-rim-inner),');
+    expect(panel).toContain('var(--glass-lift);');
+    expect(blockOf(glassCss, "[data-glass='chrome'] {")).toContain('inset 0 1px 0 var(--glass-lip),');
+    const inverse = blockOf(glassCss, "[data-glass='inverse'] {");
+    expect(inverse).toContain('border: 1px solid');
+    expect(inverse).toContain('var(--glass-lift);');
   });
 
-  it('5f. reduced-transparency 退化块把文字光晕置 none；无 blur 支持的退化块保留光晕', async () => {
+  it('5f. 光晕策略随上游：无 blur 支持时保留（主配方层叠），reduce 时经合并规则统一关掉', async () => {
     const glassCss = (await loadFs()).readFileSync('src/rakko-glass.css', 'utf-8');
     const { supports, reduce } = degradeRegions(glassCss);
+    // 无 blur 的浏览器：退化块不碰 text-shadow，主配方的光晕声明原样生效
     for (const selector of ["[data-glass='chrome'] {", "[data-glass='panel'] {"]) {
-      expect(blockOf(reduce, selector), `${selector} 在 reduce 块应关掉文字光晕`).toContain('text-shadow: none;');
-      expect(blockOf(supports, selector), `${selector} 在无 blur 块应保留文字光晕`).toContain('text-shadow: var(--glass-text-glow);');
+      expect(blockOf(glassCss, selector), `${selector} 主配方应带文字光晕`).toContain('text-shadow: var(--glass-text-glow);');
     }
+    expect(supports, '无 blur 退化块不得声明 text-shadow（光晕由主配方层叠保留）').not.toMatch(/(^|\n)\s*text-shadow\s*:/m);
+    // reduce：光晕经一条合并规则（panel / chrome / inverse 并列）统一关掉
+    const glowOff = reduce.split('}').filter((block) => block.includes('text-shadow: none;'));
+    expect(glowOff).toHaveLength(1);
+    expect(glowOff[0]).toContain("[data-glass='panel'],");
+    expect(glowOff[0]).toContain("[data-glass='chrome'],");
+    expect(glowOff[0]).toContain("[data-glass='inverse'] {");
   });
 
   it('5g. haze 原样未动：九团云、噪声贴图、两种形态的规则都在', async () => {
@@ -294,5 +311,48 @@ describe('Aero 玻璃配方契约（新材质接线）', () => {
     }
     // 雾边 = 九团并集 ∩ 分形噪声
     expect(glassCss).toContain('mask-composite: intersect');
+  });
+});
+
+describe('玻璃可读性契约', () => {
+  it('blur 恒为 3px：Aero 的通透是刻意的，不是待优化项', () => {
+    // Aero 玻璃要能透过去看见背景轮廓，糊成一片是 iOS 毛玻璃的路子；
+    // 改它要先重做可读性实测，别当成模糊不够的优化点去调大。
+    expect(GLASS.blur).toBe('3px');
+  });
+
+  it('panel 纸底 opacity >= 58', () => {
+    // 实测地板：降到 50% 时正文对比度掉到 4.01，跌出 WCAG AA 4.5。
+    expect(parseFloat(GLASS.panelOpacity)).toBeGreaterThanOrEqual(58);
+  });
+
+  it('haze 纸色 opacity >= 55', () => {
+    // 51% 时 12px/600 分组标题在彩色壁纸下只有 3.96（够不到 AA 4.5）；
+    // 55% 是全部过线的最小值（4.53–4.98）。
+    expect(parseFloat(GLASS.hazeOpacity)).toBeGreaterThanOrEqual(55);
+  });
+
+  it('surface（chrome 顶栏）纸底 opacity >= 52', () => {
+    // chrome 是四档里最透的，压在它上面的是 12px/500 底栏导航标签：
+    // 45% 时三张实测壁纸有两张够不到 AA 4.5，彩色天空只有 3.80；
+    // 52% 是全部过线的最小值（4.62–5.45）。
+    expect(parseFloat(GLASS.surfaceOpacity)).toBeGreaterThanOrEqual(52);
+  });
+
+  it('文字光晕必须与主题反相：浅色白光晕 / 深色黑光晕', () => {
+    // 这是硬约束，不是审美选择：深色主题若沿用白光晕，亮色正文与光晕同色被淹没，
+    // 对比度从 4.69 崩到 1.07，等于看不见。
+    expect(GLASS_AERO.light.textGlow).toContain('255, 255, 255');
+    expect(GLASS_AERO.dark.textGlow).toContain('rgba(0, 0, 0');
+  });
+
+  it('两个主题的 textGlow 不相等', () => {
+    // 防复制粘贴时忘了改深色那份（上面一条是内容约束，这一条防笔误）。
+    expect(GLASS_AERO.dark.textGlow).not.toBe(GLASS_AERO.light.textGlow);
+  });
+
+  it('GLASS_AERO 的 light / dark 键集完全一致', () => {
+    // 十二个键一个不少：防止将来加 token 只加一边，两套配方错位。
+    expect(Object.keys(GLASS_AERO.dark)).toEqual(Object.keys(GLASS_AERO.light));
   });
 });

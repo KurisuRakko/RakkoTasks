@@ -119,11 +119,18 @@ export const WHISPER_SHADOW = '0 1px 2px rgba(20, 19, 18, 0.06)';
 export const GLASS = {
   blur: '3px',
   saturate: '193%',
-  surfaceOpacity: '45%',
+  // chrome 是四档里最透的，压在它上面的是 12px/500 的底栏导航标签。实测（真实中文字形 +
+  // 反相光晕，文字色 n9，取最差点）：浅色主题下 45% 时三张实测壁纸有两张够不到 AA 4.5，
+  // 彩色天空只有 3.80；52% 是全部过线的最小值（4.62–5.45），且 45% 与 52% 的顶栏通透度
+  // 截图对比无可见差别（与上游 Rakko Design 同步，原 45%）。
+  surfaceOpacity: '52%',
   panelOpacity: '58%',
   scrimOpacity: '34%',
   highlight: 'rgba(255, 255, 255, 0.59)',
-  hazeOpacity: '51%',
+  // haze 纸色 55%（与上游 Rakko Design 同步，原 51%）：12px/600 的分组标题压在 haze 上，
+  // 51% 时在三张实测壁纸中最低只有 3.96（彩色天空），够不到 WCAG AA 4.5；55% 是全部过线
+  // 的最小值（4.53–4.98），且 51% 与 55% 的雾浓淡在真实版面上无可见差别。
+  hazeOpacity: '55%',
   hazeBleed: '28px',
 } as const;
 
