@@ -218,8 +218,10 @@ export default function ItemDialog({ item, onClose, onChanged, onDeleted }: Prop
           <Chip label={current.category} size="small" variant="outlined" />
           {current.due_date && <Chip label={formatDueDate(current.due_date)} size="small" />}
         </Stack>
-        {/* 提醒列表：只读展示（编辑走 ItemEditor）。按绝对时刻升序渲染，空则不出现。
-            后端契约虽是升序，展示方不赌调用方守约，这里显式排一次。 */}
+        {/* 提醒列表：只读展示。手动条目点右上角「编辑」真的能改——ItemEditor 经
+            initial.reminders 拿到现有提醒，保存时整体替换；邮件条目暂无编辑入口，
+            这里保持只读。按绝对时刻升序渲染，空则不出现。后端契约虽是升序，
+            展示方不赌调用方守约，这里显式排一次。 */}
         {current.reminders.length > 0 && (
           <Box aria-label="提醒列表" sx={{ mb: 1.5, typography: 'body2' }}>
             {[...current.reminders]
@@ -375,6 +377,14 @@ export default function ItemDialog({ item, onClose, onChanged, onDeleted }: Prop
             summary: current.summary ?? '',
             category: current.category,
             due_date: current.due_date,
+            // ItemFieldsForm 的草案只在挂载时初始化，这里必须按绝对时刻升序喂好
+            // （别赌调用方守约，与上面只读展示同一套显式排序写法）。
+            reminders: [...current.reminders]
+              .sort(
+                (a, b) =>
+                  new Date(a.remind_at).getTime() - new Date(b.remind_at).getTime(),
+              )
+              .map((r) => r.remind_at),
           }}
           submitting={saving}
           onSubmit={handleSaveEdit}

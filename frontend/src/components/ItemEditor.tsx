@@ -60,6 +60,10 @@ export default function ItemEditor({
   );
   const [category, setCategory] = useState<Category>(initial?.category ?? '个人');
   const [date, setDate] = useState<string>(initial?.due_date ?? '');
+  // 提醒时刻（带 UTC 偏移的绝对时刻串）：初值只在挂载时取自 initial.reminders，
+  // 此后由 ItemFieldsForm 提醒编辑区的外发回调更新（它的草案行 state 同样只在
+  // 挂载时初始化，见 ItemFieldsForm 文件头说明——两处都不随 props 重置）。
+  const [reminders, setReminders] = useState<string[]>(initial?.reminders ?? []);
 
   const theme = useTheme();
   // 移动端全屏、桌面端限宽对话框（与 ItemDialog 同款判断）
@@ -73,7 +77,16 @@ export default function ItemEditor({
 
   const handleSubmit = () => {
     if (invalid || submitting) return;
-    onSubmit({ title, summary, category, due_date: date || null });
+    onSubmit({
+      title,
+      summary,
+      category,
+      due_date: date || null,
+      // reminders 语义（DESIGN.md 第 6 节）：省略 = 不改、传 [] = 清空。这里是
+      // 「用户看着完整表单按下保存」，总是显式带当前数组（哪怕空）——省略会让
+      // 「把最后一个提醒删掉再保存」变成静默无操作（后端以为你不想动提醒）。
+      reminders,
+    });
   };
 
   return (
@@ -103,7 +116,8 @@ export default function ItemEditor({
           </Button>
         </Toolbar>
       </AppBar>
-      {/* 字段区：与 AiAddDialog 共用的受控表单（DOM/文案由 ItemFieldsForm 一处定义） */}
+      {/* 字段区：与 AiAddDialog 共用的受控表单（DOM/文案由 ItemFieldsForm 一处定义）。
+          传了 reminders/onRemindersChange，提醒编辑区才会渲染（见 ItemFieldsForm 门槛） */}
       <ItemFieldsForm
         text={text}
         onTextChange={setText}
@@ -111,6 +125,8 @@ export default function ItemEditor({
         onCategoryChange={setCategory}
         date={date}
         onDateChange={setDate}
+        reminders={reminders}
+        onRemindersChange={setReminders}
         invalid={invalid}
         helper={helper}
         autoFocus
