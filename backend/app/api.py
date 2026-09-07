@@ -25,8 +25,16 @@ from app.caldav.auth import generate_app_password, hash_app_password
 from app.config import Settings, get_settings
 from app.db import init_db, make_engine, make_session_factory
 from app.detail import apply_detail, build_export_text, generate_item_detail, resolve_related
-from app.itemrules import CATEGORIES, DEFAULT_TITLE, ItemFieldError, set_status, validate_item_fields
-from app.models import Account, Email, Item, User
+from app.itemrules import (
+    CATEGORIES,
+    DEFAULT_TITLE,
+    ItemFieldError,
+    local_wall_to_utc,
+    set_status,
+    validate_item_fields,
+    validate_reminders,
+)
+from app.models import Account, Email, Item, Reminder, User
 from app.ratelimit import RateLimiter
 from app.sanitizer import build_email_document
 from app.search import run_search
@@ -41,6 +49,7 @@ class ItemCreate(BaseModel):
     due_date: str | None = None
     importance: str | None = None   # 省略 → 落 normal
     actionable: bool | None = None  # 省略 → 落 True
+    reminders: list[str] | None = None  # 带 UTC 偏移的 ISO 8601（不带偏移一律 400）
 
 
 class ItemPatch(BaseModel):
@@ -50,11 +59,13 @@ class ItemPatch(BaseModel):
     summary: str | None = None
     category: str | None = None
     due_date: str | None = None
+    reminders: list[str] | None = None  # 带 UTC 偏移的 ISO 8601；传 null 与传 [] 都清空
 
 
 class ParseRequest(BaseModel):
     text: str = Field(max_length=2000)  # 防超长文本灌进 LLM 上下文烧钱
     today: str | None = None            # 用户浏览器本地日期 YYYY-MM-DD
+    tz: str | None = None               # IANA 时区名，如 "Australia/Sydney"
 
 
 class SearchRequest(BaseModel):
@@ -83,6 +94,25 @@ def _resolve_today(raw: str | None, settings) -> str:
         # KeyError 子类）与 ValueError（空串/绝对路径/越界路径——如 .env 里
         # LOCAL_TIMEZONE= 留空），统一退一步用 UTC，不要让端点 500
         return datetime.now(timezone.utc).date().isoformat()
+
+
+def _resolve_zone(raw: str | None, settings) -> ZoneInfo:
+    """解析用的时区：请求体传的 IANA 名优先，缺省或非法回落到
+    settings.local_timezone 的时区，再非法回落到 UTC。
+
+    与 _resolve_today 同款三级回落：ZoneInfoNotFoundError（查无此区）与
+    ValueError（空串/绝对路径/.. 路径）两种形态都兜，非法 tz 不应让端点
+    500——解析提醒时刻换算失败会连累整条 /parse，宁可退回配置时区。
+    """
+    if raw is not None:
+        try:
+            return ZoneInfo(raw)
+        except (ZoneInfoNotFoundError, ValueError):
+            pass
+    try:
+        return ZoneInfo(settings.local_timezone)
+    except (ZoneInfoNotFoundError, ValueError):
+        return ZoneInfo("UTC")
 
 
 def _get_db(request: Request) -> Iterator[Session]:
@@ -209,6 +239,7 @@ def create_app(
             due = validate_item_fields(
                 body.title, body.summary, body.category, body.due_date, body.importance
             )
+            reminders = validate_reminders(body.reminders)  # None = 没传；list = 升序去重 naive UTC
         except ItemFieldError as e:
             raise HTTPException(status_code=400, detail={"code": e.code}) from None
         item = Item(
@@ -223,11 +254,15 @@ def create_app(
             status="open",
         )
         db.add(item)
+        if reminders is not None:
+            for dt in reminders:
+                item.reminders.append(Reminder(remind_at=dt))  # 关系 append，ORM 自己填 item_id
         db.commit()
         return _item_dict(item, [])
 
-    def _ai_parse(text: str, today: str | None) -> dict:
-        """/parse 与 /quick 共用的解析路径：解析「今天」→ parse_task → 归一化。
+    def _ai_parse(text: str, today: str | None, tz: str | None) -> dict:
+        """/parse 与 /quick 共用的解析路径：解析「今天」与「时区」→ parse_task →
+        归一化 → 提醒换算成带偏移的绝对时刻。
 
         from app.llm import ... 必须写在函数体内（延迟导入）：测试用
         monkeypatch.setattr("app.llm.get_llm", lambda settings=None: FakeLLM())
@@ -236,7 +271,16 @@ def create_app(
         from app.llm import get_llm, normalize_parsed_task  # 延迟导入，便于测试 monkeypatch
 
         llm = get_llm(settings)
-        return normalize_parsed_task(llm.parse_task(text, _resolve_today(today, settings)))
+        parsed = normalize_parsed_task(llm.parse_task(text, _resolve_today(today, settings)))
+        # 模型输出的 reminders 是本地墙上时刻串（normalize 拿不到时区、保持原样），
+        # 只有这里同时握着模型输出和请求时区，所以换算放服务端：转成 naive UTC 后
+        # 序列化成带 +00:00 偏移的绝对时刻。/parse 的响应要被前端直接回填进
+        # POST /api/items 的 reminders，而那个端点只收带偏移的串（见 DESIGN.md 6）。
+        parsed["reminders"] = [
+            dt.replace(tzinfo=timezone.utc).isoformat()
+            for dt in local_wall_to_utc(parsed["reminders"], _resolve_zone(tz, settings))
+        ]
+        return parsed
 
     @app.post("/api/items/parse")
     def parse_item(
@@ -249,7 +293,7 @@ def create_app(
         if not parse_limiter.allow(user.sub):
             raise HTTPException(status_code=429, detail={"code": "rate_limited"})
         try:
-            return _ai_parse(body.text, body.today)
+            return _ai_parse(body.text, body.today, body.tz)
         except Exception as exc:
             logger.exception("AI 解析失败")
             raise HTTPException(status_code=502, detail={"code": "parse_error"}) from exc
@@ -267,8 +311,9 @@ def create_app(
         """
         if not parse_limiter.allow(user.sub):
             raise HTTPException(status_code=429, detail={"code": "rate_limited"})
+        reminder_dts: list[datetime] = []  # 兜底路径（LLM 挂）没有 AI 判断可用，不挂任何提醒
         try:
-            parsed = _ai_parse(body.text, body.today)
+            parsed = _ai_parse(body.text, body.today, body.tz)
             # 第二道保险：normalize_parsed_task 理论上已兜住字段非法，这里再校一次
             due = validate_item_fields(
                 parsed["title"], parsed["summary"], parsed["category"],
@@ -277,6 +322,9 @@ def create_app(
             ai_parsed = True
             title, summary = parsed["title"], parsed["summary"]
             category, importance, actionable = parsed["category"], parsed["importance"], parsed["actionable"]
+            # _ai_parse 已按请求时区把模型输出的墙上时刻换成带 +00:00 的绝对时刻串，
+            # 这里再落成库里的 naive UTC（validate_reminders 收的就是带偏移串）
+            reminder_dts = validate_reminders(parsed["reminders"]) or []
         except Exception as exc:
             logger.exception("AI 解析失败，改用原文兜底建条目")
             ai_parsed = False
@@ -300,6 +348,8 @@ def create_app(
             status="open",
         )
         db.add(item)
+        for dt in reminder_dts:
+            item.reminders.append(Reminder(remind_at=dt))
         db.commit()
         return {"item": _item_dict(item, []), "ai_parsed": ai_parsed}
 
@@ -313,6 +363,9 @@ def create_app(
         fields = body.model_fields_set
         if not fields:
             raise HTTPException(status_code=400, detail={"code": "bad_request"})
+        # reminders 故意不进这个集合：下面四个字段只对手动条目开放，而提醒是
+        # 用户自己挂上去的东西、跟条目内容归谁无关——邮件生成的任务恰恰是最
+        # 需要用户自己加提醒的，所以任何条目都能改 reminders。
         editable = fields & {"title", "summary", "category", "due_date"}
         if editable and item.email_id is not None:
             raise HTTPException(status_code=400, detail={"code": "not_editable"})
@@ -320,6 +373,17 @@ def create_app(
             if body.status not in ("done", "open"):
                 raise HTTPException(status_code=400, detail={"code": "bad_status"})
             set_status(item, body.status, now=datetime.now())
+        if "reminders" in fields:
+            # 整体替换（不是增量）：传 [] 清空全部；传 null 与 [] 同义，都清空
+            # （list[str] | None 的 null 在这里没有第三种含义，统一成清空）。
+            # item.reminders.clear() 走 delete-orphan 把被移除的行真删掉。
+            try:
+                new_reminders = validate_reminders(body.reminders)  # None（=清空）或 naive UTC 列表
+            except ItemFieldError as e:
+                raise HTTPException(status_code=400, detail={"code": e.code}) from None
+            item.reminders.clear()
+            for dt in new_reminders or []:
+                item.reminders.append(Reminder(remind_at=dt))
         if editable:
             # 未给出的字段用现值合并后整体校验一次（校验语义与 POST 一致）
             title = body.title if "title" in fields else item.title
@@ -602,4 +666,11 @@ def _item_dict(item: Item, related: list[dict]) -> dict:
         "related": related,
         "created_at": item.created_at.isoformat() if item.created_at else None,
         "done_at": item.done_at.isoformat() if item.done_at else None,
+        # 显式按 remind_at 升序排序，不依赖关系上 order_by 的隐式行为；
+        # 序列化与 email_sent_at 同款：库内 naive UTC 显式补 +00:00，前端
+        # new Date() 才不会按本地时区误读
+        "reminders": [
+            {"id": r.id, "remind_at": r.remind_at.replace(tzinfo=timezone.utc).isoformat()}
+            for r in sorted(item.reminders, key=lambda r: r.remind_at)
+        ],
     }
