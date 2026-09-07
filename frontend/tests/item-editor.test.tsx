@@ -84,11 +84,14 @@ describe('ItemEditor 渲染', () => {
     fireEvent.click(screen.getByRole('button', { name: '保存' }));
 
     expect(onSubmit).toHaveBeenCalledTimes(1);
+    // 载荷契约（ItemEditor 接入提醒后）：恒带 reminders（空数组 = 明确不改动/清空，
+    // 见 ItemEditor.handleSubmit 注释；「删光再保存」要能表达成 []，故从不省略）
     expect(onSubmit).toHaveBeenCalledWith({
       title: '买牛奶',
       summary: '两盒',
       category: '账单',
       due_date: '2026-09-10',
+      reminders: [],
     });
   });
 
@@ -104,6 +107,7 @@ describe('ItemEditor 渲染', () => {
       summary: '',
       category: '个人',
       due_date: null,
+      reminders: [],
     });
   });
 
