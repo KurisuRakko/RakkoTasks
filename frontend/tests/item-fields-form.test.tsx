@@ -17,6 +17,8 @@ interface RenderFormOpts {
   onTextChange?: (next: string) => void;
   onCategoryChange?: (next: Category) => void;
   onDateChange?: (next: string) => void;
+  reminders?: string[];
+  onRemindersChange?: (next: string[]) => void;
 }
 
 function renderForm(opts: RenderFormOpts = {}) {
@@ -29,6 +31,8 @@ function renderForm(opts: RenderFormOpts = {}) {
     onTextChange: opts.onTextChange ?? vi.fn<(next: string) => void>(),
     onCategoryChange: opts.onCategoryChange ?? vi.fn<(next: Category) => void>(),
     onDateChange: opts.onDateChange ?? vi.fn<(next: string) => void>(),
+    reminders: opts.reminders ?? [],
+    onRemindersChange: opts.onRemindersChange ?? vi.fn<(next: string[]) => void>(),
   };
   render(<ItemFieldsForm {...props} />);
   return { props };
