@@ -229,6 +229,84 @@ def test_patch_replaces_reminders_entirely(session_factory, monkeypatch):
     assert rows[0].remind_at == datetime(2026, 9, 30, 22, 0)
 
 
+# 回归：PATCH 的新集合与旧集合有交集时，只动差集（先 INSERT 后 DELETE 会撞
+# UNIQUE(item_id, remind_at) 直接 500）；无交集的整体替换走的是另一条路径，上面
+# 的 test_patch_replaces_reminders_entirely 已覆盖。时刻取终审原场景：
+_TUE = "2026-09-08T10:00:00+10:00"   # → naive UTC 2026-09-08 00:00
+_FRI = "2026-09-11T10:00:00+10:00"   # → naive UTC 2026-09-11 00:00
+_WED = "2026-09-09T10:00:00+10:00"   # → naive UTC 2026-09-09 00:00
+
+
+def test_patch_shrinks_overlapping_reminders(session_factory, monkeypatch):
+    """原有 [周二, 周五] → PATCH [周二] → 200，库里恰好 1 行且是周二。
+
+    本次缺陷的直接回归：新集合 ⊂ 旧集合（删掉其中一个），clear+重建会 500。
+    """
+    _seed(session_factory)
+    item_id = _add_manual(
+        session_factory,
+        remind_at=[_offset_naive_utc(_TUE), _offset_naive_utc(_FRI)],
+    )
+    client = _client(session_factory, monkeypatch)
+
+    resp = client.patch(f"/api/items/{item_id}", json={"reminders": [_TUE]})
+    assert resp.status_code == 200
+    assert [r["remind_at"] for r in resp.json()["reminders"]] == ["2026-09-08T00:00:00+00:00"]
+    rows = _reminder_rows(session_factory, item_id)
+    assert len(rows) == 1
+    assert rows[0].remind_at == _offset_naive_utc(_TUE)
+
+
+def test_patch_identical_reminders_keeps_ids_stable(session_factory, monkeypatch):
+    """原有 [周二, 周五] → PATCH [周二, 周五]（完全相同）→ 200，库里仍是 2 行，
+    且两行的 id 与 PATCH 前相同（没有无谓的删了重建）。"""
+    _seed(session_factory)
+    item_id = _add_manual(
+        session_factory,
+        remind_at=[_offset_naive_utc(_TUE), _offset_naive_utc(_FRI)],
+    )
+    client = _client(session_factory, monkeypatch)
+    before = {r.remind_at: r.id for r in _reminder_rows(session_factory, item_id)}
+
+    resp = client.patch(f"/api/items/{item_id}", json={"reminders": [_TUE, _FRI]})
+    assert resp.status_code == 200
+    rows = _reminder_rows(session_factory, item_id)
+    assert len(rows) == 2
+    assert {r.remind_at: r.id for r in rows} == before
+
+
+def test_patch_grows_overlapping_reminders(session_factory, monkeypatch):
+    """原有 [周二] → PATCH [周二, 周五] → 200，库里 2 行，周二那行 id 不变。"""
+    _seed(session_factory)
+    item_id = _add_manual(session_factory, remind_at=[_offset_naive_utc(_TUE)])
+    client = _client(session_factory, monkeypatch)
+    tue_id = _reminder_rows(session_factory, item_id)[0].id
+
+    resp = client.patch(f"/api/items/{item_id}", json={"reminders": [_TUE, _FRI]})
+    assert resp.status_code == 200
+    rows = _reminder_rows(session_factory, item_id)
+    assert len(rows) == 2
+    assert [r.remind_at for r in rows] == [_offset_naive_utc(_TUE), _offset_naive_utc(_FRI)]
+    assert rows[0].id == tue_id  # 交集的周二行原样保留，id 稳定
+
+
+def test_patch_disjoint_reminders_replaces_all(session_factory, monkeypatch):
+    """原有 [周二, 周五] → PATCH [周三]（完全不相交）→ 200，库里 1 行。"""
+    _seed(session_factory)
+    item_id = _add_manual(
+        session_factory,
+        remind_at=[_offset_naive_utc(_TUE), _offset_naive_utc(_FRI)],
+    )
+    client = _client(session_factory, monkeypatch)
+
+    resp = client.patch(f"/api/items/{item_id}", json={"reminders": [_WED]})
+    assert resp.status_code == 200
+    assert [r["remind_at"] for r in resp.json()["reminders"]] == ["2026-09-09T00:00:00+00:00"]
+    rows = _reminder_rows(session_factory, item_id)
+    assert len(rows) == 1
+    assert rows[0].remind_at == _offset_naive_utc(_WED)
+
+
 def test_patch_empty_clears_and_missing_key_keeps(session_factory, monkeypatch):
     _seed(session_factory)
     client = _client(session_factory, monkeypatch)

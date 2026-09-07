@@ -376,14 +376,21 @@ def create_app(
         if "reminders" in fields:
             # 整体替换（不是增量）：传 [] 清空全部；传 null 与 [] 同义，都清空
             # （list[str] | None 的 null 在这里没有第三种含义，统一成清空）。
-            # item.reminders.clear() 走 delete-orphan 把被移除的行真删掉。
+            # 实现上算差集而不是 clear()+重建：同一时刻的行若先删后插，会在同一次
+            # flush 里先 INSERT 再 DELETE（unit-of-work 顺序），新行撞上还没删掉的
+            # 旧行命中 UNIQUE(item_id, remind_at) → 500。差集只删多余、只加新增，
+            # 交集行原样保留（id 稳定，也少写库）。
             try:
                 new_reminders = validate_reminders(body.reminders)  # None（=清空）或 naive UTC 列表
             except ItemFieldError as e:
                 raise HTTPException(status_code=400, detail={"code": e.code}) from None
-            item.reminders.clear()
-            for dt in new_reminders or []:
-                item.reminders.append(Reminder(remind_at=dt))
+            wanted = set(new_reminders or [])
+            existing = {r.remind_at: r for r in item.reminders}
+            for at, row in existing.items():
+                if at not in wanted:
+                    item.reminders.remove(row)  # delete-orphan 负责真删
+            for at in sorted(wanted - existing.keys()):
+                item.reminders.append(Reminder(remind_at=at))
         if editable:
             # 未给出的字段用现值合并后整体校验一次（校验语义与 POST 一致）
             title = body.title if "title" in fields else item.title
