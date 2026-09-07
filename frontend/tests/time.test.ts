@@ -3,7 +3,13 @@
 // todayIso 的输出等于按本地分量手拼的结果（见用例内注释）。
 
 import { describe, expect, it } from 'vitest';
-import { todayIso } from '../src/lib/time';
+import {
+  formatReminder,
+  fromDatetimeLocalValue,
+  localTimeZone,
+  todayIso,
+  toDatetimeLocalValue,
+} from '../src/lib/time';
 
 /** 与实现口径相同的「手拼本地日期」参考值：本地年/月/日分量 */
 function localDateString(d: Date): string {
@@ -38,5 +44,32 @@ describe('todayIso', () => {
     }
     // 本机时区为 UTC 时 utcSlice === '2026-01-05'，走不到上面分支，无法构造差异；
     // 此时上面的本地分量断言已覆盖口径。
+  });
+});
+
+describe('提醒时刻助手（datetime-local ↔ 带偏移 ISO ↔ 展示）', () => {
+  it('往返无漂移，且产出的串一定带偏移（后端拒收不带偏移的）', () => {
+    for (const v of ['2026-09-08T10:00', '2026-01-01T00:00', '2026-12-31T23:59']) {
+      const iso = fromDatetimeLocalValue(v);
+      expect(iso).not.toBeNull();
+      expect(iso!).toMatch(/[+-]\d{2}:\d{2}$/);
+      expect(toDatetimeLocalValue(iso!)).toBe(v);
+    }
+  });
+
+  it('展示按浏览器本地时区，今天/明天/昨天用相对词', () => {
+    const now = new Date(2026, 8, 7, 12, 0);
+    expect(formatReminder(fromDatetimeLocalValue('2026-09-07T09:30')!, now)).toBe('今天 09:30');
+    expect(formatReminder(fromDatetimeLocalValue('2026-09-08T10:00')!, now)).toBe('明天 10:00');
+    expect(formatReminder(fromDatetimeLocalValue('2026-09-06T18:00')!, now)).toBe('昨天 18:00');
+    expect(formatReminder(fromDatetimeLocalValue('2026-11-03T14:05')!, now)).toBe('11月3日 14:05');
+  });
+
+  it('脏输入一律不抛', () => {
+    expect(fromDatetimeLocalValue('')).toBeNull();
+    expect(fromDatetimeLocalValue('明天')).toBeNull();
+    expect(toDatetimeLocalValue('nope')).toBe('');
+    expect(formatReminder('nope')).toBe('nope');
+    expect(localTimeZone().length).toBeGreaterThan(0);
   });
 });
