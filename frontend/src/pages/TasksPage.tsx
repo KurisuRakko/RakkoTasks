@@ -30,6 +30,7 @@ import { createItem, fetchItems, patchItem } from '../lib/api';
 import { formatDueDate, groupItems, isNewToday, isOverdue } from '../lib/grouping';
 import { moveItem, openKey, removeItem, upsertOpenItem, useCachedList } from '../lib/list-cache';
 import { LEAVE_DURATION, rowSx, useMorphDialog, usePrefersReducedMotion } from '../lib/motion';
+import { useLongPress } from '../lib/long-press';
 import { cardRowSx } from '../lib/surface';
 import { runViewTransition, shellAttr, VT_NAMES } from '../lib/view-transition';
 import { GLASS } from '../rakko-tokens';
@@ -37,6 +38,130 @@ import type { Category, Item, ItemFields } from '../types';
 import CategoryChips from '../components/CategoryChips';
 import ItemDialog from '../components/ItemDialog';
 import ItemEditor from '../components/ItemEditor';
+import RowContextMenu from '../components/RowContextMenu';
+
+/** 行右键 / 长按菜单的弹出位置（视口坐标） */
+type Point = { x: number; y: number };
+
+/** 单行任务（拆成独立组件：长按 hook 需要逐行一份实例，不能放在 map 的循环体里） */
+function TaskRow({
+  item,
+  index,
+  today,
+  leaving,
+  animateEnter,
+  reduced,
+  sourceName,
+  onToggle,
+  onOpen,
+  onMenuOpen,
+}: {
+  item: Item;
+  index: number;
+  today: Date;
+  leaving: boolean;
+  animateEnter: boolean;
+  reduced: boolean;
+  /** 容器变换来源行命名：仅对话框关闭且该行是上一次来源时持名 */
+  sourceName: (key: number) => string | undefined;
+  onToggle: (item: Item) => void;
+  onOpen: (item: Item) => void;
+  /** 右键 / 长按弹出上下文菜单：anchor 状态收在页面，这里只上报条目与落点 */
+  onMenuOpen: (item: Item, point: Point) => void;
+}) {
+  // 长按 500ms 弹菜单（touch 路径与桌面 contextmenu 分开，理由见 lib/long-press.ts）；
+  // 触发点坐标给菜单定位。长按与点击各自独立：长按不吞行点击，弹菜单后由菜单项接手
+  const longPress = useLongPress((point) => onMenuOpen(item, point));
+  return (
+    <ListItem
+      disablePadding
+      sx={{
+        ...rowSx(index, leaving, reduced, animateEnter),
+        viewTransitionName: sourceName(item.id),
+      }}
+    >
+      {/* 每行一块玻璃：data-glass="panel" 直接压在壁纸上，不再有内容玻璃板底板。
+          纸底/边框/高光/阴影由 rakko-glass.css 配方提供，cardRowSx 只补圆角。
+          每行一次 backdrop 读回是对上游 anti-patterns "A glass surface per list
+          item" 的明知偏离，理由见 surface.ts 文件头。行间空隙由 ListItem 的
+          rowSx padding-bottom 提供；容器变换名字留在 ListItem */}
+      <ListItemButton
+        data-glass="panel"
+        sx={[
+          cardRowSx(),
+          // 长按行体时 iOS 会弹系统文本选择菜单（触摸保持 500ms 即触发），行内文字
+          // 也不是可选中文本——userSelect 与 WebkitTouchCallout 一并关掉，长按只走
+          // 我们自己的手势（合并进 cardRowSx 的 sx 数组，surface.ts 不动）
+          { WebkitTouchCallout: 'none', userSelect: 'none' },
+        ]}
+        onClick={() => onOpen(item)}
+        onContextMenu={(e) => {
+          e.preventDefault(); // 不让浏览器弹系统菜单，改弹行上下文菜单
+          onMenuOpen(item, { x: e.clientX, y: e.clientY });
+        }}
+        {...longPress}
+      >
+        <Box sx={{ width: 12, display: 'flex', justifyContent: 'center', flexShrink: 0 }}>
+          {isNewToday(item, today) && (
+            <Box
+              role="img"
+              aria-label="今日新邮件"
+              sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: 'primary.main' }}
+            />
+          )}
+        </Box>
+        <Checkbox
+          edge="start"
+          checked={leaving}
+          tabIndex={-1}
+          disableRipple
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggle(item);
+          }}
+        />
+        <ListItemText
+          primary={item.title}
+          secondary={item.summary}
+          secondaryTypographyProps={{
+            sx: {
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              display: '-webkit-box',
+              WebkitLineClamp: 2,
+              WebkitBoxOrient: 'vertical',
+            },
+          }}
+        />
+        {/* 右侧标签成组：整组 flexShrink: 0，长标题换行时标签不被挤压截断。
+            行已由 rowSx 的 grid 列撑满容器宽度（见 motion.ts），标签组自然贴右 */}
+        <Stack
+          direction="row"
+          spacing={0.5}
+          alignItems="center"
+          sx={{ ml: 1, flexShrink: 0 }}
+        >
+          {item.importance === 'high' && (
+            <Chip
+              label="重要"
+              color="warning"
+              size="small"
+              variant="outlined"
+            />
+          )}
+          <Chip label={item.category} size="small" variant="outlined" />
+          {item.due_date && (
+            <Chip
+              label={formatDueDate(item.due_date)}
+              size="small"
+              color={isOverdue(item, today) ? 'error' : 'default'}
+            />
+          )}
+        </Stack>
+      </ListItemButton>
+    </ListItem>
+  );
+}
 
 function GroupSection({
   title,
@@ -47,6 +172,7 @@ function GroupSection({
   onToggle,
   onOpen,
   sourceName,
+  onMenuOpen,
 }: {
   title: string;
   items: Item[];
@@ -58,6 +184,8 @@ function GroupSection({
   onOpen: (item: Item) => void;
   /** 容器变换来源行命名：仅对话框关闭且该行是上一次来源时持名 */
   sourceName: (key: number) => string | undefined;
+  /** 行右键 / 长按打开上下文菜单：anchor 状态收在页面，这里只上报条目与落点 */
+  onMenuOpen: (item: Item, point: Point) => void;
 }) {
   const reduced = usePrefersReducedMotion();
   if (items.length === 0) return null; // 空组不渲染
@@ -93,84 +221,21 @@ function GroupSection({
       }
       disablePadding
     >
-      {items.map((item, index) => {
-        const leaving = leavingIds.includes(item.id);
-        return (
-          <ListItem
-            key={item.id}
-            disablePadding
-            sx={{
-              ...rowSx(index, leaving, reduced, animateEnter),
-              viewTransitionName: sourceName(item.id),
-            }}
-          >
-            {/* 每行一块玻璃：data-glass="panel" 直接压在壁纸上，不再有内容玻璃板底板。
-                纸底/边框/高光/阴影由 rakko-glass.css 配方提供，cardRowSx 只补圆角。
-                每行一次 backdrop 读回是对上游 anti-patterns "A glass surface per list
-                item" 的明知偏离，理由见 surface.ts 文件头。行间空隙由 ListItem 的
-                rowSx padding-bottom 提供；容器变换名字留在 ListItem */}
-            <ListItemButton data-glass="panel" sx={cardRowSx()} onClick={() => onOpen(item)}>
-              <Box sx={{ width: 12, display: 'flex', justifyContent: 'center', flexShrink: 0 }}>
-                {isNewToday(item, today) && (
-                  <Box
-                    role="img"
-                    aria-label="今日新邮件"
-                    sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: 'primary.main' }}
-                  />
-                )}
-              </Box>
-              <Checkbox
-                edge="start"
-                checked={leaving}
-                tabIndex={-1}
-                disableRipple
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onToggle(item);
-                }}
-              />
-              <ListItemText
-                primary={item.title}
-                secondary={item.summary}
-                secondaryTypographyProps={{
-                  sx: {
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    display: '-webkit-box',
-                    WebkitLineClamp: 2,
-                    WebkitBoxOrient: 'vertical',
-                  },
-                }}
-              />
-              {/* 右侧标签成组：整组 flexShrink: 0，长标题换行时标签不被挤压截断。
-                  行已由 rowSx 的 grid 列撑满容器宽度（见 motion.ts），标签组自然贴右 */}
-              <Stack
-                direction="row"
-                spacing={0.5}
-                alignItems="center"
-                sx={{ ml: 1, flexShrink: 0 }}
-              >
-                {item.importance === 'high' && (
-                  <Chip
-                    label="重要"
-                    color="warning"
-                    size="small"
-                    variant="outlined"
-                  />
-                )}
-                <Chip label={item.category} size="small" variant="outlined" />
-                {item.due_date && (
-                  <Chip
-                    label={formatDueDate(item.due_date)}
-                    size="small"
-                    color={isOverdue(item, today) ? 'error' : 'default'}
-                  />
-                )}
-              </Stack>
-            </ListItemButton>
-          </ListItem>
-        );
-      })}
+      {items.map((item, index) => (
+        <TaskRow
+          key={item.id}
+          item={item}
+          index={index}
+          today={today}
+          leaving={leavingIds.includes(item.id)}
+          animateEnter={animateEnter}
+          reduced={reduced}
+          sourceName={sourceName}
+          onToggle={onToggle}
+          onOpen={onOpen}
+          onMenuOpen={onMenuOpen}
+        />
+      ))}
     </List>
   );
 }
@@ -181,6 +246,8 @@ export default function TasksPage() {
   const [addOpen, setAddOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [snack, setSnack] = useState<string | null>(null);
+  // 行右键 / 长按的上下文菜单：anchor 与当前条目收在页面，组件只挂一份
+  const [rowMenu, setRowMenu] = useState<{ item: Item; point: Point } | null>(null);
   const reduced = usePrefersReducedMotion();
   // 详情容器变换：current 非空即详情对话框打开（来源行与 paper 共享 VT_NAMES.sheet）
   const { current, open, close, sourceName } = useMorphDialog<Item>((item) => item.id);
@@ -195,6 +262,11 @@ export default function TasksPage() {
     [category],
   );
   const { items, loading, error, animateEnter } = useCachedList(openKey(category), fetcher);
+
+  // 行右键 / 长按打开菜单：anchor 状态即此处；当前条目一起存，动作按条目构造
+  const openRowMenu = useCallback((item: Item, point: Point) => {
+    setRowMenu({ item, point });
+  }, []);
 
   // 保存新条目：成功写进缓存（分类匹配与否由缓存键决定），失败保持编辑器打开
   const handleCreate = useCallback(
@@ -263,6 +335,7 @@ export default function TasksPage() {
             onToggle={toggleItem}
             onOpen={open}
             sourceName={sourceName}
+            onMenuOpen={openRowMenu}
           />
           <GroupSection
             title="本周"
@@ -273,6 +346,7 @@ export default function TasksPage() {
             onToggle={toggleItem}
             onOpen={open}
             sourceName={sourceName}
+            onMenuOpen={openRowMenu}
           />
           <GroupSection
             title="重要"
@@ -283,6 +357,7 @@ export default function TasksPage() {
             onToggle={toggleItem}
             onOpen={open}
             sourceName={sourceName}
+            onMenuOpen={openRowMenu}
           />
           <GroupSection
             title="无期限"
@@ -293,6 +368,7 @@ export default function TasksPage() {
             onToggle={toggleItem}
             onOpen={open}
             sourceName={sourceName}
+            onMenuOpen={openRowMenu}
           />
           {(items ?? []).length === 0 && (
             <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', py: 6 }}>
@@ -301,6 +377,33 @@ export default function TasksPage() {
           )}
         </>
       )}
+      {/* 行右键 / 长按的上下文菜单：全页只挂这一份（anchor 状态在上面），动作全部
+          复用页面既有处理函数。菜单纸面材质 data-glass="panel"，Menu 经 Portal 挂到
+          body——与列表行只是视觉重叠、不是 DOM 后代，不构成嵌套玻璃（glass.md 明说
+          portal 浮层不算 nesting），菜单面板的玻璃预算已在 RowContextMenu 文件头说明。
+          动作设计：「编辑」打开详情——本页没有独立编辑入口，编辑流程在 ItemDialog 内
+          （详情里手动条目可编辑），所以这一项就是打开详情，标签仍叫「编辑」；「删除」
+          同样先打开详情——列表层不重复实现删除与确认流程（删除在 ItemDialog 内，带
+          确认弹窗），若在列表层另写删除请求就会出现第二套删除路径。两项行为相同是
+          刻意的，区别只在于给用户的预期：编辑 → 去改内容，删除 → 去确认后删除。 */}
+      <RowContextMenu
+        anchor={rowMenu ? rowMenu.point : null}
+        actions={
+          rowMenu
+            ? [
+                { key: 'complete', label: '完成', onSelect: () => toggleItem(rowMenu.item) },
+                { key: 'edit', label: '编辑', onSelect: () => open(rowMenu.item) },
+                {
+                  key: 'delete',
+                  label: '删除',
+                  danger: true,
+                  onSelect: () => open(rowMenu.item),
+                },
+              ]
+            : []
+        }
+        onClose={() => setRowMenu(null)}
+      />
       {current && (
         <ItemDialog
           item={current}

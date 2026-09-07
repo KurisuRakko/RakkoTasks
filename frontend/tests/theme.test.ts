@@ -110,7 +110,7 @@ describe('Rakko Design token 主题', () => {
     expect(typeof overrides).toBe('function');
     const styles = (overrides as (t: typeof theme) => Record<string, unknown>)(theme);
     expect(styles.html).toEqual({ fontSize: 14 });
-    // body 只留排版属性：壁纸/驯化层背景在 body 的 '&::before' 壁纸层规则里
+    // body 只留排版属性：壁纸背景在 body 的 '&::before' 壁纸层规则里
     // （断言见「玻璃材质变量下发与让位」的 5d/5j 用例），这里只验证 letterSpacing 保留
     expect(styles.body).toMatchObject({ letterSpacing: '0.01em' });
     expect(Object.keys(styles).some((k) => k.startsWith('::view-transition'))).toBe(true);
@@ -206,7 +206,7 @@ describe('玻璃材质变量下发与让位', () => {
     }
   });
 
-  it('5d. 壁纸与驯化层两层背景位于 body 的 ::before（var(--rtk-wallpaper + color-mix）', () => {
+  it('5d. 壁纸原图单层背景位于 body 的 ::before（var(--rtk-wallpaper），驯化层已移除不含 color-mix）', () => {
     for (const mode of ['light', 'dark'] as const) {
       const styles = globalStyles(mode);
       const body = styles.body as Record<string, unknown>;
@@ -215,7 +215,8 @@ describe('玻璃材质变量下发与让位', () => {
       const bg = before!.backgroundImage;
       expect(typeof bg).toBe('string');
       expect(bg as string).toContain('var(--rtk-wallpaper');
-      expect(bg as string).toContain('color-mix');
+      // 驯化层已移除：不再有纸色 color-mix 叠加层，壁纸显示用户原图
+      expect(bg as string).not.toContain('color-mix');
     }
   });
 
