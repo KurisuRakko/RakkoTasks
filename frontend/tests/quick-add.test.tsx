@@ -10,7 +10,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import TasksPage from '../src/pages/TasksPage';
 import type { AiAddDialogProps } from '../src/components/AiAddDialog';
 import { resetLists } from '../src/lib/list-cache';
-import { todayIso } from '../src/lib/time';
+import { localTimeZone, todayIso } from '../src/lib/time';
 import type { Item } from '../src/types';
 
 const QUICK_MODE_KEY = 'rakkotasks.quick-mode';
@@ -113,7 +113,7 @@ afterEach(() => {
 });
 
 describe('速记模式后台落库', () => {
-  it('点确定立刻关窗，POST /api/items/quick，请求体含 text 与 today', async () => {
+  it('点确定立刻关窗，POST /api/items/quick，请求体含 text、today 与 tz', async () => {
     const fetchMock = renderPage(() => quickResponse());
     fireEvent.click(await screen.findByRole('button', { name: '添加任务' }));
     // 对话框替身已渲染（addOpen 为 true）
@@ -130,7 +130,11 @@ describe('速记模式后台落库', () => {
       ([url]) => url === '/api/items/quick',
     ) as [string, RequestInit];
     expect(quickCall[1].method).toBe('POST');
-    expect(JSON.parse(String(quickCall[1].body))).toEqual({ text: QUICK_TEXT, today: todayIso() });
+    expect(JSON.parse(String(quickCall[1].body))).toEqual({
+      text: QUICK_TEXT,
+      today: todayIso(),
+      tz: localTimeZone(),
+    });
 
     // 对话框已收回（addOpen false），悬浮按钮仍在
     await waitFor(() => expect(screen.queryByText('替身-速记提交')).toBeNull());
@@ -257,7 +261,7 @@ describe('非速记模式路径', () => {
     });
   });
 
-  it('onParse：POST /api/items/parse，请求体含 text 与 today', async () => {
+  it('onParse：POST /api/items/parse，请求体含 text、today 与 tz', async () => {
     const fetchMock = renderPage(() =>
       json({
         title: '解析结果',
@@ -279,6 +283,10 @@ describe('非速记模式路径', () => {
       ([url]) => url === '/api/items/parse',
     ) as [string, RequestInit];
     expect(parseCall[1].method).toBe('POST');
-    expect(JSON.parse(String(parseCall[1].body))).toEqual({ text: '测试文本', today: todayIso() });
+    expect(JSON.parse(String(parseCall[1].body))).toEqual({
+      text: '测试文本',
+      today: todayIso(),
+      tz: localTimeZone(),
+    });
   });
 });
