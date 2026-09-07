@@ -152,3 +152,91 @@ describe('caldavTarget', () => {
     expect(target.url).toBe(`${window.location.origin}/caldav/`);
   });
 });
+
+describe('parseTask', () => {
+  it('POST /api/items/parse，body {text, today, tz}，tz = 浏览器 IANA 时区', async () => {
+    const fetchMock = vi.fn(async (_url: string | URL, _init?: RequestInit) =>
+      json({
+        title: '修空调',
+        summary: '',
+        category: '个人',
+        due_date: '2026-08-05',
+        importance: 'normal',
+        actionable: true,
+        reminders: [],
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await api.parseTask('明天修空调', '2026-08-05');
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit | undefined];
+    expect(url).toBe('/api/items/parse');
+    expect(init?.method).toBe('POST');
+    expect((init?.headers as Record<string, string>).Authorization).toBe('Bearer test-token');
+    expect(JSON.parse(String(init?.body))).toEqual({
+      text: '明天修空调',
+      today: '2026-08-05',
+      tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    });
+  });
+
+  it('状态码不是 200 → 抛错（回归）', async () => {
+    const fetchMock = vi.fn(async (_url: string | URL, _init?: RequestInit) =>
+      json({ error: 'boom' }, 500),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(api.parseTask('x', '2026-08-05')).rejects.toThrow('HTTP 500');
+  });
+});
+
+describe('quickAddTask', () => {
+  it('POST /api/items/quick，body {text, today, tz}，tz = 浏览器 IANA 时区', async () => {
+    const item = {
+      id: 1,
+      email_id: null,
+      email_sent_at: null,
+      title: '修空调',
+      summary: '',
+      category: '个人',
+      due_date: '2026-08-05',
+      importance: 'normal',
+      actionable: true,
+      status: 'open',
+      detail_md: null,
+      related: [],
+      reminders: [],
+      created_at: '2026-08-01T00:00:00Z',
+      done_at: null,
+    };
+    const fetchMock = vi.fn(async (_url: string | URL, _init?: RequestInit) =>
+      json({ item, ai_parsed: true }, 201),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await api.quickAddTask('修空调', '2026-08-05');
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit | undefined];
+    expect(url).toBe('/api/items/quick');
+    expect(init?.method).toBe('POST');
+    expect((init?.headers as Record<string, string>).Authorization).toBe('Bearer test-token');
+    expect(JSON.parse(String(init?.body))).toEqual({
+      text: '修空调',
+      today: '2026-08-05',
+      tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    });
+    expect(result.ai_parsed).toBe(true);
+  });
+
+  it('状态码不是 201 → 抛错（回归）', async () => {
+    const fetchMock = vi.fn(async (_url: string | URL, _init?: RequestInit) =>
+      json({ error: 'boom' }, 500),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(api.quickAddTask('x', '2026-08-05')).rejects.toThrow('HTTP 500');
+  });
+});
