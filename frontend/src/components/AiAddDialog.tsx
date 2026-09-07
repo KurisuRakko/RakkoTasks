@@ -85,7 +85,9 @@ export default function AiAddDialog({
   const [text, setText] = useState('');
   const [category, setCategory] = useState<Category>('个人');
   const [date, setDate] = useState('');
-  // AI 解析出的重要度/是否亲自动手：预览界面不给编辑控件，只在保存时原样带进载荷
+  // importance：AI 解析出的重要度预填到 fields 阶段的表单，用户可经重要度 chip 改
+  // （保存带当前值）；actionable（是否亲自动手）：全前端没有任何可见表现，无编辑
+  // 控件，只在保存时原样带进载荷，避免两种模式行为不一致。
   const [importance, setImportance] = useState<Importance>('normal');
   const [actionable, setActionable] = useState(true);
   // 提醒时刻（带 UTC 偏移的绝对时刻串）：fields 阶段交给 ItemFieldsForm 编辑，
@@ -309,6 +311,8 @@ export default function AiAddDialog({
                 onTextChange={setText}
                 category={category}
                 onCategoryChange={setCategory}
+                importance={importance}
+                onImportanceChange={setImportance}
                 date={date}
                 onDateChange={setDate}
                 invalid={invalid}

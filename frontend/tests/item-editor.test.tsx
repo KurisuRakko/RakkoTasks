@@ -2,14 +2,19 @@
 // （空文本禁用保存、标题/详情/分类/日期组装契约载荷、默认分类「个人」）。
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import ItemEditor, { parseEditorText } from '../src/components/ItemEditor';
 import type { ItemFields } from '../src/types';
 
-function renderEditor(opts: { submitting?: boolean; onSubmit?: (fields: ItemFields) => void } = {}) {
+function renderEditor(opts: {
+  submitting?: boolean;
+  initial?: ItemFields;
+  onSubmit?: (fields: ItemFields) => void;
+} = {}) {
   return render(
     <ItemEditor
       heading="添加任务"
+      initial={opts.initial}
       submitting={opts.submitting ?? false}
       onSubmit={opts.onSubmit ?? vi.fn<(fields: ItemFields) => void>()}
       onClose={vi.fn()}
@@ -85,13 +90,15 @@ describe('ItemEditor 渲染', () => {
 
     expect(onSubmit).toHaveBeenCalledTimes(1);
     // 载荷契约（ItemEditor 接入提醒后）：恒带 reminders（空数组 = 明确不改动/清空，
-    // 见 ItemEditor.handleSubmit 注释；「删光再保存」要能表达成 []，故从不省略）
+    // 见 ItemEditor.handleSubmit 注释；「删光再保存」要能表达成 []，故从不省略）。
+    // 接入重要度后同样恒带 importance（当前档位，新建默认 normal）。
     expect(onSubmit).toHaveBeenCalledWith({
       title: '买牛奶',
       summary: '两盒',
       category: '账单',
       due_date: '2026-09-10',
       reminders: [],
+      importance: 'normal',
     });
   });
 
@@ -108,6 +115,7 @@ describe('ItemEditor 渲染', () => {
       category: '个人',
       due_date: null,
       reminders: [],
+      importance: 'normal',
     });
   });
 
@@ -116,6 +124,36 @@ describe('ItemEditor 渲染', () => {
 
     fireEvent.change(screen.getByLabelText('任务内容'), { target: { value: '买牛奶' } });
     expect(screen.getByRole('button', { name: '保存' })).toBeDisabled();
+  });
+
+  it('编辑带 initial.importance=high 的条目：控件选中「重要」，原样保存不把 AI 判断洗掉', () => {
+    const onSubmit = vi.fn<(fields: ItemFields) => void>();
+    renderEditor({
+      initial: { title: '买牛奶', summary: '', category: '个人', due_date: null, importance: 'high' },
+      onSubmit,
+    });
+
+    // 控件显示的是条目当前档位（high → 「重要」），不是无条件停在「普通」
+    expect(screen.getByRole('radio', { name: '重要' })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByRole('radio', { name: '普通' })).toHaveAttribute('aria-checked', 'false');
+
+    // 什么都不改直接保存：载荷恒带 importance: 'high'（「没改就省略」会退回后端默认 normal）
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect(onSubmit.mock.calls[0][0].importance).toBe('high');
+  });
+
+  it('编辑时点「次要」再保存：载荷 importance 变 low（三档都能经 UI 表达）', () => {
+    const onSubmit = vi.fn<(fields: ItemFields) => void>();
+    renderEditor({
+      initial: { title: '买牛奶', summary: '', category: '个人', due_date: null, importance: 'normal' },
+      onSubmit,
+    });
+
+    fireEvent.click(screen.getByRole('radio', { name: '次要' }));
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+
+    expect(onSubmit.mock.calls[0][0].importance).toBe('low');
   });
 });
 
@@ -134,12 +172,16 @@ describe('ItemEditor 居中于主内容区的样式', () => {
 });
 
 describe('ItemEditor 字段区结构（抽成 ItemFieldsForm 后不变）', () => {
-  it('标题多行输入、5 个分类 chip（radiogroup）、日期输入齐全', () => {
+  it('标题多行输入、5 个分类 chip、重要度三档 chip（两个 radiogroup）、日期输入齐全', () => {
     renderEditor();
 
     expect(screen.getByLabelText('任务内容')).toBeTruthy();
-    expect(screen.getByRole('radiogroup', { name: '分类' })).toBeTruthy();
-    expect(screen.getAllByRole('radio')).toHaveLength(5);
+    const categoryGroup = screen.getByRole('radiogroup', { name: '分类' });
+    expect(within(categoryGroup).getAllByRole('radio')).toHaveLength(5);
+    const importanceGroup = screen.getByRole('radiogroup', { name: '重要度' });
+    expect(within(importanceGroup).getAllByRole('radio')).toHaveLength(3);
+    // 新建（不传 initial）时重要度默认选中「普通」
+    expect(screen.getByRole('radio', { name: '普通' })).toHaveAttribute('aria-checked', 'true');
     expect(screen.getByLabelText('截止日期')).toBeTruthy();
   });
 
