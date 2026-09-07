@@ -9,6 +9,7 @@ import type { ReactNode } from 'react';
 import AppBar from '@mui/material/AppBar';
 import { ThemeProvider } from '@mui/material/styles';
 import { ThemeModeProvider } from '../src/lib/theme-mode';
+import { WALLPAPER_ATTR } from '../src/lib/glass';
 import {
   ACCENT,
   GLASS,
@@ -109,8 +110,8 @@ describe('Rakko Design token 主题', () => {
     expect(typeof overrides).toBe('function');
     const styles = (overrides as (t: typeof theme) => Record<string, unknown>)(theme);
     expect(styles.html).toEqual({ fontSize: 14 });
-    // 3b 起 body 除 letterSpacing 还带壁纸/驯化层背景（见下文玻璃用例），这里只验证
-    // letterSpacing 保留，背景字段的完整断言在「body 带驯化层与壁纸背景」用例里
+    // body 只留排版属性：壁纸/驯化层背景在 body 的 '&::before' 壁纸层规则里
+    // （断言见「玻璃材质变量下发与让位」的 5d/5j 用例），这里只验证 letterSpacing 保留
     expect(styles.body).toMatchObject({ letterSpacing: '0.01em' });
     expect(Object.keys(styles).some((k) => k.startsWith('::view-transition'))).toBe(true);
   });
@@ -205,11 +206,13 @@ describe('玻璃材质变量下发与让位', () => {
     }
   });
 
-  it('5d. body 背景同时含壁纸 var(--rtk-wallpaper 与驯化层 color-mix', () => {
+  it('5d. 壁纸与驯化层两层背景位于 body 的 ::before（var(--rtk-wallpaper + color-mix）', () => {
     for (const mode of ['light', 'dark'] as const) {
       const styles = globalStyles(mode);
       const body = styles.body as Record<string, unknown>;
-      const bg = body.backgroundImage;
+      const before = body['&::before'] as Record<string, unknown> | undefined;
+      expect(before, `${mode}: 壁纸层应位于 body 的 '&::before'`).toBeDefined();
+      const bg = before!.backgroundImage;
       expect(typeof bg).toBe('string');
       expect(bg as string).toContain('var(--rtk-wallpaper');
       expect(bg as string).toContain('color-mix');
@@ -277,5 +280,51 @@ describe('玻璃材质变量下发与让位', () => {
     const rootStyles =
       typeof rootOverride === 'function' ? rootOverride({ theme }) : (rootOverride ?? {});
     expect(rootStyles.backgroundColor).toBe('transparent');
+  });
+
+  it('5j. 壁纸层由 ::before 固定承载：body 不再带背景，伪元素 fixed / inset 0 / z-index -1 / pointer-events none，且无 backgroundAttachment', () => {
+    for (const mode of ['light', 'dark'] as const) {
+      const styles = globalStyles(mode);
+      const body = styles.body as Record<string, unknown>;
+      // 背景已挪进 ::before，body 只剩排版属性；backgroundAttachment: fixed 整条删除——
+      // 固定由 position: fixed 提供，留着是死代码
+      expect(body.backgroundImage).toBeUndefined();
+      expect(body.backgroundAttachment).toBeUndefined();
+      const before = body['&::before'] as Record<string, unknown> | undefined;
+      expect(before, `${mode}: 应存在 '&::before' 壁纸层规则`).toBeDefined();
+      expect(before!.position).toBe('fixed');
+      expect(before!.inset).toBe(0);
+      expect(before!.zIndex).toBe(-1);
+      expect(before!.pointerEvents).toBe('none');
+      expect(before!.backgroundAttachment).toBeUndefined();
+    }
+  });
+});
+
+describe('无壁纸时禁用玻璃高光（:root:not([data-wallpaper])）', () => {
+  // theme.ts 依赖 lib/wallpaper 在 <html> 上维护的 data-wallpaper 属性标记：没有壁纸时
+  // 玻璃身后没有图像可透，透镜渐变与内侧高光只剩无来由的光泽，token 应被置透明。
+  it('6a. 存在无壁纸改写块，且 --glass-highlight 为 transparent', () => {
+    for (const mode of ['light', 'dark'] as const) {
+      const styles = globalStyles(mode);
+      const block = styles[`:root:not([${WALLPAPER_ATTR}])`] as
+        | Record<string, unknown>
+        | undefined;
+      expect(block, `${mode}: 应下发 ':root:not([data-wallpaper])' 块`).toBeDefined();
+      expect(block!['--glass-highlight']).toBe('transparent');
+    }
+  });
+
+  it('6b. 有壁纸的 :root 块高光不受影响，仍是 GLASS.highlight', () => {
+    expect(rootVars('light')['--glass-highlight']).toBe(GLASS.highlight);
+    expect(rootVars('dark')['--glass-highlight']).toBe(GLASS.highlight);
+  });
+
+  it('6c. 无壁纸改写块不碰 --shadow-whisper（阴影不是高光，保留）', () => {
+    for (const mode of ['light', 'dark'] as const) {
+      const styles = globalStyles(mode);
+      const block = styles[`:root:not([${WALLPAPER_ATTR}])`] as Record<string, unknown>;
+      expect(block['--shadow-whisper']).toBeUndefined();
+    }
   });
 });

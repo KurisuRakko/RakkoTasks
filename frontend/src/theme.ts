@@ -23,7 +23,7 @@ import {
   TYPE_SCALE,
   WHISPER_SHADOW,
 } from './rakko-tokens';
-import { WALLPAPER_TAME_OPACITY, WALLPAPER_VAR } from './lib/glass';
+import { WALLPAPER_ATTR, WALLPAPER_TAME_OPACITY, WALLPAPER_VAR } from './lib/glass';
 
 type Mode = 'light' | 'dark';
 
@@ -148,16 +148,39 @@ function buildThemeOptions(mode: Mode): ThemeOptions {
             '--glass-haze-bleed': GLASS.hazeBleed,
             '--shadow-whisper': GLASS_SHADOW_WHISPER[mode],
           },
-          // body 两层背景：第一层是驯化层（把用户壁纸压进可控亮度区间，理由见 lib/glass 注释），
-          // 第二层是壁纸本身，由 lib/wallpaper 写到 <html> 上；无壁纸时该变量为 none，
-          // 退回纯纸色背景。backgroundAttachment: fixed 让壁纸不随滚动移动。
+          // 无壁纸时玻璃没有图像可透（body 退回纯纸色，模糊读不出），透镜渐变与内侧
+          // 高光只剩无来由的光泽——本块把高光 token 置 transparent 而非删掉声明：配方里
+          // 两处消费都是 var(--glass-highlight)（panel 档的左上透镜渐变与 1px 内侧高光），
+          // token 置透明即可让两者同时失效，不必碰 rakko-glass.css 的镜像配方；
+          // :root:not(...) 特异性 (0,2,0) 高于 :root 的 (0,1,0)，能盖住上面的下发值。
+          // --shadow-whisper 不动：阴影不是高光，无壁纸时浮层仍需它托起。
+          [`:root:not([${WALLPAPER_ATTR}])`]: {
+            '--glass-highlight': 'transparent',
+          },
+          // body 只留排版属性；壁纸与驯化层背景整体挪进 ::before 伪元素承载：
+          // - 不用 background-attachment: fixed——iOS Safari 从未正确实现它，一律退化成
+          //   跟着内容滚；position: fixed 在 iOS 上工作正常。用户是 PWA standalone，
+          //   没有伸缩地址栏，视口高度恒定，inset: 0 即可，无需 100lvh 等动态视口单位；
+          // - 用伪元素而非新增 DOM 节点：不需要 React 节点参与，样式层自洽；
+          // - z-index: -1 是安全的：定位后代排在「根元素背景之后、块级非定位后代之前」，
+          //   既盖不住页面内容，又仍位于玻璃元素身后——backdrop-filter 照样读得到壁纸；
+          // - pointerEvents: none：纯背景层，不能吃掉任何点击。
+          // ::before 的两层背景：第一层是驯化层（把用户壁纸压进可控亮度区间，理由见
+          // lib/glass 注释），第二层是壁纸本身，由 lib/wallpaper 写到 <html> 上；无壁纸时
+          // 该变量为 none，退回纯纸色背景。
           body: {
             letterSpacing: '0.01em',
-            backgroundImage: `linear-gradient(${tame}, ${tame}), var(${WALLPAPER_VAR}, none)`,
-            backgroundSize: 'cover',
-            backgroundPosition: 'center',
-            backgroundAttachment: 'fixed',
-            backgroundRepeat: 'no-repeat',
+            '&::before': {
+              content: '""',
+              position: 'fixed',
+              inset: 0,
+              zIndex: -1,
+              pointerEvents: 'none',
+              backgroundImage: `linear-gradient(${tame}, ${tame}), var(${WALLPAPER_VAR}, none)`,
+              backgroundSize: 'cover',
+              backgroundPosition: 'center',
+              backgroundRepeat: 'no-repeat',
+            },
           },
           ...viewTransitionStyles(themeParam),
         }),

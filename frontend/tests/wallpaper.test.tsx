@@ -12,7 +12,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, renderHook } from '@testing-library/react';
-import { WALLPAPER_VAR } from '../src/lib/glass';
+import { WALLPAPER_ATTR, WALLPAPER_VAR } from '../src/lib/glass';
 import {
   compressWallpaper,
   readWallpaper,
@@ -23,6 +23,10 @@ import {
 import htmlSource from '../index.html?raw';
 
 const FAKE = 'data:image/jpeg;base64,AAAA';
+
+/** 值的实际来源是 localStorage，不受控（用户手改 / 同源脚本可写）；含 " 与 ) 的假值
+ *  能逃出 url("...")。校验挡掉后按没有壁纸处理，不抛错。 */
+const DIRTY = 'data:image/jpeg;base64,AA")AA';
 
 beforeEach(() => {
   localStorage.clear();
@@ -106,10 +110,6 @@ describe('compressWallpaper 错误路径', () => {
 });
 
 describe('脏值形状校验（url() 逃逸防御）', () => {
-  // 值的实际来源是 localStorage，不受控（用户手改 / 同源脚本可写）；含 " 与 ) 的假值
-  // 能逃出 url("...")。校验挡掉后按没有壁纸处理，不抛错。
-  const DIRTY = 'data:image/jpeg;base64,AA")AA';
-
   it('脏值不当作壁纸：readWallpaper 返回 null；模块兜底与 applyToRoot 都置 none；正常值照常写出', async () => {
     // 直接往 localStorage 塞脏值，模拟存储被外部写入
     localStorage.setItem(WALLPAPER_STORAGE_KEY, DIRTY);
@@ -130,5 +130,27 @@ describe('脏值形状校验（url() 逃逸防御）', () => {
     setWallpaper(FAKE);
     expect(localStorage.getItem(WALLPAPER_STORAGE_KEY)).toBe(FAKE);
     expect(document.documentElement.style.getPropertyValue(WALLPAPER_VAR)).toBe(`url("${FAKE}")`);
+  });
+});
+
+describe('data-wallpaper 属性标记（无壁纸时主题层改写玻璃高光）', () => {
+  // theme.ts 靠 :root:not([data-wallpaper]) 在无壁纸时把 --glass-highlight 置 transparent。
+  // 属性由 applyToRoot 与图源变量同步维护，判定与 SAFE_DATA_URL 一致。
+  it('setWallpaper 有效 data URL 后，<html> 带 data-wallpaper 属性', () => {
+    setWallpaper(FAKE);
+    expect(document.documentElement.hasAttribute(WALLPAPER_ATTR)).toBe(true);
+  });
+
+  it('setWallpaper(null) 移除 data-wallpaper 属性', () => {
+    setWallpaper(FAKE);
+    expect(document.documentElement.hasAttribute(WALLPAPER_ATTR)).toBe(true);
+    setWallpaper(null);
+    expect(document.documentElement.hasAttribute(WALLPAPER_ATTR)).toBe(false);
+  });
+
+  it('脏值按没有壁纸处理：同样不挂 data-wallpaper 属性', () => {
+    setWallpaper(DIRTY);
+    expect(document.documentElement.style.getPropertyValue(WALLPAPER_VAR)).toBe('none');
+    expect(document.documentElement.hasAttribute(WALLPAPER_ATTR)).toBe(false);
   });
 });

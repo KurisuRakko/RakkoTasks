@@ -8,7 +8,7 @@
 // backdrop 读回。
 
 import { useSyncExternalStore } from 'react';
-import { WALLPAPER_VAR } from './glass';
+import { WALLPAPER_ATTR, WALLPAPER_VAR } from './glass';
 
 /** localStorage 存储键。index.html 的首帧内联脚本在模块系统之外只能手抄同一份
  *  （那边不能 import 常量），tests/wallpaper.test.tsx 会断言两处一致。 */
@@ -43,6 +43,10 @@ function applyToRoot(dataUrl: string | null): void {
   const root = document.documentElement;
   const safe = dataUrl !== null && SAFE_DATA_URL.test(dataUrl);
   root.style.setProperty(WALLPAPER_VAR, safe ? `url("${dataUrl}")` : 'none');
+  // 属性标记跟 safe 同一判定（脏值同样算没有壁纸），由主题层用
+  // :root:not([data-wallpaper]) 消费：没有壁纸时玻璃身后没有图像可透，透镜渐变与
+  // 内侧高光只剩无来由的光泽，应被禁用。
+  root.toggleAttribute(WALLPAPER_ATTR, safe);
 }
 
 /** 同步读 localStorage 里的壁纸 data URL；读失败（隐私模式等）或形状不符返回 null */
