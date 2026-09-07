@@ -4,7 +4,9 @@
 输出是文本，全部可离线单测。下一任务的 PUT/GET 处理器直接复用这里：
 - read_fields：把客户端 PUT 的 VTODO 翻译成服务端字段（标题/摘要/DUE/状态）；
 - serialize：把库内条目写成客户端可读的 VTODO，并在有客户端原文（caldav_ics）
-  时做「透传」——只覆盖服务端拥有的属性，VALARM / X-APPLE-* / 时间簇等原样保留。
+  时做「透传」——只覆盖服务端拥有的属性，X-APPLE-* / 时间簇等原样保留；
+  VALARM 走双车道（DESIGN.md 11.12）：带 REMINDER_MARKER 的服务端闹钟删掉
+  按 reminders 重写，不带标记的（用户在提醒事项 App 里手设的）原样透传。
 """
 from __future__ import annotations
 
@@ -343,6 +345,10 @@ _OWNED_NAMES = (
 # 时间簇：透传体的日期/重复规则行；DUE 与库内 due_date 不同日时整体删除重写
 _CLUSTER_NAMES = frozenset({"DTSTART", "DUE", "DURATION", "RRULE", "RDATE", "EXDATE"})
 
+# 服务端车道的标记：只有带这一行的 VALARM 归服务端所有，序列化时被删掉重写；
+# 不带的（用户在提醒事项 App 里自己设的）原样透传，服务端不读不改不删。
+REMINDER_MARKER = "X-RAKKOTASKS-REMINDER"
+
 
 def _fmt_z(dt: datetime) -> str:
     """naive datetime 按 UTC 解释 → "YYYYMMDDTHHMMSSZ"（库内值恒为 UTC，直接加 Z）。"""
@@ -363,12 +369,68 @@ def _folded_line(name: str, value: str) -> Line:
     return Line(name=name, params={}, value=value, raw="\r\n".join(physical))
 
 
+# ── VALARM 双车道（DESIGN.md 11.12） ─────────────────────────────────
+
+
+def _reminder_alarm(item: Item, index: int, remind_at: datetime) -> Component:
+    """造一条服务端车道的 VALARM（行序固定：UID/ACTION/DESCRIPTION/TRIGGER/标记）。
+
+    - index 从 1 起、按 remind_at 升序的位置：不许用 Reminder.id、随机数或
+      时间戳——serialize 的硬约束是「同一条目 → 同样字节 → 同样 ETag」，
+      UID 一抖客户端就以为有更新而无限重下；
+    - TRIGGER 用绝对时刻（remind_at 本身是 naive UTC，_fmt_z 直接加 Z，不做
+      时区换算）：相对偏移得锚在 DTSTART/DUE 上，而 _apply_time_cluster 在
+      DUE 变化时会把时间簇整簇删掉，锚在簇上的闹钟会被连带删；
+    - 每行都经 _folded_line 生成：_render 输出的是 ln.raw，不设 raw 的 Line
+      会渲染成空行。
+    """
+    return Component(
+        name="VALARM",
+        lines=[
+            _folded_line("UID", f"{item.caldav_uid or 'RAKKOTASKS'}-R{index}"),
+            _folded_line("ACTION", "DISPLAY"),
+            _folded_line("DESCRIPTION", escape_text(item.title)),
+            _folded_line("TRIGGER;VALUE=DATE-TIME", _fmt_z(remind_at)),
+            _folded_line(REMINDER_MARKER, "1"),
+        ],
+        children=[],
+    )
+
+
+def _server_alarms(item: Item) -> list[Component]:
+    """把 item.reminders 全部渲染成服务端车道 VALARM，按 remind_at 升序。
+
+    函数内显式排序：关系上的 order_by 只对落库查询生效，未 flush 或 detached
+    的实例顺序不保证。reminders 为空 → 空列表。index 从 1 递增。
+    """
+    ordered = sorted(item.reminders, key=lambda r: r.remind_at)
+    return [_reminder_alarm(item, i, r.remind_at) for i, r in enumerate(ordered, start=1)]
+
+
+def _apply_owned_alarms(vtodo: Component, item: Item) -> None:
+    """剥掉透传体里带 REMINDER_MARKER 的服务端旧闹钟，再按库内 reminders
+    在 children 末尾追加新闹钟（双车道：不带标记的客户端手设闹钟原样保留）。
+
+    注意：VALARM 是**子组件**不是属性行，所以 REMINDER_MARKER / VALARM 都
+    不能加进 _OWNED_NAMES——那套是 vtodo.lines 的行级替换，加进去会去删主
+    VTODO 的属性行，全错。追加位置固定在 children 末尾：客户端 PUT 回来的
+    体里我们的闹钟被剥掉后原位再追加，往返稳定。
+    """
+    vtodo.children = [
+        c
+        for c in vtodo.children
+        if not (c.name == "VALARM" and any(ln.name == REMINDER_MARKER for ln in c.lines))
+    ]
+    vtodo.children.extend(_server_alarms(item))
+
+
 def _serialize_fresh(item: Item) -> str:
     """无透传体：固定顺序输出完整 VCALENDAR（CRLF，末尾换行）。
 
     DTSTAMP/LAST-MODIFIED 取 updated_at（无则 created_at）；库里 naive
     datetime 一律按 UTC 解释直接加 Z。这里不允许出现 datetime.now()——
-    理由见 serialize docstring。
+    理由见 serialize docstring。有提醒时在 END:VTODO 前输出服务端车道的
+    VALARM（_server_alarms 渲染，与透传路径逐字节一致）。
     """
     stamp = _stamp(item)
     lines: list[str] = [
@@ -397,6 +459,10 @@ def _serialize_fresh(item: Item) -> str:
     elif item.importance == "low":
         lines.extend(content_line("PRIORITY", "9"))
     lines.extend(content_line("CATEGORIES", escape_text(item.category)))
+    for alarm in _server_alarms(item):
+        # 与透传路径同一渲染源：_render 输出（以 CRLF 结尾）拆回物理行，
+        # 保证两条路径的服务端 VALARM 文本逐字节一致。
+        lines.extend(_render(alarm).split("\r\n")[:-1])
     lines.append("END:VTODO")
     lines.append("END:VCALENDAR")
     return "\r\n".join(lines) + "\r\n"
@@ -506,13 +572,21 @@ def serialize(item: Item, *, local_zone: ZoneInfo) -> str:
 
     无透传体（caldav_ics 为空）：固定结构输出（见 _serialize_fresh）。
     有透传体：解析客户端最近一次 PUT 的原文，主 VTODO 的「拥有属性」逐个
-    覆盖（见 _apply_owned），其余行（VALARM、X-APPLE-*、LOCATION、URL、
-    VTIMEZONE 等）用原始 raw 行原样输出、保留客户端折行，VCALENDAR 层的
+    覆盖（见 _apply_owned），其余行（X-APPLE-*、LOCATION、URL、VTIMEZONE
+    等）用原始 raw 行原样输出、保留客户端折行，VCALENDAR 层的
     VERSION/PRODID/CALSCALE 也保留客户端的；时间簇见 _apply_time_cluster。
+
+    VALARM 走双车道（DESIGN.md 11.12，见 _apply_owned_alarms）：服务端车道
+    ——按库内 reminders 生成带 REMINDER_MARKER 的 VALARM（remind_at 升序，
+    TRIGGER 为绝对时刻），透传时先删掉原文里带标记的旧闹钟再原位重写；
+    客户端车道——不带标记的 VALARM（用户在提醒事项 App 里手设的）原样保留
+    在透传体里，服务端不读不改不删。所以 VALARM 不再是「其余行原样输出」
+    的一部分。
 
     硬约束：本函数任何位置不许出现 datetime.now()——DTSTAMP 一变内容 ETag
     就变，客户端会误以为有更新而无限重下。DTSTAMP/LAST-MODIFIED 只派生自
-    库内时间戳：条目不变 → 字节不变 → ETag 不变。
+    库内时间戳；VALARM 的 UID/TRIGGER 只派生自 caldav_uid 与 remind_at：
+    条目不变 → 字节不变 → ETag 不变。
     """
     if not item.caldav_ics:
         return _serialize_fresh(item)
@@ -520,6 +594,7 @@ def serialize(item: Item, *, local_zone: ZoneInfo) -> str:
     vtodo = master_vtodo(cal)
     _apply_owned(vtodo, item)
     _apply_time_cluster(cal, vtodo, item, local_zone)
+    _apply_owned_alarms(vtodo, item)
     return _render(cal)
 
 
