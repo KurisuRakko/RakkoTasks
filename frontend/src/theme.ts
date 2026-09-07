@@ -23,7 +23,7 @@ import {
   TYPE_SCALE,
   WHISPER_SHADOW,
 } from './rakko-tokens';
-import { WALLPAPER_ATTR, WALLPAPER_TAME_OPACITY, WALLPAPER_VAR } from './lib/glass';
+import { WALLPAPER_ATTR, WALLPAPER_VAR } from './lib/glass';
 
 type Mode = 'light' | 'dark';
 
@@ -37,9 +37,6 @@ function buildThemeOptions(mode: Mode): ThemeOptions {
   const n = mode === 'light' ? NEUTRAL_LIGHT : NEUTRAL_DARK;
   const [n1, n2, , , n5, , n7, , n9, n10] = n;
   const accent = mode === 'light' ? ACCENT.light : ACCENT.dark;
-  // 驯化层：壁纸之上、玻璃之下的一层纸色叠加，把任意用户壁纸压进可控亮度区间
-  // （玻璃档位按「身后是纸色系页面」调校，见 lib/glass.ts 的 WALLPAPER_TAME_OPACITY）
-  const tame = `color-mix(in srgb, ${n1} ${WALLPAPER_TAME_OPACITY}, transparent)`;
   // 语义色深色各提亮约 15%（tokens 约定），浅色直接用源色值
   const semantic =
     mode === 'dark'
@@ -157,7 +154,7 @@ function buildThemeOptions(mode: Mode): ThemeOptions {
           [`:root:not([${WALLPAPER_ATTR}])`]: {
             '--glass-highlight': 'transparent',
           },
-          // body 只留排版属性；壁纸与驯化层背景整体挪进 ::before 伪元素承载：
+          // body 只留排版属性；壁纸背景整体挪进 ::before 伪元素承载：
           // - 不用 background-attachment: fixed——iOS Safari 从未正确实现它，一律退化成
           //   跟着内容滚；position: fixed 在 iOS 上工作正常。用户是 PWA standalone，
           //   没有伸缩地址栏，视口高度恒定，inset: 0 即可，无需 100lvh 等动态视口单位；
@@ -165,9 +162,9 @@ function buildThemeOptions(mode: Mode): ThemeOptions {
           // - z-index: -1 是安全的：定位后代排在「根元素背景之后、块级非定位后代之前」，
           //   既盖不住页面内容，又仍位于玻璃元素身后——backdrop-filter 照样读得到壁纸；
           // - pointerEvents: none：纯背景层，不能吃掉任何点击。
-          // ::before 的两层背景：第一层是驯化层（把用户壁纸压进可控亮度区间，理由见
-          // lib/glass 注释），第二层是壁纸本身，由 lib/wallpaper 写到 <html> 上；无壁纸时
-          // 该变量为 none，退回纯纸色背景。
+          // ::before 的背景只有一层壁纸原图，由 lib/wallpaper 写到 <html> 上，不再叠
+          // 纸色（驯化层已移除——壁纸显示用户原图，深色壁纸下顶栏标题对比度由用户
+          // 通过选图规避）；无壁纸时该变量为 none，退回纯纸色背景。
           body: {
             letterSpacing: '0.01em',
             '&::before': {
@@ -176,7 +173,7 @@ function buildThemeOptions(mode: Mode): ThemeOptions {
               inset: 0,
               zIndex: -1,
               pointerEvents: 'none',
-              backgroundImage: `linear-gradient(${tame}, ${tame}), var(${WALLPAPER_VAR}, none)`,
+              backgroundImage: `var(${WALLPAPER_VAR}, none)`,
               backgroundSize: 'cover',
               backgroundPosition: 'center',
               backgroundRepeat: 'no-repeat',
