@@ -296,11 +296,12 @@ POST /api/items/quick               解析并落库，速记模式用（限流�
                                     兜底放在服务端而非前端：请求一旦到达就会跑完（同步 def 端点在
                                     starlette 线程池里，客户端断连不杀线程），所以用户点完确定
                                     立刻关掉 PWA，条目照样入库
-PATCH /api/items/{id}               {"status"} 任何条目可改；{"title","summary","category","due_date"}
-                                    只对手动条目（email_id=null）开放，邮件条目改这四个字段 400 not_editable；
-                                    {"reminders"} **任何条目都可改**（含邮件条目）——提醒是用户
-                                    自己挂上去的东西，与条目内容归谁无关；传入即整体替换
-                                    （不是增量），[] 清空；空请求体 400 bad_request；成功 200
+PATCH /api/items/{id}               {"status"} 任何条目可改；{"title","summary","category","due_date",
+                                    "importance","actionable"} 任何条目都可改（含邮件条目）——与手动
+                                    条目一视同仁（决策变更见 11.6）；importance 取值 high|normal|low，
+                                    非法值 400 bad_importance；actionable 为布尔；{"reminders"} 任何条目
+                                    都可改（含邮件条目）——提醒是用户自己挂上去的东西，与条目内容归谁
+                                    无关；传入即整体替换（不是增量），[] 清空；空请求体 400 bad_request；成功 200
 DELETE /api/items/{id}              手动条目 → 204；邮件条目 → 400 not_editable
 GET  /api/items/{id}                含 detail_md（可能为 null）与 related
 POST /api/items/{id}/detail         生成并缓存详情与关联邮件（agentic，多轮 LLM），
@@ -531,12 +532,11 @@ CalDAV 例外：`/caldav/*` 与 `/.well-known/caldav` 不走上述 Bearer 中间
 
 ### 11.6 PUT/DELETE 语义、可编辑规则与透传体
 
-- 可编辑规则（`store.apply_put`）：**邮件条目（`email_id` 非空）只接受状态**——
-  标题/摘要/截止日/重要度的改动被静默忽略；**手动条目接受标题/摘要/截止日/重要度/状态**
-  全部五个字段。两者都会更新 CalDAV 身份列（`caldav_uid`/`caldav_name`）与透传体。
-- 被忽略的字段不报错：请求正常完成（新建 201 / 更新 204），被忽略的字段名记入
-  日志——客户端下一轮同步会看到服务端值「还原」，这比 4xx 让那条提醒永远同步失败
-  要好。网页端 REST 仍是邮件条目修改的唯一入口（PATCH 400 not_editable 策略不变）。
+- 可编辑规则（`store.apply_put`）：**两类条目同权，无差异化限制**——客户端 PUT 的
+  标题/摘要/截止日/重要度/状态，对邮件条目（`email_id` 非空）与手动条目一样全部写入；
+  两者都更新 CalDAV 身份列（`caldav_uid`/`caldav_name`）与透传体。为什么不再区分：
+  用户在 iPhone 提醒事项里改一条来自邮件的任务（改标题/日期/重要度都算），服务端若
+  静默丢弃，下一轮同步就会把它还原回去——改了等于白改。邮件条目已不是只读的。
 - DELETE 语义（`store.apply_delete`）：手动条目真删（行删除）；邮件条目按产品决策
   **视为完成**（`set_status done`）——iPhone 上把一条来自邮件的提醒划掉/删除 = 做完了，
   邮件原文与历史仍保留在网页端。DELETE/PUT 都先做 If-Match/If-None-Match 校验

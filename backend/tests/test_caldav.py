@@ -358,7 +358,40 @@ def test_put_completed_marks_done_with_completed_timestamp(session_factory):
         assert item.status == "done" and item.done_at == datetime(2026, 9, 4, 1, 0, 0)
 
 
-def test_put_on_email_item_applies_status_only(session_factory):
+def test_put_on_email_item_updates_title(session_factory):
+    """邮件条目 PUT 改 SUMMARY → 204，title 真的入库（不再静默忽略后下一轮还原）。"""
+    ids = _seed(session_factory)
+    body = APPLE_BODY.format(uid="MAILUID", summary="改标题", extra="")
+    r = _client(session_factory).put(f"{COLL}MAILUID.ics", headers=_basic("a@example.com", PW_A), content=body.encode())
+    assert r.status_code == 204
+    with session_factory() as s:
+        item = s.get(Item, ids["mail_id"])
+        assert item.email_id is not None  # 还是邮件条目，没被转成手动
+        assert item.title == "改标题"
+
+
+def test_put_on_email_item_updates_due_date(session_factory):
+    """邮件条目 PUT 改 DUE → due_date 生效（种子 09-20 → 载荷 09-10）。"""
+    ids = _seed(session_factory)
+    body = APPLE_BODY.format(uid="MAILUID", summary="x", extra="")
+    r = _client(session_factory).put(f"{COLL}MAILUID.ics", headers=_basic("a@example.com", PW_A), content=body.encode())
+    assert r.status_code == 204
+    with session_factory() as s:
+        assert s.get(Item, ids["mail_id"]).due_date == date(2026, 9, 10)
+
+
+def test_put_on_email_item_updates_importance(session_factory):
+    """邮件条目 PUT 改 PRIORITY → importance 生效（与手动条目同一张映射表）。"""
+    ids = _seed(session_factory)
+    body = APPLE_BODY.format(uid="MAILUID", summary="x", extra="PRIORITY:1\r\n")
+    r = _client(session_factory).put(f"{COLL}MAILUID.ics", headers=_basic("a@example.com", PW_A), content=body.encode())
+    assert r.status_code == 204
+    with session_factory() as s:
+        assert s.get(Item, ids["mail_id"]).importance == "high"
+
+
+def test_put_on_email_item_completes_and_stores_passthrough(session_factory):
+    """邮件条目 PUT 标完成仍生效；改动后的字段与透传体一起落库，GET 不再还原旧值。"""
     ids = _seed(session_factory)
     client = _client(session_factory)
     body = APPLE_BODY.format(uid="MAILUID", summary="改标题", extra="STATUS:COMPLETED\r\nPRIORITY:1\r\n")
@@ -366,10 +399,11 @@ def test_put_on_email_item_applies_status_only(session_factory):
     assert r.status_code == 204
     with session_factory() as s:
         item = s.get(Item, ids["mail_id"])
-        assert item.title == "邮件任务" and item.due_date == date(2026, 9, 20) and item.importance == "normal"
         assert item.status == "done" and item.done_at is not None
+        assert item.title == "改标题" and item.importance == "high"
+        assert item.caldav_ics == body  # 客户端原文照旧进透传体
     got = client.get(f"{COLL}MAILUID.ics", headers=_basic("a@example.com", PW_A)).text
-    assert "SUMMARY:邮件任务" in got and "STATUS:COMPLETED" in got
+    assert "SUMMARY:改标题" in got and "STATUS:COMPLETED" in got
 
 
 def test_put_priority_changes_manual_importance(session_factory):
