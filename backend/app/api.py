@@ -3,10 +3,12 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import secrets
 from collections.abc import Iterator
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,7 +25,7 @@ from app.caldav.auth import generate_app_password, hash_app_password
 from app.config import Settings, get_settings
 from app.db import init_db, make_engine, make_session_factory
 from app.detail import apply_detail, build_export_text, generate_item_detail, resolve_related
-from app.itemrules import CATEGORIES, ItemFieldError, set_status, validate_item_fields
+from app.itemrules import CATEGORIES, DEFAULT_TITLE, ItemFieldError, set_status, validate_item_fields
 from app.models import Account, Email, Item, User
 from app.ratelimit import RateLimiter
 from app.sanitizer import build_email_document
@@ -37,6 +39,8 @@ class ItemCreate(BaseModel):
     summary: str = ""
     category: str
     due_date: str | None = None
+    importance: str | None = None   # 省略 → 落 normal
+    actionable: bool | None = None  # 省略 → 落 True
 
 
 class ItemPatch(BaseModel):
@@ -48,8 +52,35 @@ class ItemPatch(BaseModel):
     due_date: str | None = None
 
 
+class ParseRequest(BaseModel):
+    text: str = Field(max_length=2000)  # 防超长文本灌进 LLM 上下文烧钱
+    today: str | None = None            # 用户浏览器本地日期 YYYY-MM-DD
+
+
 class SearchRequest(BaseModel):
     question: str = Field(max_length=2000)  # 防超长问题灌进 LLM 上下文烧钱
+
+
+def _resolve_today(raw: str | None, settings) -> str:
+    """解析用的「今天」：请求体传的浏览器本地日期优先，缺省或非法回落到
+    settings.local_timezone 的今天。
+
+    不要用 date.today()：容器 TZ=UTC（deploy/Dockerfile）而 local_timezone
+    默认 Australia/Sydney，悉尼上午 10 点前 date.today() 还是「昨天」，
+    解析「明天」会直接差一天。
+    """
+    if raw is not None and re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw):
+        try:
+            date.fromisoformat(raw)  # 形状过完再过真实性，挡住 2026-13-45
+        except ValueError:
+            pass
+        else:
+            return raw
+    try:
+        return datetime.now(ZoneInfo(settings.local_timezone)).date().isoformat()
+    except ZoneInfoNotFoundError:
+        # local_timezone 配置项非法时退一步用 UTC，不要让端点 500
+        return datetime.now(timezone.utc).date().isoformat()
 
 
 def _get_db(request: Request) -> Iterator[Session]:
@@ -105,6 +136,8 @@ def create_app(
     # 每用户限流：保护会产生 LLM 费用的端点（每个 app 实例各一份，测试互不污染）
     search_limiter = RateLimiter(6, 60.0)
     detail_limiter = RateLimiter(30, 60.0)
+    # parse 与 quick 共用同一份 20 次/60 秒计数
+    parse_limiter = RateLimiter(20, 60.0)
 
     @app.exception_handler(HTTPException)
     async def _http_exception_handler(_request, exc: HTTPException):
@@ -168,9 +201,12 @@ def create_app(
     def create_item(
         body: ItemCreate, user: CurrentUser = Depends(require_auth), db: Session = Depends(_get_db)
     ) -> dict:
-        """新建手动条目（无源邮件，email_id 为 null）：importance/actionable 固定、status=open。"""
+        """新建手动条目（无源邮件，email_id 为 null）：importance/actionable 省略时默认落
+        normal / True，status=open。"""
         try:
-            due = validate_item_fields(body.title, body.summary, body.category, body.due_date)
+            due = validate_item_fields(
+                body.title, body.summary, body.category, body.due_date, body.importance
+            )
         except ItemFieldError as e:
             raise HTTPException(status_code=400, detail={"code": e.code}) from None
         item = Item(
@@ -180,13 +216,90 @@ def create_app(
             summary=body.summary,
             category=body.category,
             due_date=due,
-            importance="normal",
-            actionable=True,
+            importance=body.importance or "normal",
+            actionable=True if body.actionable is None else body.actionable,
             status="open",
         )
         db.add(item)
         db.commit()
         return _item_dict(item, [])
+
+    def _ai_parse(text: str, today: str | None) -> dict:
+        """/parse 与 /quick 共用的解析路径：解析「今天」→ parse_task → 归一化。
+
+        from app.llm import ... 必须写在函数体内（延迟导入）：测试用
+        monkeypatch.setattr("app.llm.get_llm", lambda settings=None: FakeLLM())
+        打桩，模块顶层导入会让打桩失效。
+        """
+        from app.llm import _normalize_parsed_task, get_llm  # 延迟导入，便于测试 monkeypatch
+
+        llm = get_llm(settings)
+        return _normalize_parsed_task(llm.parse_task(text, _resolve_today(today, settings)))
+
+    @app.post("/api/items/parse")
+    def parse_item(
+        body: ParseRequest, user: CurrentUser = Depends(require_auth)
+    ) -> dict:
+        """一句自然语言 → 结构化任务 dict（不落库、不碰 db）。
+
+        LLM 失败回 502，异常细节绝不能进响应体。
+        """
+        if not parse_limiter.allow(user.sub):
+            raise HTTPException(status_code=429, detail={"code": "rate_limited"})
+        try:
+            return _ai_parse(body.text, body.today)
+        except Exception as exc:
+            logger.exception("AI 解析失败")
+            raise HTTPException(status_code=502, detail={"code": "parse_error"}) from exc
+
+    @app.post("/api/items/quick", status_code=201)
+    def quick_add_item(
+        body: ParseRequest, user: CurrentUser = Depends(require_auth), db: Session = Depends(_get_db)
+    ) -> dict:
+        """自然语言一键建条目：正常路径 AI 解析后落库；LLM 失败或字段仍非法时用原文
+        兜底建条目，两种情况都 201。
+
+        兜底放在服务端而非前端：请求一旦到达服务端就会跑完（同步 def 端点跑在
+        starlette 线程池里，客户端断连不会杀线程），所以用户点完确定立刻关掉
+        PWA，条目照样入库；前端两步编排做不到这点。
+        """
+        if not parse_limiter.allow(user.sub):
+            raise HTTPException(status_code=429, detail={"code": "rate_limited"})
+        try:
+            parsed = _ai_parse(body.text, body.today)
+            # 第二道保险：_normalize_parsed_task 理论上已兜住字段非法，这里再校一次
+            due = validate_item_fields(
+                parsed["title"], parsed["summary"], parsed["category"],
+                parsed["due_date"], parsed["importance"],
+            )
+            ai_parsed = True
+            title, summary = parsed["title"], parsed["summary"]
+            category, importance, actionable = parsed["category"], parsed["importance"], parsed["actionable"]
+        except Exception as exc:
+            logger.exception("AI 解析失败，改用原文兜底建条目")
+            ai_parsed = False
+            raw = body.text.strip()
+            if not raw:
+                title, summary = DEFAULT_TITLE, ""
+            else:
+                title = raw[:128]
+                # 超过 128 字的部分放 summary：完整原文进 summary，别把用户的话弄丢
+                summary = "" if len(raw) <= 128 else raw
+            category, due, importance, actionable = "其他", None, "normal", True
+        item = Item(
+            user_sub=user.sub,
+            email_id=None,
+            title=title,
+            summary=summary,
+            category=category,
+            due_date=due,
+            importance=importance,
+            actionable=actionable,
+            status="open",
+        )
+        db.add(item)
+        db.commit()
+        return {"item": _item_dict(item, []), "ai_parsed": ai_parsed}
 
     @app.patch("/api/items/{item_id}")
     def patch_item(

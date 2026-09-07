@@ -283,3 +283,54 @@ def test_multiuser_isolation_manual_items(session_factory, monkeypatch):
     client_a = _client(session_factory, monkeypatch, sub="user-1")
     assert client_a.get(f"/api/items/{a_id}").status_code == 200
     assert client_a.get(f"/api/items/{b_id}").status_code == 404
+
+
+def test_create_manual_item_with_importance_and_actionable(session_factory, monkeypatch):
+    _seed(session_factory)
+    client = _client(session_factory, monkeypatch)
+
+    resp = client.post(
+        "/api/items",
+        json={"title": "交房租", "category": "账单", "importance": "high", "actionable": False},
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["importance"] == "high"
+    assert data["actionable"] is False
+
+    # 落库正确（不是只回显在响应里）
+    with session_factory() as s:
+        row = s.execute(select(Item).where(Item.title == "交房租")).scalars().one()
+        assert row.importance == "high"
+        assert row.actionable is False
+
+
+def test_create_manual_item_defaults_importance_and_actionable(session_factory, monkeypatch):
+    """回归：POST /api/items 省略 importance/actionable 时仍落 normal / True（不破坏既有行为）。"""
+    _seed(session_factory)
+    client = _client(session_factory, monkeypatch)
+
+    resp = client.post("/api/items", json={"title": "平凡小事", "category": "个人"})
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["importance"] == "normal"
+    assert data["actionable"] is True
+
+    with session_factory() as s:
+        row = s.execute(select(Item).where(Item.title == "平凡小事")).scalars().one()
+        assert row.importance == "normal"
+        assert row.actionable is True
+
+
+def test_create_manual_item_bad_importance_400(session_factory, monkeypatch):
+    _seed(session_factory)
+    client = _client(session_factory, monkeypatch)
+
+    resp = client.post("/api/items", json={"title": "ok", "category": "个人", "importance": "urgent"})
+    assert resp.status_code == 400
+    assert resp.json() == {"code": "bad_importance"}
+
+    # 没有写进库
+    with session_factory() as s:
+        manual = s.execute(select(Item).where(Item.email_id.is_(None))).scalars().all()
+        assert manual == []
