@@ -380,6 +380,23 @@ CalDAV 例外：`/caldav/*` 与 `/.well-known/caldav` 不走上述 Bearer 中间
   `rakkotasks.quick-mode`）：开则跳过 `parsing`/`fields`，点「确定」立刻关窗并把原文
   交给编排层走 `/api/items/quick`。解析失败回 `input`、**保留用户原文不清空**，
   给一个「按原文添加」兜底按钮——绝不让用户白打一遍。
+- 提醒编辑（`ItemFieldsForm` 的提醒区，`ItemEditor` 与 `AiAddDialog` 共用）：一行一个
+  原生 `input[type=datetime-local]` + 删除按钮，底部「加提醒」，上限 `REMINDERS_MAX`=5。
+  组件内部持一份**本地墙上时刻草案 state**，只在外发回调时才经
+  `fromDatetimeLocalValue` 转成带偏移 ISO 并过滤空行——用户把某行清空时没有对应的
+  绝对时刻可回写 props，草案让「该行退出提交数组、输入框留在原地」成立。草案只在
+  挂载时从 props 初始化、之后不随 props 重置（否则被清空的行会被抽走）；
+  `AiAddDialog` 靠 `key={phase}` 在进 fields 阶段时整棵子树重挂载，初始化时机足够。
+  编辑中不重排行（光标会乱跳），排序去重只发生在出参上。
+- `ItemEditor` 保存时**总是显式带上 `reminders`（哪怕是空数组）**：契约里省略 = 不改，
+  省略会让「用户把最后一个提醒删掉再保存」变成静默无操作。
+- 列表行：提醒 chip 显示最早一条 `🔔 明天 10:00`，多于一条追加 `+N`；截止 chip 原样
+  保留，两者可同时出现。分组键改成 `min(最早提醒, 截止)`（`grouping.effectiveDate`），
+  否则「明天 10:00 提醒、无截止」的条目会掉进「无期限」组沉底。`isOverdue` **仍只看
+  `due_date`**：「逾期」说的是过了截止日，提醒迟了不该给红色高亮。
+- 提醒时刻的换算集中在 `lib/time.ts`（`formatReminder` / `toDatetimeLocalValue` /
+  `fromDatetimeLocalValue` / `localTimeZone`）。**不许用 `toISOString().slice(...)`**
+  ——那是 UTC 墙上时刻，本地时区一偏就差几小时甚至跨天。
 - 速记落库的 Promise **故意不绑组件生命周期**（不接 AbortController、卸载时不取消）：
   请求一旦到达服务端就会跑完并入库，用户切页也该让它继续；卸载时取消只会白丢条目。
   结果回来弹 Snackbar，带「查看」按钮（文案就是「查看」两个字）直接开该条详情。
