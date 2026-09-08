@@ -5,8 +5,6 @@ import Alert from '@mui/material/Alert';
 import Avatar from '@mui/material/Avatar';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
-import Card from '@mui/material/Card';
-import CardContent from '@mui/material/CardContent';
 import Chip from '@mui/material/Chip';
 import CircularProgress from '@mui/material/CircularProgress';
 import Dialog from '@mui/material/Dialog';
@@ -14,7 +12,6 @@ import DialogActions from '@mui/material/DialogActions';
 import DialogContent from '@mui/material/DialogContent';
 import DialogContentText from '@mui/material/DialogContentText';
 import DialogTitle from '@mui/material/DialogTitle';
-import Divider from '@mui/material/Divider';
 import IconButton from '@mui/material/IconButton';
 import List from '@mui/material/List';
 import ListItem from '@mui/material/ListItem';
@@ -43,11 +40,18 @@ import { enterSx, usePrefersReducedMotion } from '../lib/motion';
 import { logout, startLogin } from '../lib/phainon';
 import { checkForUpdate } from '../lib/pwa-update';
 import { useSession } from '../lib/session';
+import { ROW_GAP_PX } from '../lib/surface';
 import { useThemeMode } from '../lib/theme-mode';
 import { timeAgo } from '../lib/time';
 import { compressWallpaper, setWallpaper, useWallpaper } from '../lib/wallpaper';
 import { RADIUS } from '../rakko-tokens';
 import type { CaldavInfo, StatusResponse } from '../types';
+
+/** 分区玻璃面板：材质（纸底 / 边框 / 高光 / 阴影）由 rakko-glass.css 的
+ *  data-glass="panel" 配方提供——挂了 data-glass 的元素，主题层与局部 sx 都不能再
+ *  下发 background/backgroundColor，否则盖掉玻璃配方。这里只补配方不管的圆角
+ *  （与列表行同一 RADIUS.card）与统一内边距。 */
+const PANEL_SX = { px: 2, py: 2, borderRadius: `${RADIUS.card}px` };
 
 export default function SettingsPage() {
   const [status, setStatus] = useState<StatusResponse | null>(null);
@@ -233,9 +237,21 @@ export default function SettingsPage() {
   };
 
   return (
-    <Box>
+    // 页面外壳：各分区是 data-glass="panel" 玻璃卡片，卡间竖向间距与列表行一致
+    // （ROW_GAP_PX），不再用 Divider 硬切。底部 padding 给固定底栏（AppShell，
+    // 高 50–58px + env(safe-area-inset-bottom)）让出空间：72 = 底栏高 + 呼吸空间，
+    // 不写死具体底栏高度。
+    <Box
+      sx={{
+        pt: 2,
+        pb: 'calc(72px + env(safe-area-inset-bottom))',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: `${ROW_GAP_PX}px`,
+      }}
+    >
       {/* 账户状态：原 StatusPage 全部展示逻辑，key 用后端补回的 a.id */}
-      <Box sx={{ px: 2, pt: 2 }}>
+      <Box data-glass="panel" sx={PANEL_SX}>
         <Stack direction="row" alignItems="center" sx={{ mb: 1 }}>
           <Typography variant="overline" sx={{ flexGrow: 1 }}>
             账户状态
@@ -262,51 +278,50 @@ export default function SettingsPage() {
                   LLM 待处理邮件：{status.pending_llm} 封
                 </Alert>
                 {status.accounts.map((a, index) => (
-                  <Card
+                  // 账户行不再是 outlined 卡片：外层分区已是玻璃面板，再套一层带边框的
+                  // 卡片就是两层框，层次压平后行直接坐在面板玻璃上。
+                  <Box
                     key={a.id}
-                    variant="outlined"
                     // 变暗用 filter 而非 opacity：入场动画 animation-fill-mode: both
                     // 会把关键帧终态 opacity: 1 保持在元素上（动画值优先级高于普通声明），
                     // 静态 opacity 会被压掉；filter 与动画互不干扰，动画期间/结束后都有效。
                     sx={{ ...enterSx(index, reduced), filter: a.enabled === false ? 'opacity(0.6)' : 'none' }}
                   >
-                    <CardContent>
-                      <Stack direction="row" spacing={1.5} alignItems="center">
-                        <Avatar>{a.kind === 'gmail' ? 'G' : 'O'}</Avatar>
-                        <Box sx={{ flexGrow: 1, minWidth: 0 }}>
-                          <Typography variant="subtitle1" noWrap>
-                            {a.name}
-                          </Typography>
-                          <Typography variant="body2" color="text.secondary" noWrap>
-                            {a.email}
-                          </Typography>
-                          <Typography variant="caption" color="text.secondary">
-                            上次同步：
-                            {a.last_sync_at ? timeAgo(a.last_sync_at) : '从未'}
-                          </Typography>
-                        </Box>
-                        {a.enabled === false ? (
-                          <Chip label="已停用" size="small" color="default" variant="outlined" />
-                        ) : (
-                          <Chip
-                            label={a.status === 'ok' ? '正常' : a.status === 'error' ? '异常' : '同步中'}
-                            size="small"
-                            color={a.status === 'ok' ? 'success' : a.status === 'error' ? 'error' : 'warning'}
-                            variant="outlined"
-                          />
-                        )}
-                      </Stack>
-                      {a.status === 'error' && a.last_error && (
-                        <Typography
-                          variant="body2"
-                          color="error"
-                          sx={{ mt: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                        >
-                          {a.last_error}
+                    <Stack direction="row" spacing={1.5} alignItems="center">
+                      <Avatar>{a.kind === 'gmail' ? 'G' : 'O'}</Avatar>
+                      <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+                        <Typography variant="subtitle1" noWrap>
+                          {a.name}
                         </Typography>
+                        <Typography variant="body2" color="text.secondary" noWrap>
+                          {a.email}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          上次同步：
+                          {a.last_sync_at ? timeAgo(a.last_sync_at) : '从未'}
+                        </Typography>
+                      </Box>
+                      {a.enabled === false ? (
+                        <Chip label="已停用" size="small" color="default" variant="outlined" />
+                      ) : (
+                        <Chip
+                          label={a.status === 'ok' ? '正常' : a.status === 'error' ? '异常' : '同步中'}
+                          size="small"
+                          color={a.status === 'ok' ? 'success' : a.status === 'error' ? 'error' : 'warning'}
+                          variant="outlined"
+                        />
                       )}
-                    </CardContent>
-                  </Card>
+                    </Stack>
+                    {a.status === 'error' && a.last_error && (
+                      <Typography
+                        variant="body2"
+                        color="error"
+                        sx={{ mt: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                      >
+                        {a.last_error}
+                      </Typography>
+                    )}
+                  </Box>
                 ))}
               </>
             )}
@@ -314,10 +329,8 @@ export default function SettingsPage() {
         ) : null}
       </Box>
 
-      <Divider sx={{ my: 2 }} />
-
       {/* 外观：深浅色三态，读写 useThemeMode */}
-      <Box sx={{ px: 2 }}>
+      <Box data-glass="panel" sx={PANEL_SX}>
         <Typography variant="overline">外观</Typography>
         <ToggleButtonGroup
           exclusive
@@ -334,10 +347,8 @@ export default function SettingsPage() {
         </ToggleButtonGroup>
       </Box>
 
-      <Divider sx={{ my: 2 }} />
-
       {/* 壁纸：本机背景图，localStorage 持久化（不传后端） */}
-      <Box sx={{ px: 2 }}>
+      <Box data-glass="panel" sx={PANEL_SX}>
         <Typography variant="overline">壁纸</Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
           壁纸只存在本机浏览器里，换设备需要重新设置。
@@ -347,7 +358,7 @@ export default function SettingsPage() {
             选择图片
           </Button>
           {wallpaper && (
-            <Button variant="outlined" color="warning" onClick={() => setWallpaper(null)}>
+            <Button variant="outlined" onClick={() => setWallpaper(null)}>
               移除壁纸
             </Button>
           )}
@@ -382,10 +393,8 @@ export default function SettingsPage() {
         />
       </Box>
 
-      <Divider sx={{ my: 2 }} />
-
       {/* 日历订阅：只读订阅链接（iCal 公开端点）+ 订阅 / 复制 / 重新生成 */}
-      <Box sx={{ px: 2 }}>
+      <Box data-glass="panel" sx={PANEL_SX}>
         <Typography variant="overline">日历订阅</Typography>
         {calLoading ? (
           <Skeleton variant="text" />
@@ -411,7 +420,7 @@ export default function SettingsPage() {
               <Button variant="outlined" onClick={handleCopyLink}>
                 复制链接
               </Button>
-              <Button variant="outlined" color="warning" onClick={() => setRotateOpen(true)}>
+              <Button variant="outlined" onClick={() => setRotateOpen(true)}>
                 重新生成
               </Button>
             </Stack>
@@ -419,10 +428,8 @@ export default function SettingsPage() {
         ) : null}
       </Box>
 
-      <Divider sx={{ my: 2 }} />
-
       {/* 提醒事项同步：iPhone「提醒事项」经 CalDAV 同步的开通入口（服务器/用户名 + 一次性密码） */}
-      <Box sx={{ px: 2 }}>
+      <Box data-glass="panel" sx={PANEL_SX}>
         <Typography variant="overline">提醒事项同步</Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
           把任务同步到 iPhone「提醒事项」App：在手机上勾选、新建、修改都会回到这里。手机上新建的任务归入「个人」分类。
@@ -458,7 +465,8 @@ export default function SettingsPage() {
               </IconButton>
             </Stack>
             {dav.configured ? (
-              <Button variant="outlined" color="warning" onClick={() => setDavRotateOpen(true)}>
+              // 破坏性操作（旧密码立即失效）靠下方确认对话框保护，按钮本身不靠 warning 色喊
+              <Button variant="outlined" onClick={() => setDavRotateOpen(true)}>
                 重新生成密码
               </Button>
             ) : !davPassword ? (
@@ -500,10 +508,8 @@ export default function SettingsPage() {
         ) : null}
       </Box>
 
-      <Divider sx={{ my: 2 }} />
-
       {/* 账户：显示登录者 + 退出登录（回到登录流程） */}
-      <Box sx={{ px: 2 }}>
+      <Box data-glass="panel" sx={PANEL_SX}>
         <Typography variant="overline">账户</Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
           {displayName}
@@ -513,10 +519,8 @@ export default function SettingsPage() {
         </Button>
       </Box>
 
-      <Divider sx={{ my: 2 }} />
-
       {/* 关于：构建注入的版本号与后端地址 */}
-      <Box sx={{ px: 2, pb: 2 }}>
+      <Box data-glass="panel" sx={PANEL_SX}>
         <Typography variant="overline">关于</Typography>
         <List dense>
           <ListItem>
