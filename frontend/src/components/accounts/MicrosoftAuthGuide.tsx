@@ -5,7 +5,7 @@
 // ③ 把地址栏完整地址（或裸授权码）粘回 → submitMsAuthCode 换 token 落库。
 // auth_failed 按 kind 给中文提示；expired / no_pending_flow 视为流程失效，重置回 ① 重新生成。
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Alert from '@mui/material/Alert';
 import Button from '@mui/material/Button';
 import Stack from '@mui/material/Stack';
@@ -32,9 +32,17 @@ export default function MicrosoftAuthGuide({ accountId, onAuthorized }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [copyMsg, setCopyMsg] = useState<string | null>(null);
 
+  // 复制反馈是瞬时的：不自撤就会一直挂在按钮下面，重新生成链接时还带着上一次那句话
+  useEffect(() => {
+    if (copyMsg === null) return;
+    const timer = window.setTimeout(() => setCopyMsg(null), 3000);
+    return () => window.clearTimeout(timer);
+  }, [copyMsg]);
+
   const handleGenerate = () => {
     setGenerating(true);
     setError(null);
+    setCopyMsg(null);
     requestMsAuthUrl(accountId)
       .then((u) => setUrl(u))
       .catch(() => setError('生成授权链接失败，请稍后再试'))
