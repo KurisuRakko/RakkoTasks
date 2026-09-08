@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import RemoveAccountChoice from '../src/components/accounts/RemoveAccountChoice';
 import type { AccountInfo } from '../src/types';
+import { allStyleText, ruleTextOf } from './glass-text-contrast.test-utils';
 
 const api = vi.hoisted(() => ({
   patchAccountMock: vi.fn(),
@@ -132,5 +133,19 @@ describe('RemoveAccountChoice', () => {
     // 停用卡片禁用：点它不会选中（没有确认按钮出现）
     fireEvent.click(screen.getByRole('button', { name: '停用' }));
     expect(screen.queryByRole('button', { name: '确认停用' })).toBeNull();
+  });
+});
+
+describe('RemoveAccountChoice 选项卡片不铺纸', () => {
+  it('未选中的选项卡背景是 transparent：移动端它坐在玻璃面板上，铺纸会把玻璃闷掉', () => {
+    renderChoice();
+
+    // 「彻底删除」默认未选中（默认选中的是「停用」）
+    const card = screen
+      .getByText('彻底删除')
+      .closest('.MuiCard-root') as HTMLElement;
+    expect(card).not.toBeNull();
+    const rule = ruleTextOf(allStyleText(), card);
+    expect(rule).toContain('background-color:transparent');
   });
 });

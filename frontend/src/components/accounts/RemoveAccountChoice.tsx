@@ -100,7 +100,10 @@ export default function RemoveAccountChoice({ account, onDisabled, onDeleted, on
               variant="outlined"
               sx={{
                 borderColor: selected ? 'primary.main' : undefined,
-                bgcolor: selected ? 'action.selected' : 'background.paper',
+                // 未选中不铺纸：移动端这张卡坐在 data-glass="panel" 玻璃面板上，
+                // 铺 background.paper 就是纸叠纸、把下面的玻璃闷掉。选中态靠主色描边
+                // + 状态层底色区分就够。桌面端在 Dialog 里，透出的正是对话框自己的纸面。
+                bgcolor: selected ? 'action.selected' : 'transparent',
                 ...(alreadyDisabled && opt.choice === 'disable'
                   ? { opacity: 0.6, pointerEvents: 'none' }
                   : {}),
@@ -174,12 +177,19 @@ export default function RemoveAccountChoice({ account, onDisabled, onDeleted, on
             color="error"
             onClick={handleConfirm}
             disabled={!emailMatches || busy}
+            // 进度圈作 startIcon：文字留在原位，按钮宽度不会在提交时缩掉一半
+            startIcon={busy ? <CircularProgress size={16} color="inherit" /> : undefined}
           >
-            {busy ? <CircularProgress size={18} color="inherit" /> : '确认彻底删除'}
+            确认彻底删除
           </Button>
         ) : choice === 'disable' && !alreadyDisabled ? (
-          <Button variant="contained" onClick={handleConfirm} disabled={busy}>
-            {busy ? <CircularProgress size={18} color="inherit" /> : '确认停用'}
+          <Button
+            variant="contained"
+            onClick={handleConfirm}
+            disabled={busy}
+            startIcon={busy ? <CircularProgress size={16} color="inherit" /> : undefined}
+          >
+            确认停用
           </Button>
         ) : null}
       </Stack>

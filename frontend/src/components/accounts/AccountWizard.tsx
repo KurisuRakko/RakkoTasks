@@ -200,9 +200,12 @@ export default function AccountWizard({ onDone, onCancel }: Props) {
                   variant="outlined"
                   sx={{
                     flex: 1,
-                    // 选中卡片用主色描边 + 状态层底色区分，与主题其余控件一致
+                    // 选中卡片用主色描边 + 状态层底色区分，与主题其余控件一致。
+                    // 未选中不铺纸：移动端这张卡坐在 data-glass="panel" 玻璃面板上，
+                    // 铺 background.paper 就是纸叠纸、把下面的玻璃闷掉；桌面端在 Dialog 里，
+                    // 透出的正是对话框自己的纸面。
                     borderColor: selected ? 'primary.main' : undefined,
-                    bgcolor: selected ? 'action.selected' : 'background.paper',
+                    bgcolor: selected ? 'action.selected' : 'transparent',
                   }}
                 >
                   <CardActionArea

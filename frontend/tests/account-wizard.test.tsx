@@ -12,6 +12,7 @@ import { MemoryRouter } from 'react-router-dom';
 import AccountWizard from '../src/components/accounts/AccountWizard';
 import { ThemeModeProvider } from '../src/lib/theme-mode';
 import type { AccountInfo } from '../src/types';
+import { allStyleText, ruleTextOf } from './glass-text-contrast.test-utils';
 
 const api = vi.hoisted(() => ({
   createAccountMock: vi.fn(),
@@ -319,5 +320,17 @@ describe('AccountWizard 新错误码映射', () => {
     expect(await screen.findByText(message)).toBeTruthy();
     // 留在原步，用户能直接改
     expect(screen.getByLabelText('邮箱')).toBeTruthy();
+  });
+});
+
+describe('AccountWizard 类型卡片不铺纸', () => {
+  it('未选中的类型卡背景是 transparent：移动端它坐在玻璃面板上，铺纸会把玻璃闷掉', () => {
+    renderWizard();
+
+    const card = screen
+      .getByText('Outlook · Microsoft 365')
+      .closest('.MuiCard-root') as HTMLElement;
+    expect(card).not.toBeNull();
+    expect(ruleTextOf(allStyleText(), card)).toContain('background-color:transparent');
   });
 });
