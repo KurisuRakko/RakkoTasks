@@ -53,12 +53,15 @@ class ItemCreate(BaseModel):
 
 
 class ItemPatch(BaseModel):
-    # due_date 区分「没传」与「传 null 清除」：用 model_fields_set 判断字段是否出现在请求体里
+    # 每个字段的 None 都是「没传」，不是「清空」：字段是否出现在请求体里一律用
+    # model_fields_set 判断（actionable 显式传 false 是合法操作，绝不能用值做真值判断）
     status: str | None = None  # done | open
     title: str | None = None
     summary: str | None = None
     category: str | None = None
     due_date: str | None = None
+    importance: str | None = None   # high | normal | low；省略 → 保持现值
+    actionable: bool | None = None  # false 是合法值；省略 → 保持现值
     reminders: list[str] | None = None  # 带 UTC 偏移的 ISO 8601；传 null 与传 [] 都清空
 
 
@@ -363,12 +366,11 @@ def create_app(
         fields = body.model_fields_set
         if not fields:
             raise HTTPException(status_code=400, detail={"code": "bad_request"})
-        # reminders 故意不进这个集合：下面四个字段只对手动条目开放，而提醒是
-        # 用户自己挂上去的东西、跟条目内容归谁无关——邮件生成的任务恰恰是最
-        # 需要用户自己加提醒的，所以任何条目都能改 reminders。
-        editable = fields & {"title", "summary", "category", "due_date"}
-        if editable and item.email_id is not None:
-            raise HTTPException(status_code=400, detail={"code": "not_editable"})
+        # 邮件条目与手动条目在 PATCH 上同权（产品决策）：条目内容字段谁都能改，
+        # 下面统一走「现值合并 + 整体校验」这一条路径。reminders 不进这个集合
+        # 不是因为权限，而是写入语义不同——它是整体替换 + 差集计算，单独走
+        # 下面的分支，任何条目都能改。
+        editable = fields & {"title", "summary", "category", "due_date", "importance", "actionable"}
         if "status" in fields:
             if body.status not in ("done", "open"):
                 raise HTTPException(status_code=400, detail={"code": "bad_status"})
@@ -392,7 +394,8 @@ def create_app(
             for at in sorted(wanted - existing.keys()):
                 item.reminders.append(Reminder(remind_at=at))
         if editable:
-            # 未给出的字段用现值合并后整体校验一次（校验语义与 POST 一致）
+            # 未给出的字段用现值合并后整体校验一次（校验语义与 POST 一致）；
+            # actionable 由 Pydantic 保证 bool 类型，不进 validate_item_fields
             title = body.title if "title" in fields else item.title
             summary = body.summary if "summary" in fields else item.summary
             category = body.category if "category" in fields else item.category
@@ -401,14 +404,20 @@ def create_app(
                 if "due_date" in fields
                 else (item.due_date.isoformat() if item.due_date else None)
             )
+            importance = body.importance if "importance" in fields else item.importance
             try:
-                due = validate_item_fields(title, summary, category, due_raw)
+                due = validate_item_fields(title, summary, category, due_raw, importance)
             except ItemFieldError as e:
                 raise HTTPException(status_code=400, detail={"code": e.code}) from None
             item.title = title.strip()
             item.summary = summary
             item.category = category
             item.due_date = due
+            item.importance = importance
+            if "actionable" in fields:
+                # 只认 model_fields_set（fields）判断字段是否给出：actionable 是布尔，
+                # 显式 false 是合法修改，写成真值判断会让「改成 false」静默失效
+                item.actionable = bool(body.actionable)
         db.commit()
         return _item_dict(item, resolve_related(db, item, _owned_account_ids(db, user.sub)))
 

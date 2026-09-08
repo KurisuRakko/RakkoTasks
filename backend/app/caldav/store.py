@@ -85,12 +85,13 @@ def apply_put(
     raw_body: str,
     *,
     now: datetime,
-) -> tuple[Item, bool, list[str]]:
-    """把客户端 PUT 的字段写进条目；返回 (条目, 是否新建, 被忽略的字段名)。
+) -> tuple[Item, bool]:
+    """把客户端 PUT 的字段写进条目；返回 (条目, 是否新建)。
 
-    唯一一条可编辑规则：邮件条目只接受状态；手动条目接受标题/摘要/截止日/重要度/状态。
-    两者都更新 CalDAV 身份列与透传体。被忽略的字段不报错——客户端下一轮同步会看到
-    服务端值恢复，这比 4xx 让那条提醒永远同步失败要好。
+    邮件条目与手动条目同权：客户端 PUT 的标题/摘要/截止日/重要度/状态一律写入，
+    不做忽略——用户在 iPhone 上改邮件条目的标题/日期/重要度，服务端若静默丢弃，
+    下一轮同步就会把改动还原回去，等于白改。两者都更新 CalDAV 身份列
+    （caldav_uid/caldav_name）与透传体。
     """
     created = item is None
     if item is None:
@@ -105,23 +106,10 @@ def apply_put(
             summary=parsed.summary,
         )
         session.add(item)
-    ignored: list[str] = []
-    if item.email_id is None:
-        item.title = parsed.title
-        item.summary = parsed.summary
-        item.due_date = parsed.due_date
-        item.importance = parsed.importance
-    else:
-        ignored = [
-            name
-            for name, changed in (
-                ("title", parsed.title != item.title),
-                ("summary", parsed.summary != (item.summary or "")),
-                ("due_date", parsed.due_date != item.due_date),
-                ("importance", parsed.importance != item.importance),
-            )
-            if changed
-        ]
+    item.title = parsed.title
+    item.summary = parsed.summary
+    item.due_date = parsed.due_date
+    item.importance = parsed.importance
     if parsed.done:
         # 已完成条目再次 PUT 且客户端没给 COMPLETED：保留原完成时刻，不要每轮同步都刷新
         keep = item.done_at if (item.status == "done" and parsed.done_at is None) else parsed.done_at
@@ -132,7 +120,7 @@ def apply_put(
     item.caldav_name = stem if stem != item.caldav_uid else None
     item.caldav_ics = raw_body
     session.flush()
-    return item, created, ignored
+    return item, created
 
 
 def apply_delete(session: Session, item: Item, *, now: datetime) -> None:

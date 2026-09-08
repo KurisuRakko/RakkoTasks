@@ -162,7 +162,12 @@ function TaskRow({
         <ListItemText
           primary={item.title}
           secondary={item.summary}
+          // 摘要直接压在行自己的 data-glass="panel" 玻璃上（纸色 58% 仍透壁纸）：
+          // MUI 默认给 secondary 的 text.secondary（n7）实测对比度只有 2.4–2.6，
+          // 远低于 AA 正文的 4.5。玻璃上没有次级色空间，层级靠字号字重（标题
+          // 16/600 vs 摘要 13/400），颜色必须取 text.primary（n9）
           secondaryTypographyProps={{
+            color: 'text.primary',
             sx: {
               overflow: 'hidden',
               textOverflow: 'ellipsis',

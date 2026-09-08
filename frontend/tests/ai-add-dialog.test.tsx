@@ -121,6 +121,10 @@ describe('AiAddDialog 三阶段界面', () => {
     const dateInput = screen.getByLabelText('截止日期') as HTMLInputElement;
     expect(dateInput.value).toBe('2026-09-10');
     expect(screen.getByRole('radio', { name: '工作' })).toHaveAttribute('aria-checked', 'true');
+    // 重要度控件可见，AI 解析出的档位（high →「重要」）被选中
+    expect(screen.getByRole('radiogroup', { name: '重要度' })).toBeTruthy();
+    expect(screen.getByRole('radio', { name: '重要' })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByRole('radio', { name: '普通' })).toHaveAttribute('aria-checked', 'false');
   });
 
   it('fields 阶段点「保存」→ onSubmit 收到解析结果，importance/actionable 透传没丢', async () => {
@@ -142,6 +146,33 @@ describe('AiAddDialog 三阶段界面', () => {
       category: '工作',
       due_date: '2026-09-10',
       importance: 'high',
+      actionable: false,
+    });
+  });
+
+  it('fields 阶段重要度可改：把 AI 判的 high 点成「普通」再保存，载荷 importance 为 normal', async () => {
+    const d = deferred();
+    const onSubmit = vi.fn<(fields: ItemFields) => void>();
+    renderDialog({ onParse: vi.fn(() => d.promise), onSubmit });
+
+    fireEvent.change(screen.getByLabelText('要记的事'), { target: { value: '交房租' } });
+    fireEvent.click(screen.getByRole('button', { name: '确定' }));
+    await act(async () => {
+      d.resolve(PARSED);
+    });
+
+    // AI 判 high：默认选中「重要」；用户改点「普通」
+    expect(screen.getByRole('radio', { name: '重要' })).toHaveAttribute('aria-checked', 'true');
+    fireEvent.click(screen.getByRole('radio', { name: '普通' }));
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect(onSubmit).toHaveBeenCalledWith({
+      title: '标题',
+      summary: '详情',
+      category: '工作',
+      due_date: '2026-09-10',
+      importance: 'normal',
       actionable: false,
     });
   });

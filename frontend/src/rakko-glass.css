@@ -6,19 +6,45 @@
    │ 要改材质先改上游 src/glass.css，再把这里整段重拷一次。                    │
    │ tests/glass-contract.test.ts 会校验四档配方与两条退化路径都在位。         │
    │                                                                          │
-   │ 它消费的 --glass-* / --color-* / --shadow-whisper 由 theme.ts 下发到      │
-   │ :root（值来自 rakko-tokens.ts 的 GLASS 与 GLASS_SHADOW_WHISPER）。       │
+   │ 它消费的 --glass-* / --color-* 由 theme.ts 下发到 :root（值              │
+   │ 来自 rakko-tokens.ts 的 GLASS 与 GLASS_AERO）。--shadow-whisper          │
+   │ 仍由 theme.ts 下发但本文件已不消费：Aero 化后 panel/inverse              │
+   │ 改用 --glass-lift，它保留在 token 层是因为上游 tokens.css                │
+   │ 仍以它为契约 token，将来某一档用回它时不必重新接线。                     │
    └──────────────────────────────────────────────────────────────────────────┘ */
 
-/* 玻璃材质契约（毛玻璃 / 液态玻璃）。
+/* 明知偏离记录（本地共一处，重拷上游时不要改回）：
+   其一是 WebKit 前缀的写法：「上方框起以下到文件末尾为上游原文」在这点上有例外。
+   上游 src/glass.css（claude/glass-aero）是并列写法：在 [data-glass]:not([data-glass='haze'])
+   同一个规则块里紧挨无前缀声明写一行 -webkit-backdrop-filter，渐显 keyframe 与 haze 的 ::before
+   同理；本项目把这三处并列声明删掉，前缀兜底独立成 @supports not (backdrop-filter: blur(1px))
+   块（@media (prefers-reduced-transparency) 里关前缀的嵌套 @supports 同理），理由见紧邻块旁注释。
+   这不是同步漂移：将来重拷上游原文后，要按上面这一句把并列写法改回独立块，不要照上游一字不差还原。
+   为什么保留独立块：它在 Lightning CSS 与 esbuild 下都安全，是更保守的写法，不依赖压缩器实现细节。
+   实测事实（写准确，别传成上游有 bug）：本项目用 MUI 不用 Tailwind，Vite（v7）默认用 esbuild
+   压缩 CSS，实测 esbuild 不会把并列的前缀/无前缀声明当同一属性去重（两条都幸存），所以上游的并列
+   写法在本项目当下的构建里并不会出问题；保留独立块只是不把正确性押在压缩器行为上——上游写法的
+   表现只在上游自己的使用场景里成立，未经本项目验证。
+   第二处已作废，不构成当前偏离：早先上游契约注释列举 token 时在 -text-glow 前用「星号紧贴斜杠」
+   把注释提前闭合，本镜像曾在星号与斜杠之间插入空格订正；上游后来已修复（glass.css 契约注释现写作
+   --glass-rim/-lip/-sheen-1..3/-text-glow，不再含会提前闭合注释的序列；本地 grep 核过，
+   文件里每个星号斜杠连写都是真正的注释结束符），本次重拷按上游原文逐字照抄，无需本地订正。 */
+
+/* 玻璃材质契约（毛玻璃 / 液态玻璃 / Aero 玻璃片）。
    系统内所有 backdrop-filter 只允许出现在这个文件；组件与模板通过 data-glass 取材质：
-     chrome  — 常驻 chrome（顶栏）：60% 纸底 + 底部发丝线，配 data-reveal="scroll" 可滚动渐显
+     chrome  — 常驻 chrome（顶栏）：52% 纸底 + Aero 光泽（白顶收窄到 45%、底端压暗的三段渐变，与 panel 同式）
+               + 底部发丝线，配 data-reveal="scroll" 可滚动渐显
      panel   — 按需挂载的浮层面板（Popover / Menu / Select / Dialog / Sheet）：
-               76% 纸底 + 左上透镜渐变 + 1px 内侧高光 + whisper 阴影
-     inverse — 反色面板（Snackbar）：n-10 底、n-1 字，同样的高光与阴影配方
+                58% 纸底 + Aero 光泽（白顶收窄到 45%、底端用 --glass-sheen-3 压暗的三段渐变，
+                chrome 同式）+ 双层厚度边
+                （外圈亮边 / 内圈暗线）+ lift 两段式浮起 + 文字光晕
+     inverse — 反色面板（Snackbar）：n-10 底、n-1 字，用 neutral 混出同样的厚度边与光泽；
+                底色自带对比，不设文字光晕
      haze    — 压在图像上的文字块：文字身后一团雾。默认 cloud（多团软椭圆并集的有机云形 + 随风飘散的
                噪声雾边），data-haze="veil" 为软圆角矩形 + 毛绒雾边；无边框无高光，文字颜色跟随纸色语义
    模糊半径、饱和度、alpha 全部来自 tokens.css 的 --glass-*；圆角、尺寸、入退场留给组件。
+   Aero 的观感不来自大模糊：blur 只有 3px，玻璃透过去要能看见后面窗口的轮廓——糊成一片
+   是 iOS 毛玻璃的路子；厚度边、光泽与文字光晕由新增的 --glass-rim/-lip/-sheen-1..3/-text-glow 提供。
    液态感只用静态 gradient 与 box-shadow 实现，没有折射、没有每帧成本。
    出生规则见 references/anti-patterns.md「Glass surface born on the wrong frame」。 */
 
@@ -39,12 +65,18 @@
 }
 
 [data-glass='chrome'] {
-  background: color-mix(
-    in srgb,
-    var(--color-paper) var(--glass-surface-opacity),
-    transparent
-  );
-  box-shadow: 0 1px 0 var(--color-border);
+  background:
+    linear-gradient(
+      to bottom,
+      var(--glass-sheen-1) 0,
+      var(--glass-sheen-2) 45%,
+      var(--glass-sheen-3) 100%
+    ),
+    color-mix(in srgb, var(--color-paper) var(--glass-surface-opacity), transparent);
+  box-shadow:
+    inset 0 1px 0 var(--glass-lip),
+    0 1px 0 var(--color-border);
+  text-shadow: var(--glass-text-glow);
 }
 
 /* 滚动渐显：以最近的滚动容器为时间轴，在 --rk-glass-reveal 内从透明插值到自身材质。
@@ -72,29 +104,55 @@
 
 [data-glass='panel'] {
   background:
-    radial-gradient(
-      120% 90% at 18% 0%,
-      color-mix(in srgb, var(--glass-highlight) 55%, transparent),
-      transparent 62%
+    linear-gradient(
+      to bottom,
+      var(--glass-sheen-1) 0,
+      var(--glass-sheen-2) 45%,
+      var(--glass-sheen-3) 100%
     ),
     color-mix(in srgb, var(--color-paper) var(--glass-panel-opacity), transparent);
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--glass-rim);
   box-shadow:
-    inset 0 1px 0 var(--glass-highlight),
-    var(--shadow-whisper);
+    inset 0 0 0 1px var(--glass-rim-inner),
+    inset 0 1.5px 0 var(--glass-lip),
+    inset 0 -1.5px 0 var(--glass-lip-under),
+    inset 1px 0 0 var(--glass-side),
+    inset -1px 0 0 var(--glass-side),
+    inset 0 0 18px var(--glass-bloom),
+    var(--glass-lift);
+  text-shadow: var(--glass-text-glow);
 }
 
 [data-glass='inverse'] {
-  background: color-mix(
-    in srgb,
-    var(--color-neutral-10) var(--glass-panel-opacity),
-    transparent
-  );
+  background:
+    linear-gradient(
+      to bottom,
+      color-mix(in srgb, var(--color-neutral-1) 13%, transparent) 0,
+      color-mix(in srgb, var(--color-neutral-1) 5%, transparent) 45%,
+      color-mix(in srgb, var(--color-neutral-10) 5%, transparent) 100%
+    ),
+    color-mix(in srgb, var(--color-neutral-10) var(--glass-panel-opacity), transparent);
   color: var(--color-neutral-1);
-  border: 1px solid color-mix(in srgb, var(--color-neutral-1) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-neutral-1) 20%, transparent);
   box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--color-neutral-1) 12%, transparent),
-    var(--shadow-whisper);
+    inset 0 0 0 1px color-mix(in srgb, var(--color-neutral-10) 22%, transparent),
+    inset 0 1.5px 0 color-mix(in srgb, var(--color-neutral-1) 34%, transparent),
+    inset 0 -1.5px 0 color-mix(in srgb, var(--color-neutral-1) 10%, transparent),
+    inset 1px 0 0 color-mix(in srgb, var(--color-neutral-1) 9%, transparent),
+    inset -1px 0 0 color-mix(in srgb, var(--color-neutral-1) 9%, transparent),
+    inset 0 0 18px color-mix(in srgb, var(--color-neutral-1) 5%, transparent),
+    var(--glass-lift);
+}
+
+/* text-shadow 是继承属性，挂在 panel / chrome 上会传给全部后代文字——这是故意的：
+   玻璃上的每一行字都压在壁纸上，都需要光晕。但等宽字体加光晕会明显发糊，而 Markdown 渲染出的
+   行内代码无法预先知道位置，所以材质自己免除 code / pre / kbd / samp 的光晕
+   （:where() 特异性为 0，不会跟消费方自己的 text-shadow 打架）；
+   其余特殊场景（如原邮件容器）由消费方挂 data-glass-text="off" 手动关。 */
+[data-glass-text='off'],
+[data-glass-text='off'] *,
+[data-glass] :where(code, pre, kbd, samp) {
+  text-shadow: none;
 }
 
 /* 雾。雾是什么：文字块身后一团边缘消散、不会戛然而止的东西。有两种形态：
@@ -208,7 +266,8 @@
   -webkit-mask-composite: source-over;
 }
 
-/* 退化：不支持 backdrop-filter，或用户要求降低透明度时，改为不透明底，保留高光与阴影。 */
+/* 退化：不支持 backdrop-filter，或用户要求降低透明度时，改为不透明底；
+   厚度边（border）、光泽与阴影保留——玻璃没了，边缘与光泽仍是这套材质的识别特征。 */
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   /* 渐显规则的选择器是两个属性（0,2,0），退化块里必须用同等特异性才能关掉动画，
      否则 keyframe 会把透明底与 blur(0) 写回来，渲染表面白白常驻。 */
@@ -217,21 +276,36 @@
   }
 
   [data-glass='chrome'] {
-    background: var(--color-paper);
+    background:
+      linear-gradient(
+        to bottom,
+        var(--glass-sheen-1) 0,
+        var(--glass-sheen-2) 45%,
+        var(--glass-sheen-3) 100%
+      ),
+      var(--color-paper);
   }
 
   [data-glass='panel'] {
     background:
-      radial-gradient(
-        120% 90% at 18% 0%,
-        color-mix(in srgb, var(--glass-highlight) 55%, transparent),
-        transparent 62%
+      linear-gradient(
+        to bottom,
+        var(--glass-sheen-1) 0,
+        var(--glass-sheen-2) 45%,
+        var(--glass-sheen-3) 100%
       ),
       var(--color-paper);
   }
 
   [data-glass='inverse'] {
-    background: var(--color-neutral-10);
+    background:
+      linear-gradient(
+        to bottom,
+        color-mix(in srgb, var(--color-neutral-1) 13%, transparent) 0,
+        color-mix(in srgb, var(--color-neutral-1) 5%, transparent) 45%,
+        color-mix(in srgb, var(--color-neutral-10) 5%, transparent) 100%
+      ),
+      var(--color-neutral-10);
   }
 
   [data-glass='haze']::before {
@@ -261,20 +335,42 @@
   }
 
   [data-glass='chrome'] {
-    background: var(--color-paper);
+    background:
+      linear-gradient(
+        to bottom,
+        var(--glass-sheen-1) 0,
+        var(--glass-sheen-2) 45%,
+        var(--glass-sheen-3) 100%
+      ),
+      var(--color-paper);
   }
 
   [data-glass='panel'] {
     background:
-      radial-gradient(
-        120% 90% at 18% 0%,
-        color-mix(in srgb, var(--glass-highlight) 55%, transparent),
-        transparent 62%
+      linear-gradient(
+        to bottom,
+        var(--glass-sheen-1) 0,
+        var(--glass-sheen-2) 45%,
+        var(--glass-sheen-3) 100%
       ),
       var(--color-paper);
   }
 
   [data-glass='inverse'] {
-    background: var(--color-neutral-10);
+    background:
+      linear-gradient(
+        to bottom,
+        color-mix(in srgb, var(--color-neutral-1) 13%, transparent) 0,
+        color-mix(in srgb, var(--color-neutral-1) 5%, transparent) 45%,
+        color-mix(in srgb, var(--color-neutral-10) 5%, transparent) 100%
+      ),
+      var(--color-neutral-10);
+  }
+
+  /* 要求减少透明度的用户通常也不需要文字光晕，不透明底已把对比度拉满。 */
+  [data-glass='panel'],
+  [data-glass='chrome'],
+  [data-glass='inverse'] {
+    text-shadow: none;
   }
 }

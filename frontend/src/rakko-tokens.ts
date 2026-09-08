@@ -78,11 +78,15 @@ export const TYPE_SCALE: Record<
   'title-28': { size: 28, lineHeight: 1.29 },
 };
 
-/** 圆角（px）：chip 4、默认 6、卡片 8、对话框 12 */
+/** 圆角（px）：chip 4、base 6、card 6、dialog 12。
+ * card 这一档同时供列表行玻璃（lib/surface.ts）、右键菜单（RowContextMenu）与 MuiCard
+ * 取用，三处是同一个视觉语汇，一起从 8 降到 6 是刻意的：浅色主题的玻璃边缘对比加强后，
+ * 8px 的方角与玻璃的柔和质感冲突；6px（= RADIUS.base）更利落，与 Rakko Design 的
+ * 克制圆角一致。 */
 export const RADIUS = {
   chip: 4,
   base: 6,
-  card: 8,
+  card: 6,
   dialog: 12,
 } as const;
 
@@ -119,12 +123,59 @@ export const WHISPER_SHADOW = '0 1px 2px rgba(20, 19, 18, 0.06)';
 export const GLASS = {
   blur: '3px',
   saturate: '193%',
-  surfaceOpacity: '45%',
+  // chrome 是四档里最透的，压在它上面的是 12px/500 的底栏导航标签。实测（真实中文字形 +
+  // 反相光晕，文字色 n9，取最差点）：浅色主题下 45% 时三张实测壁纸有两张够不到 AA 4.5，
+  // 彩色天空只有 3.80；52% 是全部过线的最小值（4.62–5.45），且 45% 与 52% 的顶栏通透度
+  // 截图对比无可见差别（与上游 Rakko Design 同步，原 45%）。
+  surfaceOpacity: '52%',
   panelOpacity: '58%',
   scrimOpacity: '34%',
   highlight: 'rgba(255, 255, 255, 0.59)',
-  hazeOpacity: '51%',
+  // haze 纸色 55%（与上游 Rakko Design 同步，原 51%）：12px/600 的分组标题压在 haze 上，
+  // 51% 时在三张实测壁纸中最低只有 3.96（彩色天空），够不到 WCAG AA 4.5；55% 是全部过线
+  // 的最小值（4.53–4.98），且 51% 与 55% 的雾浓淡在真实版面上无可见差别。
+  hazeOpacity: '55%',
   hazeBleed: '28px',
+} as const;
+
+/** Aero 玻璃的十一个新增 token（镜像上游 tokens.css 的 --glass-rim … --glass-text-glow）。
+ * 键名 camelCase，与 CSS 变量一一对应：rim→--glass-rim、rimInner→--glass-rim-inner、
+ * lip→--glass-lip、lipUnder→--glass-lip-under、side→--glass-side、bloom→--glass-bloom、
+ * sheen1…sheen3→--glass-sheen-1…3、lift→--glass-lift、textGlow→--glass-text-glow。
+ * 旧光泽的尾段键已删除（两个主题都删）：光泽改版后是上白下暗的三段（sheen-1 → sheen-2 45% →
+ * sheen-3 100%），sheen-3 的语义是「底部的暗」——取代了旧版 46/47% 的陡变 + 四段尾键。
+ * 浅色必须显式给暗：浅色是白纸底 + 白高光（rim/lip/side/bloom 全白）+ 白光泽（sheen-1/2），
+ * 三层全白时通篇没有暗的一侧，卡片边界会溶进亮壁纸；所以 sheen-3 与 rim-inner 的暗段是浅色
+ * 立体感的来源，写成白色就退回「无暗侧」的老问题。
+ * 深色那套不是浅色的简单缩放，是重新定的档位；textGlow 的反相（深色用黑光晕）是硬约束：
+ * 深底沿用白光晕会让亮色正文与光晕同色，对比度从 4.69 崩到 1.07（等于看不见）。 */
+export const GLASS_AERO = {
+  light: {
+    rim: 'rgba(255, 255, 255, 0.58)',
+    rimInner: 'rgba(0, 0, 0, 0.14)',
+    lip: 'rgba(255, 255, 255, 0.6)',
+    lipUnder: 'rgba(255, 255, 255, 0.22)',
+    side: 'rgba(255, 255, 255, 0.26)',
+    bloom: 'rgba(255, 255, 255, 0.15)',
+    sheen1: 'rgba(255, 255, 255, 0.34)',
+    sheen2: 'rgba(255, 255, 255, 0.1)',
+    sheen3: 'rgba(0, 0, 0, 0.035)',
+    lift: '0 1px 2px rgba(0, 0, 0, 0.07), 0 6px 18px rgba(0, 0, 0, 0.1)',
+    textGlow: '0 0 2px rgba(255, 255, 255, 0.5), 0 0 6px rgba(255, 255, 255, 0.5)',
+  },
+  dark: {
+    rim: 'rgba(255, 255, 255, 0.2)',
+    rimInner: 'rgba(0, 0, 0, 0.22)',
+    lip: 'rgba(255, 255, 255, 0.24)',
+    lipUnder: 'rgba(255, 255, 255, 0.08)',
+    side: 'rgba(255, 255, 255, 0.09)',
+    bloom: 'rgba(255, 255, 255, 0.05)',
+    sheen1: 'rgba(255, 255, 255, 0.13)',
+    sheen2: 'rgba(255, 255, 255, 0.05)',
+    sheen3: 'rgba(0, 0, 0, 0.05)',
+    lift: '0 1px 2px rgba(0, 0, 0, 0.3), 0 6px 18px rgba(0, 0, 0, 0.34)',
+    textGlow: '0 0 2px rgba(0, 0, 0, 0.5), 0 0 6px rgba(0, 0, 0, 0.5)',
+  },
 } as const;
 
 /** 玻璃面板的 whisper 阴影（上游 --shadow-whisper）；深色主题按契约加深一档。

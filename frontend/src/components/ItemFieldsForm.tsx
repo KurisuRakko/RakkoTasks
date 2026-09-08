@@ -1,5 +1,6 @@
-// ItemFieldsForm：条目字段区的可复用受控表单（多行文本 + 分类 chip 单选 + 原生
-// date input + 条件显示的清除按钮 + 提醒行编辑区）。该区块原为 ItemEditor 的内部
+// ItemFieldsForm：条目字段区的可复用受控表单（多行文本 + 分类 chip 单选 + 重要度
+// chip 单选 + 原生 date input + 条件显示的清除按钮 + 提醒行编辑区）。该区块原为
+// ItemEditor 的内部
 // JSX，抽成组件后由 ItemEditor（手填）与 AiAddDialog（AI 解析预览）共用，保证两处
 // DOM 结构、className、aria 语义与文案完全一致——DOM 与文案任何改动都会同时打碎
 // 两方的测试。
@@ -33,7 +34,16 @@ import type { Ref } from 'react';
 import { useState } from 'react';
 import { fromDatetimeLocalValue, toDatetimeLocalValue } from '../lib/time';
 import { CATEGORIES, DEFAULT_REMIND_HOUR, REMINDERS_MAX } from '../types';
-import type { Category } from '../types';
+import type { Category, Importance } from '../types';
+
+/** 重要度三档（与列表页/分组口径一致：high 的文案是「重要」）。low 是数据模型里
+ *  真实存在、AI 会产出的档位，三档都要给——只做两档会让「打开一条 low 条目原样
+ *  保存」把 low 静默改成 normal（数据损坏）。 */
+const IMPORTANCE_OPTIONS: readonly { value: Importance; label: string }[] = [
+  { value: 'high', label: '重要' },
+  { value: 'normal', label: '普通' },
+  { value: 'low', label: '次要' },
+];
 
 /** 明天 DEFAULT_REMIND_HOUR 点的本地墙上时刻串（datetime-local 的 value 形态）。
  * 不能用 toISOString()（那是 UTC 墙上时刻），按本地分量手拼。 */
@@ -51,6 +61,12 @@ export interface ItemFieldsFormProps {
   onTextChange: (next: string) => void;
   category: Category;
   onCategoryChange: (next: Category) => void;
+  /**
+   * 重要度三档（必传，不做 reminders 那样的可选过渡）：两个使用方（ItemEditor /
+   * AiAddDialog）从一开始就都要接，做成必传让 TypeScript 强制接上，不会漏。
+   */
+  importance: Importance;
+  onImportanceChange: (next: Importance) => void;
   /** YYYY-MM-DD，空串表示无日期 */
   date: string;
   onDateChange: (next: string) => void;
@@ -76,6 +92,8 @@ export default function ItemFieldsForm({
   onTextChange,
   category,
   onCategoryChange,
+  importance,
+  onImportanceChange,
   date,
   onDateChange,
   invalid,
@@ -157,6 +175,27 @@ export default function ItemFieldsForm({
             onClick={() => onCategoryChange(c)}
             role="radio"
             aria-checked={category === c}
+          />
+        ))}
+      </Stack>
+      {/* 重要度：与分类同款三档 chip 单选（radiogroup/radio 语义），数据源换
+          成 IMPORTANCE_OPTIONS。位置在分类之后、截止日期之前。 */}
+      <Stack
+        direction="row"
+        spacing={1}
+        role="radiogroup"
+        aria-label="重要度"
+        sx={{ mt: 1.5, flexWrap: 'wrap' }}
+      >
+        {IMPORTANCE_OPTIONS.map((opt) => (
+          <Chip
+            key={opt.value}
+            label={opt.label}
+            variant={importance === opt.value ? 'filled' : 'outlined'}
+            color="primary"
+            onClick={() => onImportanceChange(opt.value)}
+            role="radio"
+            aria-checked={importance === opt.value}
           />
         ))}
       </Stack>

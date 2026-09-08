@@ -216,7 +216,8 @@ describe('非速记模式：真实对话框 × 真实页面闭环', () => {
         fetchMock.mock.calls.some(([u, init]) => init?.method === 'POST' && u === '/api/items'),
       ).toBe(true);
     });
-    // 用户没有编辑 importance/actionable 的控件：透传 AI 判断（high / false），不被用户改动污染
+    // 用户没有动重要度（fields 阶段有 chip 控件、默认选中 AI 给的档位）：
+    // 透传 AI 判断（high / false），不被用户改动污染；actionable 无编辑控件，同样透传
     expect(JSON.parse(String(findPost(fetchMock, '/api/items').body))).toEqual({
       title: '自己修空调',
       summary: '去五金店买配件',

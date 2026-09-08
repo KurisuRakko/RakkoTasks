@@ -91,7 +91,13 @@ function DoneRow({
         <ListItemText
           primary={item.title}
           secondary={item.summary}
-          secondaryTypographyProps={{ noWrap: true }}
+          // 摘要压在自己的 data-glass="panel" 行玻璃上（纸色 58% 仍透壁纸）：MUI
+          // 默认的 text.secondary（n7）实测对比度只有 2.4–2.6，AA 正文要 ≥4.5——
+          // 玻璃上没有次级色空间，层级靠字号字重区分，摘要必须用 text.primary（n9）
+          secondaryTypographyProps={{
+            noWrap: true,
+            color: 'text.primary',
+          }}
           sx={{ textDecoration: 'line-through', color: 'text.disabled' }}
         />
       </ListItemButton>

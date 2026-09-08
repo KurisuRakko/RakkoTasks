@@ -209,14 +209,19 @@ describe('ItemDialog 手动条目（email_id 为 null）', () => {
     expect(calls.some((u) => u.includes('/emails/'))).toBe(false);
   });
 
-  it('邮件条目（email_id 非 null）不出现编辑/删除按钮', async () => {
-    vi.stubGlobal('fetch', makeFetchMock());
+  it('手动条目（email_id 为 null）的编辑与删除按钮都在（原有行为不变）', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (_url: string | URL) => json({}, 404)));
 
-    render(<ItemDialog item={makeItem({})} onClose={vi.fn()} />);
-    await screen.findByText('退款来源');
+    render(
+      <ItemDialog
+        item={makeItem({ id: 7, email_id: null, title: '手动任务' })}
+        onClose={vi.fn()}
+      />,
+    );
+    await screen.findByText('手动任务');
 
-    expect(screen.queryByRole('button', { name: '编辑' })).toBeNull();
-    expect(screen.queryByRole('button', { name: '删除' })).toBeNull();
+    expect(screen.getByRole('button', { name: '编辑' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '删除' })).toBeTruthy();
   });
 
   it('删除：确认框点「删除」后 DELETE /api/items/{id}，onDeleted 收到 id、onClose 被调', async () => {
@@ -249,6 +254,89 @@ describe('ItemDialog 手动条目（email_id 为 null）', () => {
       expect(fetchMock.mock.calls.some(([, init]) => init?.method === 'DELETE')).toBe(true);
       expect(onDeleted).toHaveBeenCalledWith(7);
       expect(onClose).toHaveBeenCalled();
+    });
+  });
+});
+
+describe('ItemDialog 邮件条目的编辑放开', () => {
+  it('邮件条目（email_id 非 null）有「编辑」按钮、无「删除」按钮', async () => {
+    vi.stubGlobal('fetch', makeFetchMock());
+
+    render(<ItemDialog item={makeItem({})} onClose={vi.fn()} />);
+    await screen.findByText('退款来源');
+
+    // 编辑入口对所有条目渲染
+    expect(screen.getByRole('button', { name: '编辑' })).toBeTruthy();
+    // 回归保护：删除按钮仍然只对手动条目显示（后端对邮件条目仍拒删）
+    expect(screen.queryByRole('button', { name: '删除' })).toBeNull();
+  });
+
+  it('打开 low 邮件条目的编辑器：重要度控件选中「次要」，不退回默认「普通」', async () => {
+    vi.stubGlobal('fetch', makeFetchMock());
+
+    render(
+      <ItemDialog
+        item={makeItem({ id: 3, importance: 'low', title: '低优先邮件任务' })}
+        onClose={vi.fn()}
+      />,
+    );
+    await screen.findByText('退款来源');
+
+    fireEvent.click(screen.getByRole('button', { name: '编辑' }));
+    await screen.findByLabelText('任务内容');
+
+    // initial 载荷带 current.importance：AI 判的 low 显示在控件上（选中「次要」）
+    expect(screen.getByRole('radio', { name: '次要' })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByRole('radio', { name: '普通' })).toHaveAttribute('aria-checked', 'false');
+    expect(screen.getByRole('radio', { name: '重要' })).toHaveAttribute('aria-checked', 'false');
+  });
+
+  it('邮件条目编辑器点「重要」保存：PATCH /api/items/{id} 载荷 importance 为 high', async () => {
+    const fetchMock = vi.fn(async (url: string | URL, init?: RequestInit) => {
+      const u = String(url);
+      if (init?.method === 'PATCH' && u === '/api/items/1') {
+        return json(makeItem({ importance: 'high' }));
+      }
+      if (u.includes('/detail')) return json(DETAIL_RESPONSE);
+      if (u.includes('/emails/')) {
+        return json({
+          id: 9,
+          account_id: 1,
+          subject: '邮件主题',
+          sender: 'a@b',
+          recipients: null,
+          sent_at: '2026-08-01T00:00:00',
+          text_body: '邮件正文',
+          html: null,
+        });
+      }
+      if (u.includes('/status')) return json({ accounts: [], pending_llm: 0 });
+      return json({}, 404);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(
+      <ItemDialog
+        item={makeItem({ id: 1, importance: 'low', title: '修打印机' })}
+        onClose={vi.fn()}
+      />,
+    );
+    await screen.findByText('退款来源');
+
+    fireEvent.click(screen.getByRole('button', { name: '编辑' }));
+    await screen.findByLabelText('任务内容');
+    fireEvent.click(screen.getByRole('radio', { name: '重要' }));
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+
+    await waitFor(() => {
+      const patchCall = fetchMock.mock.calls.find(
+        ([url, init]) =>
+          String(url) === '/api/items/1' &&
+          (init as RequestInit | undefined)?.method === 'PATCH',
+      );
+      expect(patchCall).toBeDefined();
+      const body = JSON.parse(String((patchCall![1] as RequestInit).body));
+      expect(body.importance).toBe('high');
     });
   });
 });

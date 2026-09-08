@@ -19,7 +19,7 @@ import {
   fromDatetimeLocalValue,
   toDatetimeLocalValue,
 } from '../src/lib/time';
-import type { Category, Item, ItemFields, ParsedTask, Reminder } from '../src/types';
+import type { Category, Importance, Item, ItemFields, ParsedTask, Reminder } from '../src/types';
 
 /** 本地墙上时刻串 → 带偏移 ISO；测试自检：非法输入直接抛，不静默放过 */
 function remind(wall: string): string {
@@ -80,6 +80,8 @@ function renderForm(opts: {
   const props = {
     text: '买牛奶',
     category: '个人' as Category,
+    importance: 'normal' as Importance,
+    onImportanceChange: vi.fn<(next: Importance) => void>(),
     date: '',
     invalid: false,
     helper: '',
