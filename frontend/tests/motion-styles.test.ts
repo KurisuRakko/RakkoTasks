@@ -139,22 +139,38 @@ describe('壳层与 FAB 的持名时机', () => {
   });
 });
 
-describe('壳层与遮罩的交叉淡化', () => {
+describe('壳层换页 fade-through 与遮罩节奏', () => {
   const styles = viewTransitionStyles(createTheme()) as Styles;
 
-  it('换页壳层不再顺序淡化：rtk-vt-fade 动画的键都不含 route-', () => {
-    const fadeKeys = Object.keys(styles).filter((k) => {
-      const rule = styles[k] as Rule;
-      return typeof rule?.animation === 'string' && rule.animation.startsWith('rtk-vt-fade');
-    });
-    // 淡化规则仍服务于容器变换（expand / collapse），只是不再落到换页壳层上
-    expect(fadeKeys.length).toBeGreaterThan(0);
-    for (const key of fadeKeys) {
-      expect(key).not.toContain('route-');
-    }
+  it('换页壳层走 fade-through：旧/新快照各自带 fadeOut / fadeIn 动画与正确延迟', () => {
+    const oldKey = findKey(
+      styles,
+      'route-',
+      '::view-transition-old(',
+      VT_NAMES.appBar,
+      VT_NAMES.bottomNav,
+      VT_NAMES.navDrawer,
+    );
+    const oldRule = ruleValue(styles, oldKey);
+    // 旧快照：fadeOut，时长 fadeOut（90ms），无延迟
+    expect(oldRule.animation).toContain('rtk-vt-fade-out');
+    expect(oldRule.animation).toContain(`${MOTION.fadeOut}ms`);
+    const newKey = findKey(
+      styles,
+      'route-',
+      '::view-transition-new(',
+      VT_NAMES.appBar,
+      VT_NAMES.bottomNav,
+      VT_NAMES.navDrawer,
+    );
+    const newRule = ruleValue(styles, newKey);
+    // 新快照：fadeIn，时长 large - fadeOut（210ms），延迟 fadeOut（90ms）后才进场
+    expect(newRule.animation).toContain('rtk-vt-fade-in');
+    expect(newRule.animation).toContain(`${MOTION.large - MOTION.fadeOut}ms`);
+    expect(newRule.animation).toContain(`${MOTION.fadeOut}ms both`); // delay 后紧跟 both，与时长区分
   });
 
-  it('换页壳层的交叉淡化节奏对齐内容轴移：壳层三件套共用 group 规则，large + ease', () => {
+  it('壳层三件套共用 group 规则：时长对齐 large + ease，并关掉 UA 的 plus-lighter 混合', () => {
     const key = findKey(
       styles,
       'route-',
@@ -166,6 +182,8 @@ describe('壳层与遮罩的交叉淡化', () => {
     const rule = ruleValue(styles, key);
     expect(rule.animationDuration).toBe(`${MOTION.large}ms`);
     expect(rule.animationTimingFunction).toBe(MOTION.easeStandard);
+    // 玻璃化后壳层半透明，不关掉 plus-lighter 新旧快照会加色叠加泛白
+    expect(rule.mixBlendMode).toBe('normal');
   });
 
   it('遮罩交叉淡化节奏：group(root) 时长 expand 用 large、collapse 用 largeExit', () => {

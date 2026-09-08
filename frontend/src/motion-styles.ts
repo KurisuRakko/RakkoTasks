@@ -136,8 +136,8 @@ export function viewTransitionStyles(theme: Theme): Record<string, unknown> {
       to: { backgroundColor: theme.palette.primary.main },
     },
 
-    // (b) 持名时机：壳层与 FAB 只在换页（route-*）时持有 view-transition-name，各自成组
-    // 交叉淡化；打开/关闭详情（expand / collapse）一律不持名、留在 root 快照里——单独成组
+    // (b) 持名时机：壳层与 FAB 只在换页（route-*）时持有 view-transition-name，各自成组、
+    // 按 fade-through 时序淡化（壳层见段 (d)、FAB 见段 (e)）；打开/关闭详情（expand / collapse）一律不持名、留在 root 快照里——单独成组
     // 会画在 root 之上，转场期间不被 Dialog 遮罩压暗，直到转场结束切回真实 DOM 的瞬间才被
     // 盖住，看起来就是遮罩「闪一下」。FAB 另在 expand-fab / collapse-fab（自己形变）时持名。
     // view-transition-name 在 startViewTransition 拍旧快照前已生效：接线层先写 data-vt 方向
@@ -166,17 +166,35 @@ export function viewTransitionStyles(theme: Theme): Record<string, unknown> {
       animation: `${KF.axisInBack} ${MOTION.large}ms ${ease} both`,
     },
 
-    // (d) 换页时壳层的交叉淡化：壳层前后两态几乎一样（只有标题文字 / 选中态在变），保留
-    // UA 默认的 plus-lighter 交叉淡化——相同像素完全静止，变化像素平滑过渡，不该再安排
-    // 「先 90ms 淡出、再淡入」的顺序淡化（那会让壳层中途全透明，整屏闪成底色）。这里只把
-    // group 的时长从 UA 默认 250ms 对齐到内容轴移的 large，各壳层的旧/新快照动画时长随
-    // 自己的 group 继承，交叉淡化的节奏与内容轴移一致。
+    // (d) 换页时壳层的 fade-through。玻璃化（data-glass="chrome"）之后壳层是半透明的，
+    // 不能再保留 UA 默认的 plus-lighter 交叉淡化——那是加色混合，新旧两层半透明玻璃快照
+    // 叠加时重叠像素相加变亮（实测中间帧卡片泛白发亮、文字重影发灰、顶栏两个标题糊在
+    // 一起）。所以壳层与内容轴同型改走 fade-through：旧快照先 fadeOut 90ms 淡完、新快照
+    // 等 90ms 后才 fadeIn 淡入，中途壳层全透明、整屏只剩壁纸——在有壁纸的产品里这正是
+    // 刻意要的效果，不是缺陷。时序与内容轴一致：group 时长仍对齐内容轴移的 large；UA 的
+    // plus-lighter 混合也必须显式关掉（mixBlendMode: normal），否则旧/新快照仍会加色
+    // 合成，只改动画泛白还会在。
     [`:root[data-vt^="route-"]${vtPseudo('group', appBar)},
       :root[data-vt^="route-"]${vtPseudo('group', bottomNav)},
       :root[data-vt^="route-"]${vtPseudo('group', navDrawer)}`]:
       {
         animationDuration: `${MOTION.large}ms`,
         animationTimingFunction: ease,
+        mixBlendMode: 'normal',
+      },
+    // 旧快照：与段 (e) 的 FAB 同型，90ms 淡出、无延迟
+    [`:root[data-vt^="route-"]${vtPseudo('old', appBar)},
+      :root[data-vt^="route-"]${vtPseudo('old', bottomNav)},
+      :root[data-vt^="route-"]${vtPseudo('old', navDrawer)}`]:
+      {
+        animation: `${KF.fadeOut} ${MOTION.fadeOut}ms ${ease} both`,
+      },
+    // 新快照：延迟 fadeOut 后淡入（时长 = large - fadeOut），先让壁纸露 90ms
+    [`:root[data-vt^="route-"]${vtPseudo('new', appBar)},
+      :root[data-vt^="route-"]${vtPseudo('new', bottomNav)},
+      :root[data-vt^="route-"]${vtPseudo('new', navDrawer)}`]:
+      {
+        animation: `${KF.fadeIn} ${MOTION.large - MOTION.fadeOut}ms ${ease} ${MOTION.fadeOut}ms both`,
       },
 
     // (e) FAB 只存在于一侧时用 :only-child 命中，同样按 fade-through 时序
