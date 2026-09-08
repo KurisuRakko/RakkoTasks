@@ -98,7 +98,8 @@ describe('TasksPage 重要度标记', () => {
     expect(highRow).not.toBeNull();
     expect(within(highRow!).getAllByText('重要').length).toBeGreaterThan(0);
 
-    // 标签成组：行内「重要」Chip 收在横向 Stack 里（整组不被长标题挤压）
+    // 标签成组：行内「重要」Chip 收在横向 Stack 里；Stack 独占两段 grid 的第二行
+    // （grid-area: chips），不与标题同排——布局细节断言见「列表行两段布局」describe
     const chip = within(highRow!).getAllByText('重要')[0];
     expect(chip.closest('.MuiStack-root')).not.toBeNull();
 
@@ -317,6 +318,60 @@ describe('列表行玻璃视觉（cardRowSx）', () => {
     // color-mix 的计算结果（那是浏览器渲染层的事），这里只断言「sx 确实应用到了行」；
     // 材质本身由 data-glass="panel" 从 rakko-glass.css 取。
     expect(rowBtn.className).toMatch(/(?:^|\s)css-[A-Za-z0-9_-]+/);
+  });
+});
+
+describe('列表行两段布局（chips 不再挤压标题）', () => {
+  // jsdom 给不出 grid 布局的可靠 computed 值，布局断言走 emotion 规则文本：
+  // sx 经 emotion 编译成 css-* 类规则插入 <style>，可逐字断言（utils 文件头说明）。
+  // 行按钮的 sx 是数组（cardRowSx + 行布局对象），保险起见把元素上全部 css-* 类
+  // 的规则都拼起来再查，不赌 emotion 合并成一个类。
+
+  /** 元素身上全部 css-* 局部类对应规则块的拼接 */
+  function ownRules(css: string, el: Element): string {
+    return Array.from(el.classList)
+      .filter((c) => c.startsWith('css-'))
+      .map((c) => {
+        const start = css.indexOf(`.${c}{`);
+        if (start < 0) return '';
+        const end = css.indexOf('}', start);
+        return end < 0 ? '' : css.slice(start, end);
+      })
+      .join(' ');
+  }
+
+  it('行按钮是两段 grid：勾选/文本一行、chips 独占第二行（grid-template-areas）', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => json({ items: ITEMS })));
+    render(<TasksPage />);
+    await screen.findByText('重要任务');
+
+    const rowBtn = screen.getByText('重要任务').closest(
+      '.MuiListItemButton-root',
+    ) as HTMLElement;
+    const rule = ownRules(allStyleText(), rowBtn);
+    expect(rule, '行内改为 grid，不再是单行 flex').toContain('display:grid');
+    expect(rule, '列 = 蓝点 12px / 勾选 auto / 文本 1fr').toContain(
+      'grid-template-columns:12px auto 1fr',
+    );
+    expect(rule, '两段行区：第一行 dot/cb/text，第二行 chips').toContain(
+      'grid-template-areas:"dot cb text" ". . chips"',
+    );
+  });
+
+  it('chips Stack 挂 gridArea: chips、可换行，且不再带 flexShrink: 0 与 ml', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => json({ items: ITEMS })));
+    render(<TasksPage />);
+    await screen.findByText('重要任务');
+
+    const highRow = screen.getByText('重要任务').closest('li') as HTMLElement;
+    const chip = within(highRow).getAllByText('重要')[0];
+    const stack = chip.closest('.MuiStack-root') as HTMLElement;
+    expect(stack).not.toBeNull();
+    const rule = ownRules(allStyleText(), stack);
+    expect(rule, 'chips 落在两段 grid 的第二行区域').toContain('grid-area:chips');
+    expect(rule, 'chips 行内放不下时可换行').toContain('flex-wrap:wrap');
+    expect(rule, '已挪到独立行，不再需要 flexShrink: 0 护宽').not.toContain('flex-shrink');
+    expect(rule, '独占一行从行首排，不再用 ml 贴文本列').not.toContain('margin-left');
   });
 });
 
