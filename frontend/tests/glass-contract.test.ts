@@ -154,11 +154,11 @@ describe('变量下发守卫', () => {
   it('4e. rakko-glass.css 消费的每个 CSS 变量都能在 theme.ts 里找到下发', async () => {
     const glassCss = (await loadFs()).readFileSync('src/rakko-glass.css', 'utf-8');
 
-    // 任务书 3a 的 :root 下发清单（原 14 键）+ Aero 化新增的 12 个（--glass-rim …
-    // --glass-text-glow），共 26 键，逐字断言。css 实际消费的非 --rk- 变量为 23 个；
-    // --glass-scrim-opacity（主题层 MuiBackdrop 消费）、--glass-highlight（新配方已不消费，
-    // 主题层仍下发）与 --shadow-whisper（haze 等场景仍用）不在玻璃样式表里，
-    // 故总下发数比 css 消费数多 3。
+    // 任务书 3a 的 :root 下发清单（原 14 键）+ Aero 化新增的 11 个（--glass-rim …
+    // --glass-text-glow，--glass-sheen-4 已随三段光泽改版删除），共 25 键，逐字断言。
+    // css 实际消费的非 --rk- 变量为 22 个；--glass-scrim-opacity（主题层 MuiBackdrop 消费）、
+    // --glass-highlight（新配方已不消费，主题层仍下发）与 --shadow-whisper（haze 等场景仍用）
+    // 不在玻璃样式表里，故总下发数比 css 消费数多 3。
     const providedByTheme = [
       '--color-paper',
       '--color-border',
@@ -182,7 +182,6 @@ describe('变量下发守卫', () => {
       '--glass-sheen-1',
       '--glass-sheen-2',
       '--glass-sheen-3',
-      '--glass-sheen-4',
       '--glass-lift',
       '--glass-text-glow',
       '--shadow-whisper',
@@ -220,13 +219,37 @@ describe('Aero 玻璃配方契约（新材质接线）', () => {
     expect(panel).not.toContain('--glass-highlight');
   });
 
-  it('5b. chrome 配方保留 radial，但换成 Aero 弧光，并带文字光晕', async () => {
+  it('5b. chrome 与 panel 共用同一线性光泽，chrome 不再用 radial 弧光', async () => {
     const glassCss = (await loadFs()).readFileSync('src/rakko-glass.css', 'utf-8');
     const chrome = blockOf(glassCss, "[data-glass='chrome'] {");
-    expect(chrome).toContain('ellipse 150% 200% at 14% -74%');
-    expect(chrome).toContain('var(--glass-sheen-1)');
+    const panel = blockOf(glassCss, "[data-glass='panel'] {");
+    // 高光改版：chrome 从左上角 radial 弧光换成与 panel 同款的线性光泽（横贯整条顶栏），
+    // 两档共用同一表达式——都消费 --glass-sheen-1/2/3
+    for (const [name, block] of [
+      ['chrome', chrome],
+      ['panel', panel],
+    ] as const) {
+      expect(block, `${name} 应含线性光泽`).toContain('linear-gradient(');
+      expect(block, `${name} 应消费 sheen-1`).toContain('var(--glass-sheen-1)');
+      expect(block, `${name} 应消费 sheen-2`).toContain('var(--glass-sheen-2)');
+      expect(block, `${name} 应消费 sheen-3`).toContain('var(--glass-sheen-3)');
+    }
+    expect(chrome, 'chrome 不应再含 radial-gradient（弧光已弃）').not.toContain('radial-gradient');
     expect(chrome).toContain('--glass-lip');
     expect(chrome).toContain('--glass-text-glow');
+  });
+
+  it('5b2. 光泽是上亮下暗的三段渐变，不得出现 46%/47% 陡变', async () => {
+    const glassCss = (await loadFs()).readFileSync('src/rakko-glass.css', 'utf-8');
+    // 依据：装饰性分界必须落在真实结构边界上。46%→47% 的陡变在 ~60px 卡片正中切出一道
+    // 硬线，只是噪音；三段收尾（sheen-2 到 45% 收窄、sheen-3 在 100% 处压暗）把分界挪到
+    // 卡片上下缘，反射分界消失。
+    for (const selector of ["[data-glass='chrome'] {", "[data-glass='panel'] {"]) {
+      const block = blockOf(glassCss, selector);
+      expect(block, `${selector} 的 sheen-2 应在 45% 收窄`).toContain('var(--glass-sheen-2) 45%');
+      expect(block, `${selector} 的 sheen-3 应在 100% 压暗收尾`).toContain('var(--glass-sheen-3) 100%');
+      expect(block, `${selector} 不得含 46%/47% 陡变`).not.toMatch(/(?:46|47)%/);
+    }
   });
 
   it('5c. inverse 配方不含 --glass-text-glow（不压在壁纸上，不设文字光晕）', async () => {
@@ -344,6 +367,14 @@ describe('玻璃可读性契约', () => {
     // 对比度从 4.69 崩到 1.07，等于看不见。
     expect(GLASS_AERO.light.textGlow).toContain('255, 255, 255');
     expect(GLASS_AERO.dark.textGlow).toContain('rgba(0, 0, 0');
+  });
+
+  it('sheen3（光泽底部的暗段）两个主题都必须是黑色', () => {
+    // 玻璃要有明暗两端才立体：光泽顶部是白（sheen-1/2），底部必须显式给暗收尾。
+    // 浅色主题尤其如此——白纸底 + 白高光 + 白光泽三层全白时通篇没有暗的一侧，卡片
+    // 边界会溶进亮壁纸；sheen3 若写成白色就退回「浅色无暗侧」的老问题。
+    expect(GLASS_AERO.light.sheen3).toMatch(/rgba\(0, 0, 0/);
+    expect(GLASS_AERO.dark.sheen3).toMatch(/rgba\(0, 0, 0/);
   });
 
   it('两个主题的 textGlow 不相等', () => {

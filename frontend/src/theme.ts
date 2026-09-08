@@ -156,7 +156,6 @@ function buildThemeOptions(mode: Mode): ThemeOptions {
             '--glass-sheen-1': GLASS_AERO[mode].sheen1,
             '--glass-sheen-2': GLASS_AERO[mode].sheen2,
             '--glass-sheen-3': GLASS_AERO[mode].sheen3,
-            '--glass-sheen-4': GLASS_AERO[mode].sheen4,
             '--glass-lift': GLASS_AERO[mode].lift,
             '--glass-text-glow': GLASS_AERO[mode].textGlow,
             '--shadow-whisper': GLASS_SHADOW_WHISPER[mode],
