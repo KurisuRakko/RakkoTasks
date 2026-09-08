@@ -28,9 +28,17 @@ from app.accounts import (
 from app.auth import CurrentUser, require_auth
 from app.config import Settings
 from app.models import Account
+from app.ratelimit import RateLimiter
 
 # 操作日志只记归属与账户标识，绝不记录密码 / token / auth_response
 logger = logging.getLogger("rakkotasks.accounts")
+
+# 每用户滑动窗口限流（次数, 窗口秒）。口径与 api.py 的 LLM 端点一致：超出回
+# 429 {"code": "rate_limited"}。写操作会改库；微软授权那两个更贵——auth-url 每次
+# 都往磁盘写一份 flow 文件、auth-code 直接打微软的 token 端点。GET 列表是纯读，不限。
+# 常量放模块级而不是写死在函数里，测试才能不靠打满真实次数来验。
+WRITE_RATE_LIMIT = (20, 60.0)
+AUTH_RATE_LIMIT = (10, 60.0)
 
 # 校验统一在服务层做（错误码一致）；pydantic 只兜底「非法 JSON / 缺必填字段」，
 # 因此请求体模型不写 max_length 之类约束（那会引入契约外的 422）
@@ -59,9 +67,16 @@ class AuthCodeRequest(BaseModel):
 def register_accounts(app: FastAPI, settings: Settings, get_db) -> None:
     """把账户端点与 AccountError 统一处理器挂到 app 上；get_db 由 api.py 注入。"""
 
+    write_limiter = RateLimiter(*WRITE_RATE_LIMIT)
+    auth_limiter = RateLimiter(*AUTH_RATE_LIMIT)
+
     @app.exception_handler(AccountError)
     async def _account_error_handler(_request, exc: AccountError):
         return JSONResponse(status_code=exc.status, content={"code": exc.code, **exc.extra})
+
+    def _limit(limiter: RateLimiter, user: CurrentUser) -> None:
+        if not limiter.allow(user.sub):
+            raise HTTPException(status_code=429, detail={"code": "rate_limited"})
 
     def _owned_or_404(db: Session, user: CurrentUser, account_id: int) -> Account:
         account = get_owned_account(db, user.sub, account_id)
@@ -82,6 +97,7 @@ def register_accounts(app: FastAPI, settings: Settings, get_db) -> None:
         user: CurrentUser = Depends(require_auth),
         db: Session = Depends(get_db),
     ) -> dict:
+        _limit(write_limiter, user)
         account = add_account(
             db,
             user.sub,
@@ -104,6 +120,7 @@ def register_accounts(app: FastAPI, settings: Settings, get_db) -> None:
         user: CurrentUser = Depends(require_auth),
         db: Session = Depends(get_db),
     ) -> dict:
+        _limit(write_limiter, user)
         account = _owned_or_404(db, user, account_id)
         if not any(v is not None for v in (body.name, body.app_password, body.enabled)):
             # 请求体三字段全缺省或全为 null → 400；enabled=false 是合法值
@@ -126,6 +143,7 @@ def register_accounts(app: FastAPI, settings: Settings, get_db) -> None:
         user: CurrentUser = Depends(require_auth),
         db: Session = Depends(get_db),
     ) -> Response:
+        _limit(write_limiter, user)
         account = _owned_or_404(db, user, account_id)
         delete_account(db, account, settings)
         logger.info(
@@ -142,6 +160,7 @@ def register_accounts(app: FastAPI, settings: Settings, get_db) -> None:
         db: Session = Depends(get_db),
     ) -> dict:
         """生成微软授权链接（授权码 + PKCE，flow 落盘由 mstoken 完成）。"""
+        _limit(auth_limiter, user)
         account = _owned_or_404(db, user, account_id)
         return {"auth_uri": start_ms_auth(account, settings, body.redirect_uri if body else None)}
 
@@ -153,6 +172,7 @@ def register_accounts(app: FastAPI, settings: Settings, get_db) -> None:
         db: Session = Depends(get_db),
     ) -> dict:
         """用粘贴回的完整回调 URL 或授权码换 token；成功后 status=ok。"""
+        _limit(auth_limiter, user)
         account = _owned_or_404(db, user, account_id)
         finish_ms_auth(account, settings, body.auth_response)
         logger.info(

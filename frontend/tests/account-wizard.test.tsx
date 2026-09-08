@@ -119,6 +119,8 @@ describe('AccountWizard Gmail 路径', () => {
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'me@gmail.com' } });
     const next = screen.getByRole('button', { name: '下一步' }) as HTMLButtonElement;
     expect(next.disabled).toBe(true);
+    // 红字只在字段被碰过之后才出现（不再一进门就满屏红），失焦一次即算碰过
+    fireEvent.blur(screen.getByLabelText('应用专用密码'));
     expect(screen.getByText('请填写应用专用密码')).toBeTruthy();
 
     // 填上密码后放行
@@ -221,5 +223,101 @@ describe('AccountWizard 微软路径', () => {
 
     expect(onDone).toHaveBeenCalledWith(MS_ACCOUNT);
     expect(api.requestMsAuthUrlMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('AccountWizard 基本信息步的表单体验', () => {
+  it('刚进第 2 步不显示任何红字：邮箱/密码为空是必然的，无条件报错等于一进门就满屏红', () => {
+    renderWizard();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Gmail' }));
+    fireEvent.click(screen.getByRole('button', { name: '下一步' }));
+
+    expect(screen.getByLabelText('邮箱')).toBeTruthy();
+    expect(screen.queryByText('请填写正确的邮箱地址')).toBeNull();
+    expect(screen.queryByText('请填写应用专用密码')).toBeNull();
+    // 但按钮该灰还是灰——不显示红字不等于放行
+    expect((screen.getByRole('button', { name: '下一步' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('邮箱框失焦一次后才显示红字，改对之后红字消失', () => {
+    renderWizard();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Gmail' }));
+    fireEvent.click(screen.getByRole('button', { name: '下一步' }));
+
+    fireEvent.blur(screen.getByLabelText('邮箱'));
+    expect(screen.getByText('请填写正确的邮箱地址')).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'me@gmail.com' } });
+    expect(screen.queryByText('请填写正确的邮箱地址')).toBeNull();
+  });
+
+  it('邮箱轻校验：a@b（域名没有点）判非法，a@b.c 判合法', () => {
+    renderWizard();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Gmail' }));
+    fireEvent.click(screen.getByRole('button', { name: '下一步' }));
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: '我的 Gmail' } });
+    fireEvent.change(screen.getByLabelText('应用专用密码'), { target: { value: 'abcd efgh' } });
+
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'a@b' } });
+    expect((screen.getByRole('button', { name: '下一步' }) as HTMLButtonElement).disabled).toBe(true);
+
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'a@b.c' } });
+    expect((screen.getByRole('button', { name: '下一步' }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('第 2 步可以「上一步」回类型选择，回去再来时已填的邮箱还在', () => {
+    renderWizard();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Gmail' }));
+    fireEvent.click(screen.getByRole('button', { name: '下一步' }));
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'me@gmail.com' } });
+
+    fireEvent.click(screen.getByRole('button', { name: '上一步' }));
+    // 回到类型选择：两张类型卡片重新出现，「上一步」自己消失（第 1 步没有上一步）
+    expect(screen.getByRole('button', { name: 'Outlook · Microsoft 365' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '上一步' })).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: '下一步' }));
+    expect((screen.getByLabelText('邮箱') as HTMLInputElement).value).toBe('me@gmail.com');
+    expect(api.createAccountMock).not.toHaveBeenCalled();
+  });
+
+  it('上一步换成微软后不再要求应用专用密码，表单跟着换', () => {
+    renderWizard();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Gmail' }));
+    fireEvent.click(screen.getByRole('button', { name: '下一步' }));
+    expect(screen.getByLabelText('应用专用密码')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: '上一步' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Outlook · Microsoft 365' }));
+    fireEvent.click(screen.getByRole('button', { name: '下一步' }));
+
+    expect(screen.queryByLabelText('应用专用密码')).toBeNull();
+    expect(screen.getByRole('button', { name: /高级/ })).toBeTruthy();
+  });
+});
+
+describe('AccountWizard 新错误码映射', () => {
+  it.each([
+    ['too_many_accounts', '已达到邮箱账户数量上限，先移除一个再添加'],
+    ['rate_limited', '操作太频繁，请稍后再试'],
+  ])('createAccount 抛 %s → Alert 文案「%s」', async (code, message) => {
+    api.createAccountMock.mockRejectedValue({ code });
+    renderWizard();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Gmail' }));
+    fireEvent.click(screen.getByRole('button', { name: '下一步' }));
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: '我的 Gmail' } });
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'me@gmail.com' } });
+    fireEvent.change(screen.getByLabelText('应用专用密码'), { target: { value: 'abcd efgh' } });
+    fireEvent.click(screen.getByRole('button', { name: '下一步' }));
+
+    expect(await screen.findByText(message)).toBeTruthy();
+    // 留在原步，用户能直接改
+    expect(screen.getByLabelText('邮箱')).toBeTruthy();
   });
 });

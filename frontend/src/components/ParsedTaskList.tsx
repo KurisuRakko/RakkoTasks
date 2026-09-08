@@ -23,6 +23,7 @@ import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import { MOTION } from '../rakko-tokens';
+import { formatDueDate } from '../lib/grouping';
 import { formatReminder } from '../lib/time';
 import ItemFieldsForm from './ItemFieldsForm';
 import { parseEditorText } from './ItemEditor';
@@ -42,10 +43,12 @@ export interface ParsedTaskListProps {
   helperAt: (index: number) => string;
 }
 
-/** 收起态右侧的时间摘要：优先报第一个提醒时刻，没有提醒才报截止日；都没有就不占位 */
+/** 收起态右侧的时间摘要：优先报第一个提醒时刻，没有提醒才报截止日；都没有就不占位。
+ *  两者都走各自的中文格式化函数——同一行同一位置不能一个是「明天 10:00」、
+ *  另一个是原始的 2026-09-10。 */
 function timeSummary(draft: Draft): string {
   if (draft.reminders.length > 0) return formatReminder(draft.reminders[0]);
-  return draft.date;
+  return draft.date ? formatDueDate(draft.date) : '';
 }
 
 export default function ParsedTaskList({

@@ -10,6 +10,7 @@ import json
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
+from app import accounts, accounts_api
 from app.api import create_app
 from app.auth import CurrentUser, require_auth
 from app.config import Settings
@@ -442,3 +443,111 @@ def test_status_uses_account_info_shape(session_factory):
     assert a0["status"] == "ok"
     assert "app_password" not in json.dumps(data)
     assert "token_cache" not in json.dumps(data)
+
+
+# ── 数量上限与限流 ───────────────────────────────────────────────────
+
+
+def test_post_rejects_beyond_account_cap(session_factory, monkeypatch):
+    """无用户白名单的系统里，账户数不设上限等于让任何人撑满 worker 的同步队列。"""
+    monkeypatch.setattr(accounts, "MAX_ACCOUNTS_PER_USER", 3)
+    _seed_users(session_factory, ["user-A"])
+    client = _client_as(session_factory, "user-A")
+
+    for i in range(3):
+        resp = client.post(
+            "/api/accounts", json=_gmail_payload(email=f"me{i}@gmail.com", app_password="pw")
+        )
+        assert resp.status_code == 201
+
+    resp = client.post("/api/accounts", json=_gmail_payload(email="me3@gmail.com", app_password="pw"))
+    assert resp.status_code == 409
+    assert resp.json() == {"code": "too_many_accounts"}
+
+
+def test_account_cap_counts_disabled_accounts(session_factory, monkeypatch):
+    """停用只清凭据、账户行还在，可随时重新启用——它必须照样占名额。"""
+    monkeypatch.setattr(accounts, "MAX_ACCOUNTS_PER_USER", 2)
+    _seed_users(session_factory, ["user-A"])
+    client = _client_as(session_factory, "user-A")
+
+    for i in range(2):
+        assert (
+            client.post(
+                "/api/accounts", json=_gmail_payload(email=f"me{i}@gmail.com", app_password="pw")
+            ).status_code
+            == 201
+        )
+    first_id = client.get("/api/accounts").json()["accounts"][0]["id"]
+    assert client.patch(f"/api/accounts/{first_id}", json={"enabled": False}).status_code == 200
+
+    resp = client.post("/api/accounts", json=_gmail_payload(email="me9@gmail.com", app_password="pw"))
+    assert resp.status_code == 409
+    assert resp.json() == {"code": "too_many_accounts"}
+
+
+def test_account_cap_is_per_user(session_factory, monkeypatch):
+    """上限按用户算：甲把名额用满不该挡住乙。"""
+    monkeypatch.setattr(accounts, "MAX_ACCOUNTS_PER_USER", 1)
+    _seed_users(session_factory, ["user-A", "user-B"])
+
+    client_a = _client_as(session_factory, "user-A")
+    assert client_a.post("/api/accounts", json=_gmail_payload(app_password="pw")).status_code == 201
+    assert client_a.post(
+        "/api/accounts", json=_gmail_payload(email="other@gmail.com", app_password="pw")
+    ).status_code == 409
+
+    client_b = _client_as(session_factory, "user-B")
+    assert client_b.post("/api/accounts", json=_gmail_payload(app_password="pw")).status_code == 201
+
+
+def test_write_endpoints_rate_limited_per_user(session_factory, monkeypatch):
+    """写端点超出每用户窗口回 429 {"code": "rate_limited"}，与 LLM 端点同一口径。"""
+    monkeypatch.setattr(accounts_api, "WRITE_RATE_LIMIT", (2, 60.0))
+    _seed_users(session_factory, ["user-A", "user-B"])
+    client = _client_as(session_factory, "user-A")
+
+    assert client.post("/api/accounts", json=_gmail_payload(app_password="pw")).status_code == 201
+    account_id = client.get("/api/accounts").json()["accounts"][0]["id"]
+    assert client.patch(f"/api/accounts/{account_id}", json={"name": "改名"}).status_code == 200
+
+    resp = client.patch(f"/api/accounts/{account_id}", json={"name": "再改"})
+    assert resp.status_code == 429
+    assert resp.json() == {"code": "rate_limited"}
+    # 读列表是纯读，不受写限流影响
+    assert client.get("/api/accounts").status_code == 200
+
+
+def test_rate_limit_counts_per_user_not_globally(session_factory, monkeypatch):
+    monkeypatch.setattr(accounts_api, "WRITE_RATE_LIMIT", (1, 60.0))
+    _seed_users(session_factory, ["user-A", "user-B"])
+    app = create_app(settings=_settings(), session_factory=session_factory)
+
+    def _as(sub: str) -> TestClient:
+        app.dependency_overrides[require_auth] = lambda: CurrentUser(sub=sub, email=None, name=None)
+        return TestClient(app)
+
+    # 同一个 app（共用同一个限流器实例）：甲用完自己的额度，乙照样能写
+    assert _as("user-A").post("/api/accounts", json=_gmail_payload(app_password="pw")).status_code == 201
+    assert _as("user-A").post(
+        "/api/accounts", json=_gmail_payload(email="x@gmail.com", app_password="pw")
+    ).status_code == 429
+    assert _as("user-B").post("/api/accounts", json=_gmail_payload(app_password="pw")).status_code == 201
+
+
+def test_ms_auth_endpoints_rate_limited(session_factory, monkeypatch, tmp_path):
+    """auth-url 每次都往磁盘写一份 flow 文件，auth-code 直接打微软——这两个要单独限。"""
+    monkeypatch.setattr(accounts_api, "AUTH_RATE_LIMIT", (1, 60.0))
+    monkeypatch.setattr(mstoken, "flow_file_path", lambda account, settings: _flow_file(tmp_path, account.id))
+    monkeypatch.setattr(
+        mstoken, "initiate_auth_code_flow", lambda account, settings, redirect_uri: {"auth_uri": FAKE_AUTH_URI}
+    )
+    ids = _seed_two_accounts(session_factory)
+    client = _client_as(session_factory, "user-B")
+
+    assert client.post(f"/api/accounts/{ids['b']}/auth-url", json={}).status_code == 200
+    resp = client.post(f"/api/accounts/{ids['b']}/auth-url", json={})
+    assert resp.status_code == 429
+    assert resp.json() == {"code": "rate_limited"}
+    # 写限流是另一个桶：授权打满不影响改名
+    assert client.patch(f"/api/accounts/{ids['b']}", json={"name": "改名"}).status_code == 200

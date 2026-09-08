@@ -179,6 +179,10 @@ export default function AiAddDialog({
     setPhase('parsing');
     try {
       const parsed = await onParse(raw);
+      // 空结果与解析失败同义：进 fields 只会得到一屏空列表和一个点了没反应的「保存」
+      // （anyInvalid 对空数组为 false，按钮不灰，handleSave 又直接 return）。
+      // 扔回同一个 catch，走已有的兜底路径——留在 input、原文不清、给「按原文保存」。
+      if (parsed.length === 0) throw new Error('空解析结果');
       setDrafts(parsed.map(toDraft));
       // 只有一条时 ParsedTaskList 不出场，expanded 无意义；多条默认全部收起
       setExpanded(null);
@@ -250,10 +254,16 @@ export default function AiAddDialog({
   };
 
   const handleAddAsIs = () => {
+    // 与其余路径同一口径：第一行是标题、其余是详情。标题超长的部分溢出到详情而不是
+    // 丢掉——解析已经失败一次，不能再把用户打的内容吃掉。正常长度下 overflow 是空串，
+    // 这条与直接用 parseEditorText 完全等价，不是特判。
+    // importance / actionable 仍不带：解析失败时没有 AI 判断可透传。
+    const { title, summary } = parseEditorText(text);
+    const overflow = title.slice(MAX_TITLE_LENGTH).trim();
     onSubmit([
       {
-        title: text.trim().slice(0, MAX_TITLE_LENGTH),
-        summary: '',
+        title: title.slice(0, MAX_TITLE_LENGTH),
+        summary: [overflow, summary].filter(Boolean).join('\n'),
         category: '其他',
         due_date: null,
       },

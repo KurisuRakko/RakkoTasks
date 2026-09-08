@@ -3,10 +3,13 @@
 // 展示断言：账户卡片（名称/类型/上次同步）、待授权 Chip、AI 待处理行。fetchStatus mock。
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { act } from '@testing-library/react';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { createTheme, ThemeProvider } from '@mui/material/styles';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import AccountsSection from '../src/components/accounts/AccountsSection';
+import accountsSectionSource from '../src/components/accounts/AccountsSection.tsx?raw';
+import { MOTION } from '../src/rakko-tokens';
 import { ThemeModeProvider } from '../src/lib/theme-mode';
 import type { AccountInfo, StatusResponse } from '../src/types';
 
@@ -171,5 +174,101 @@ describe('AccountsSection 已停用账户', () => {
     // 外层分区已是玻璃面板，行再挂 MuiCard 就是两层框
     expect(container.querySelector('.MuiCard-root')).toBeNull();
     expect(container.querySelectorAll('[data-account-row]').length).toBe(STATUS.accounts.length);
+  });
+});
+
+describe('AccountsSection 桌面 Dialog 的入退场', () => {
+  /** 让 supportsViewTransitions() 为真：dialogTransitionProps() 正是在这种浏览器上把过渡清零的 */
+  function withViewTransitions(): () => void {
+    // jsdom 默认没有这个 API，与 dialog-transition.test.tsx 同一套 stub / 还原口径
+    (document as { startViewTransition?: unknown }).startViewTransition = vi.fn();
+    return () => {
+      delete (document as { startViewTransition?: unknown }).startViewTransition;
+    };
+  }
+
+  it('支持 View Transitions 的浏览器上关闭仍有真实退场：内容不是瞬间消失', async () => {
+    const restore = withViewTransitions();
+    vi.useFakeTimers();
+    try {
+      installDesktopMedia();
+      api.fetchStatusMock.mockResolvedValue(STATUS);
+      renderSection();
+      await vi.waitFor(() => expect(screen.getByText('Outlook')).toBeTruthy());
+
+      fireEvent.click(screen.getByRole('button', { name: '添加邮箱' }));
+      await vi.waitFor(() => expect(screen.getByText('添加邮箱账户')).toBeTruthy());
+
+      fireEvent.click(screen.getByRole('button', { name: '关闭' }));
+      // 退场刚跑到一半：内容还在，用户看得到它往下滑。
+      // dialogTransitionProps() 会把时长设成 0 去给一个不会发生的 VT 让位，
+      // 那样这里内容已经没了 —— 开关都是瞬切。
+      await act(async () => {
+        vi.advanceTimersByTime(Math.floor(MOTION.largeExit / 2));
+      });
+      expect(screen.queryByText('添加邮箱账户')).not.toBeNull();
+
+      await act(async () => {
+        vi.advanceTimersByTime(MOTION.largeExit + 50);
+      });
+      expect(screen.queryByText('添加邮箱账户')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+      restore();
+    }
+  });
+
+  it('退场途中再点一次关闭：内容不被抹掉，退场照常跑完', async () => {
+    vi.useFakeTimers();
+    try {
+      installDesktopMedia();
+      api.fetchStatusMock.mockResolvedValue(STATUS);
+      renderSection();
+      await vi.waitFor(() => expect(screen.getByText('Outlook')).toBeTruthy());
+
+      fireEvent.click(screen.getByRole('button', { name: '添加邮箱' }));
+      await vi.waitFor(() => expect(screen.getByText('添加邮箱账户')).toBeTruthy());
+
+      // 退场期间内容仍然挂着、关闭按钮也还能点——第二次点不该把正在退场的内容抹掉
+      fireEvent.click(screen.getByRole('button', { name: '关闭' }));
+      await act(async () => {
+        vi.advanceTimersByTime(Math.floor(MOTION.largeExit / 3));
+      });
+      fireEvent.click(screen.getByRole('button', { name: '关闭' }));
+      await act(async () => {
+        vi.advanceTimersByTime(Math.floor(MOTION.largeExit / 3));
+      });
+      expect(screen.queryByText('添加邮箱账户')).not.toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('源码不再用 dialogTransitionProps：那是给容器变换出来的对话框用的', () => {
+    expect(accountsSectionSource).not.toContain('{...dialogTransitionProps()}');
+    expect(accountsSectionSource).toContain('TransitionComponent={SlideUp}');
+  });
+});
+
+describe('AccountsSection 待处理计数', () => {
+  it('AI 待处理为 0 时不占一行', async () => {
+    api.fetchStatusMock.mockResolvedValue({
+      accounts: [makeAccount({})],
+      pending_llm: 0,
+    } satisfies StatusResponse);
+    renderSection();
+
+    await screen.findByText('Gmail');
+    expect(screen.queryByText(/AI 待处理/)).toBeNull();
+  });
+
+  it('AI 待处理大于 0 时照常显示', async () => {
+    api.fetchStatusMock.mockResolvedValue({
+      accounts: [makeAccount({})],
+      pending_llm: 4,
+    } satisfies StatusResponse);
+    renderSection();
+
+    expect(await screen.findByText('AI 待处理 4 封')).toBeTruthy();
   });
 });

@@ -2,8 +2,9 @@
 // /settings/accounts/new        添加向导（AccountWizard 页面形态）
 // /settings/accounts/:id        账户详情（AccountDetail 页面形态）
 // /settings/accounts/:id/remove 移除二选一（RemoveAccountChoice 页面形态）
-// 三页都挂载时 fetchStatus 找账户；找不到即重定向回 /settings（越权/已删账户是后端 404
-// 语义，前端不猜）。页面容器沿用 SettingsPage 的内边距；返回靠 AppShell 的返回箭头。
+// 三页都挂载时 fetchAccounts 找账户；找不到即重定向回 /settings（越权/已删账户是后端 404
+// 语义，前端不猜）。页面容器与设置页同款：内容坐在 data-glass="panel" 玻璃面板上、
+// 底部给固定底栏让出空间。返回靠 AppShell 的返回箭头。
 
 import { useCallback, useEffect, useState } from 'react';
 import Alert from '@mui/material/Alert';
@@ -13,12 +14,25 @@ import Typography from '@mui/material/Typography';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import { useTheme } from '@mui/material/styles';
 import { Navigate, useParams } from 'react-router-dom';
+import type { ReactNode } from 'react';
 import AccountDetail from '../components/accounts/AccountDetail';
 import AccountRemoveChoice from '../components/accounts/RemoveAccountChoice';
 import AccountWizard from '../components/accounts/AccountWizard';
-import { fetchStatus } from '../lib/api';
+import { fetchAccounts } from '../lib/api';
 import { useTransitionNavigate } from '../lib/motion';
+import { RADIUS } from '../rakko-tokens';
 import type { AccountInfo } from '../types';
+
+/** 页面外壳：与 SettingsPage 同一口径——不给横向内边距（玻璃面板贴着内容区左右边，
+ *  横向留白由面板自己的 px 提供），底部 padding 给固定底栏（AppShell，高 50–58px +
+ *  env(safe-area-inset-bottom)）让出空间，72 = 底栏高 + 呼吸空间，不写死具体底栏高度。
+ *  不给的话页面最下面的动作按钮会被底栏压住。 */
+const PAGE_SX = { pt: 2, pb: 'calc(72px + env(safe-area-inset-bottom))' } as const;
+
+/** 分区玻璃面板：材质（纸底 / 边框 / 高光 / 阴影）由 rakko-glass.css 的 data-glass="panel"
+ *  配方提供——挂了 data-glass 的元素不能再下发 background/backgroundColor，否则盖掉配方。
+ *  这里只补配方不管的圆角（与列表行同一 RADIUS.card）与内边距，口径同 SettingsPage。 */
+const PANEL_SX = { px: 2, py: 2, borderRadius: `${RADIUS.card}px` } as const;
 
 type LoadState =
   | { state: 'loading' }
@@ -26,16 +40,32 @@ type LoadState =
   | { state: 'missing' }
   | { state: 'ready'; account: AccountInfo };
 
-/** 挂载时 fetchStatus 并按 id 找账户；找不到 → missing（渲染层据此重定向） */
+/** 三页共用的页面容器：外壳留白 + 一块玻璃面板，内容一律坐在面板上 */
+function AccountPageShell({ children }: { children: ReactNode }) {
+  return (
+    <Box sx={PAGE_SX}>
+      <Box data-glass="panel" sx={PANEL_SX}>
+        {children}
+      </Box>
+    </Box>
+  );
+}
+
+/** 挂载时 fetchAccounts 并按 id 找账户；找不到 → missing（渲染层据此重定向） */
 function useAccountLoader(accountId: number): [LoadState, (account: AccountInfo) => void] {
   const [load, setLoad] = useState<LoadState>({ state: 'loading' });
 
   useEffect(() => {
+    // 路径段不是数字时连请求都不该发（/settings/accounts/abc）
+    if (Number.isNaN(accountId)) {
+      setLoad({ state: 'missing' });
+      return;
+    }
     let alive = true;
-    fetchStatus()
-      .then((s) => {
+    fetchAccounts()
+      .then((accounts) => {
         if (!alive) return;
-        const found = s.accounts.find((a) => a.id === accountId);
+        const found = accounts.find((a) => a.id === accountId);
         setLoad(found ? { state: 'ready', account: found } : { state: 'missing' });
       })
       .catch(() => {
@@ -62,9 +92,19 @@ function useDesktopOnlyRedirect(): boolean {
 
 function LoadingPage() {
   return (
-    <Box sx={{ display: 'flex', justifyContent: 'center', py: 8 }}>
-      <CircularProgress />
-    </Box>
+    <AccountPageShell>
+      <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}>
+        <CircularProgress />
+      </Box>
+    </AccountPageShell>
+  );
+}
+
+function ErrorPage() {
+  return (
+    <AccountPageShell>
+      <Alert severity="error">加载账户失败</Alert>
+    </AccountPageShell>
   );
 }
 
@@ -74,15 +114,12 @@ export function AccountNewPage() {
   const desktop = useDesktopOnlyRedirect();
   if (desktop) return <Navigate to="/settings" replace />;
   return (
-    <Box sx={{ px: 2, pt: 2, pb: 4 }}>
+    <AccountPageShell>
       <Typography variant="h6" gutterBottom>
         添加邮箱账户
       </Typography>
-      <AccountWizard
-        onDone={() => go('/settings')}
-        onCancel={() => go('/settings')}
-      />
-    </Box>
+      <AccountWizard onDone={() => go('/settings')} onCancel={() => go('/settings')} />
+    </AccountPageShell>
   );
 }
 
@@ -96,23 +133,17 @@ export function AccountDetailPage() {
 
   if (desktop) return <Navigate to="/settings" replace />;
   if (load.state === 'loading') return <LoadingPage />;
-  if (load.state === 'missing' || Number.isNaN(accountId)) return <Navigate to="/settings" replace />;
-  if (load.state === 'error') {
-    return (
-      <Box sx={{ px: 2, pt: 2 }}>
-        <Alert severity="error">加载账户失败</Alert>
-      </Box>
-    );
-  }
+  if (load.state === 'missing') return <Navigate to="/settings" replace />;
+  if (load.state === 'error') return <ErrorPage />;
   const account = load.account;
   return (
-    <Box sx={{ px: 2, pt: 2, pb: 4 }}>
+    <AccountPageShell>
       <AccountDetail
         account={account}
         onChanged={(a) => setAccount(a)}
         onRemove={() => go(`/settings/accounts/${account.id}/remove`)}
       />
-    </Box>
+    </AccountPageShell>
   );
 }
 
@@ -126,17 +157,11 @@ export function AccountRemovePage() {
 
   if (desktop) return <Navigate to="/settings" replace />;
   if (load.state === 'loading') return <LoadingPage />;
-  if (load.state === 'missing' || Number.isNaN(accountId)) return <Navigate to="/settings" replace />;
-  if (load.state === 'error') {
-    return (
-      <Box sx={{ px: 2, pt: 2 }}>
-        <Alert severity="error">加载账户失败</Alert>
-      </Box>
-    );
-  }
+  if (load.state === 'missing') return <Navigate to="/settings" replace />;
+  if (load.state === 'error') return <ErrorPage />;
   const account = load.account;
   return (
-    <Box sx={{ px: 2, pt: 2, pb: 4 }}>
+    <AccountPageShell>
       <Typography variant="h6" gutterBottom>
         移除账户
       </Typography>
@@ -146,6 +171,6 @@ export function AccountRemovePage() {
         onDeleted={() => go('/settings')}
         onCancel={() => go(`/settings/accounts/${account.id}`)}
       />
-    </Box>
+    </AccountPageShell>
   );
 }

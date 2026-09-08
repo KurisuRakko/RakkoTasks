@@ -29,12 +29,13 @@ import {
 } from "../../lib/motion";
 import { cardRowSx } from "../../lib/surface";
 import { timeAgo } from "../../lib/time";
+import { MOTION } from "../../rakko-tokens";
 import { statusChipMeta, kindLabel } from "./meta";
 import AccountDetail from "./AccountDetail";
 import AccountWizard from "./AccountWizard";
 import RemoveAccountChoice from "./RemoveAccountChoice";
 import type { AccountInfo, StatusResponse } from "../../types";
-import { dialogTransitionProps } from "../DialogTransition";
+import { SlideUp } from "../DialogTransition";
 
 /** 桌面 Dialog 的三种内容：添加向导 / 账户详情 / 移除二选一，同一个 Dialog 切换 */
 type AccountDialog =
@@ -63,6 +64,10 @@ export default function AccountsSection() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [dialog, setDialog] = useState<AccountDialog | null>(null);
+  // 退场期间还得继续渲染内容：dialog 一置 null，下面按它条件渲染的子树会被立刻拆掉，
+  // Dialog 的退场过渡根本跑不到（速记面板修过同一个洞）。这份「上一次内容」只在
+  // onExited 时清，退场的 250ms 里用户看到的还是原内容，而不是空壳往下滑。
+  const [exiting, setExiting] = useState<AccountDialog | null>(null);
 
   const load = useCallback(() => {
     let alive = true;
@@ -96,14 +101,20 @@ export default function AccountsSection() {
 
   /** Dialog 关闭（含向导取消/完成、详情关闭）：收起并刷新列表 */
   const closeDialog = () => {
+    // 退场途中内容仍然挂着、按钮也还能点：已经关上了就当没这回事，
+    // 否则第二次调用会把正在退场的内容抹掉、退场当场断掉
+    if (dialog === null) return;
+    setExiting(dialog);
     setDialog(null);
     load();
   };
 
+  // 渲染依据是「当前内容 ?? 正在退场的内容」；是否打开仍只看 dialog
+  const shown = dialog ?? exiting;
   // 三种视图的当前数据：null 表示该视图没开着（局部常量便于在回调里安全引用）
-  const wizardOpen = dialog?.view === "wizard";
-  const detailAccount = dialog?.view === "detail" ? dialog.account : null;
-  const removeAccount = dialog?.view === "remove" ? dialog.account : null;
+  const wizardOpen = shown?.view === "wizard";
+  const detailAccount = shown?.view === "detail" ? shown.account : null;
+  const removeAccount = shown?.view === "remove" ? shown.account : null;
 
   return (
     <Box>
@@ -202,9 +213,12 @@ export default function AccountsSection() {
                   </ButtonBase>
                 );
               })}
-              <Alert severity="info" icon={false} sx={{ py: 0.5 }}>
-                AI 待处理 {data.pending_llm} 封
-              </Alert>
+              {/* 队列清空时不占位：常驻一行「AI 待处理 0 封」只是噪音 */}
+              {data.pending_llm > 0 && (
+                <Alert severity="info" icon={false} sx={{ py: 0.5 }}>
+                  AI 待处理 {data.pending_llm} 封
+                </Alert>
+              )}
             </>
           )}
         </Stack>
@@ -217,13 +231,19 @@ export default function AccountsSection() {
         maxWidth="sm"
         fullWidth
         sx={mainAreaDialogSx}
-        {...dialogTransitionProps()}
+        // 固定用 SlideUp，两个方向都由 MUI 自己跑：这个对话框不是从某一行经 View
+        // Transitions 容器变换长出来的（openAdd / openDetail 只是 setDialog），
+        // 用 dialogTransitionProps() 会在支持 VT 的浏览器上把 MUI 过渡设成 0ms
+        // 去给一个根本不会发生的 VT 让位，结果就是开关都没有动效。
+        TransitionComponent={SlideUp}
+        transitionDuration={reduced ? 0 : { enter: MOTION.large, exit: MOTION.largeExit }}
+        TransitionProps={{ onExited: () => setExiting(null) }}
         aria-labelledby="accounts-dialog-title"
       >
         <DialogTitle id="accounts-dialog-title">
           <Stack direction="row" alignItems="center">
             <Typography variant="h6" sx={{ flexGrow: 1 }}>
-              {dialogTitle(dialog)}
+              {dialogTitle(shown)}
             </Typography>
             <IconButton
               edge="end"

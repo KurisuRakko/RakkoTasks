@@ -457,3 +457,99 @@ describe('AiAddDialog 入退场对称', () => {
     }
   });
 });
+
+describe('AiAddDialog 兜底路径的三处收尾', () => {
+  it('onParse resolve 出空数组：不进 fields（那会得到一屏空列表 + 点了没反应的「保存」），走失败兜底', async () => {
+    const d = deferred();
+    renderDialog({ onParse: vi.fn(() => d.promise) });
+
+    fireEvent.change(screen.getByLabelText('待办内容'), { target: { value: '随便记一句' } });
+    fireEvent.click(screen.getByRole('button', { name: '解析' }));
+    await act(async () => {
+      d.resolve([]);
+    });
+
+    // 留在 input：原文还在、没有识别结果列表、没有「识别出 0 条」这种空壳
+    expect((screen.getByLabelText('待办内容') as HTMLTextAreaElement).value).toBe('随便记一句');
+    expect(screen.queryByRole('list', { name: '识别结果' })).toBeNull();
+    expect(screen.queryByText(/识别出 0 条/)).toBeNull();
+    expect(screen.getByText(/未能识别内容/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: '按原文保存' })).toBeTruthy();
+  });
+
+  it('「按原文保存」按第一行标题 / 其余详情拆，不再把整段塞进标题', async () => {
+    const d = deferred();
+    const onSubmit = vi.fn<(fieldsList: ItemFields[]) => void>();
+    renderDialog({ onParse: vi.fn(() => d.promise), onSubmit });
+
+    fireEvent.change(screen.getByLabelText('待办内容'), {
+      target: { value: '买牛奶\n两盒脱脂的\n顺便买鸡蛋' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '解析' }));
+    await act(async () => {
+      d.reject(new Error('挂了'));
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: '按原文保存' }));
+    expect(onSubmit).toHaveBeenCalledWith([
+      { title: '买牛奶', summary: '两盒脱脂的\n顺便买鸡蛋', category: '其他', due_date: null },
+    ]);
+  });
+
+  it('「按原文保存」标题超长时溢出到详情，一个字都不丢', async () => {
+    const d = deferred();
+    const onSubmit = vi.fn<(fieldsList: ItemFields[]) => void>();
+    renderDialog({ onParse: vi.fn(() => d.promise), onSubmit });
+
+    const long = '记'.repeat(150);
+    fireEvent.change(screen.getByLabelText('待办内容'), { target: { value: long } });
+    fireEvent.click(screen.getByRole('button', { name: '解析' }));
+    await act(async () => {
+      d.reject(new Error('挂了'));
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: '按原文保存' }));
+    const fields = onSubmit.mock.calls[0][0][0];
+    expect(fields.title).toHaveLength(128);
+    // 被截掉的 22 个字进了详情，拼回去仍是原文
+    expect(fields.title + fields.summary).toBe(long);
+  });
+});
+
+describe('ParsedTaskList 收起态的时间摘要', () => {
+  /** 三条草案：一条只有截止日、一条有提醒、一条两者都没有 */
+  const THREE: ParsedTask[] = [
+    { ...PARSED, title: '只有截止日', due_date: '2026-09-10', reminders: [] },
+    { ...PARSED, title: '有提醒', due_date: null, reminders: ['2026-09-11T02:00:00+00:00'] },
+    { ...PARSED, title: '都没有', due_date: null, reminders: [] },
+  ];
+
+  async function intoList() {
+    const d = deferred();
+    renderDialog({ onParse: vi.fn(() => d.promise) });
+    fireEvent.change(screen.getByLabelText('待办内容'), { target: { value: '三件事' } });
+    fireEvent.click(screen.getByRole('button', { name: '解析' }));
+    await act(async () => {
+      d.resolve(THREE);
+    });
+    return screen.getByRole('list', { name: '识别结果' });
+  }
+
+  it('截止日走中文格式，不把原始 YYYY-MM-DD 铺给用户看', async () => {
+    const list = await intoList();
+
+    expect(within(list).getByText('9月10日')).toBeTruthy();
+    expect(within(list).queryByText('2026-09-10')).toBeNull();
+  });
+
+  it('有提醒的那条仍报提醒时刻（截止日的改法没有把提醒一起改坏）', async () => {
+    const list = await intoList();
+    const row = within(list).getByText('有提醒').closest('.MuiListItemButton-root') as HTMLElement;
+
+    // formatReminder 的输出带 🔔 之外的中文时刻，这里只要求它不是原始 ISO 串
+    const caption = row.querySelector('.MuiTypography-caption') as HTMLElement;
+    expect(caption).not.toBeNull();
+    expect(caption.textContent).not.toContain('2026-09-11T02:00:00');
+    expect(caption.textContent).toMatch(/\d{1,2}:\d{2}/);
+  });
+});

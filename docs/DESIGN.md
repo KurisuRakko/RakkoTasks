@@ -371,7 +371,8 @@ POST /api/accounts                  {"name","kind","email","app_password"?,"ms_c
                                     kind ∈ gmail|microsoft 否则 400 bad_kind；name 去空白后 1..128 否则 400 bad_name；
                                     email 去空白后须含 @ 且 ≤256 否则 400 bad_email；kind=gmail 必须带非空
                                     app_password 否则 400 password_required（microsoft 忽略该字段）；
-                                    同一用户下 (email, kind) 已存在（含已停用）→ 409 account_exists
+                                    同一用户下 (email, kind) 已存在（含已停用）→ 409 account_exists；
+                                    该用户账户数已达 MAX_ACCOUNTS_PER_USER（含已停用）→ 409 too_many_accounts
 PATCH /api/accounts/{id}            {"name"?,"app_password"?,"enabled"?} → 200 AccountInfo；空请求体 400 bad_request；
                                     app_password 只对 gmail 开放，其它 kind → 400 invalid_kind，空串 → 400 password_required，
                                     成功后 status 置 pending、last_error 清空；enabled=false → 清空凭据、status 置 pending；
@@ -382,6 +383,10 @@ POST /api/accounts/{id}/auth-url    {"redirect_uri"?} → {"auth_uri"}；非 mic
 POST /api/accounts/{id}/auth-code   {"auth_response"} → 200 AccountInfo（status=ok，凭据落库）；
                                     无进行中流程 409 no_pending_flow；授权失败 400
                                     {"code":"auth_failed","kind":"expired|declined|admin_required|other","detail":str}
+账户端点限流（每用户滑动窗口，超出 429 {"code":"rate_limited"}，与 LLM 端点同一口径）：
+  写操作（POST / PATCH / DELETE /api/accounts*）20 次/分；微软授权两个端点 10 次/分
+  （auth-url 每次都往磁盘写一份 flow 文件，auth-code 直接打微软的 token 端点）。
+  GET /api/accounts 是纯读，不限。两个桶互不影响。
 GET  /api/calendar                  → {"token"}；尚无令牌时生成并落库（鉴权）
 POST /api/calendar/rotate           无条件生成新令牌并覆盖（鉴权）；旧订阅链接立即失效
 GET  /api/caldav                    CalDAV 接入信息（鉴权）：→ {"username": 邮箱或 sub,
@@ -453,7 +458,10 @@ CalDAV 例外：`/caldav/*` 与 `/.well-known/caldav` 不走上述 Bearer 中间
   右上角「速记」Switch（`role="switch"`，默认关，localStorage 键
   `rakkotasks.quick-mode`）：开则跳过 `parsing`/`fields`，点「提交」立刻关窗并把原文
   交给编排层走 `/api/items/quick`。解析失败回 `input`、**保留用户原文不清空**，
-  给一个「按原文保存」兜底按钮——绝不让用户白打一遍。
+  给一个「按原文保存」兜底按钮——绝不让用户白打一遍。解析结果为空数组按解析失败同等处理
+  （进 `fields` 只会得到一屏空列表与一个点了没反应的「保存」）。「按原文保存」走与其余路径
+  同一份 `parseEditorText`（第一行标题、其余详情），标题超长的部分**溢出到详情而不是丢弃**；
+  `importance` / `actionable` 仍不带——解析失败时没有 AI 判断可透传。
 - **「+」↔ 新建待办面板的入退场（不走 View Transitions，刻意的）**：按下时按钮
   `translateY` 下沉让位（`MOTION.state` 160ms），面板同时 `Slide` 从底部升起
   （`MOTION.large` 300ms）；关闭时面板先落下（`MOTION.largeExit` 250ms），按钮延后
@@ -498,8 +506,19 @@ CalDAV 例外：`/caldav/*` 与 `/.well-known/caldav` 不走上述 Bearer 中间
     微软可展开「高级」填自定义 client_id（默认 Thunderbird）→ ③ 微软授权引导：生成链接 →
     新标签登录并完成 MFA → 浏览器停在空白页 → 把完整地址粘回 → 完成；auth_failed 按 kind 给
     中文提示与重试 → ④ 完成页：说明「下一轮同步（最多 15 分钟）开始拉取最近 7 天邮件」。
-  - 账户详情：重命名、改密码（gmail）、重新授权（microsoft，复用步骤 ③）、停用/启用、移除。
-    移除二选一：停用（只删凭据，保留邮件与任务，可恢复）/ 彻底删除（连带邮件与任务，二次确认）。
+    ①②两步之间可「上一步」回改类型，已填内容全部保留；表单校验红字只在字段失焦过或
+    点过「下一步」之后才显示——邮箱与密码在刚进第 ② 步时必然是空的，无条件报错等于一进门满屏红。
+  - 账户详情：同步状态（上次同步时间常驻；`last_error` 全文摊开，列表行只能单行截断，
+    详情页是用户点进来查原因的地方）、重命名、改密码（gmail）、重新授权（microsoft，复用步骤 ③）、
+    停用/启用、移除。移除二选一：停用（只删凭据，保留邮件与任务，可恢复）/ 彻底删除
+    （连带邮件与任务，二次确认）。
+  - 桌面 Dialog 的入退场固定用 `SlideUp`，**不用** `dialogTransitionProps()`：这个对话框不是
+    从某一行经 View Transitions 容器变换长出来的，用后者会在支持 VT 的浏览器上把 MUI 过渡
+    设成 0ms 去给一个不会发生的 VT 让位。退场期间内容由「上一次内容」撑着、`onExited` 才清，
+    否则条件渲染的子树会被立刻拆掉、退场压根跑不到（同 4.4 的速记面板）。
+  - 移动端三个路由页与设置页同款：内容坐在 `data-glass="panel"` 玻璃面板上，底部留
+    `calc(72px + env(safe-area-inset-bottom))` 给固定底栏，否则最下面的动作按钮会被底栏压住。
+    详情/移除页按 id 取账户走 `GET /api/accounts`（不借 `/api/status` 顺带拉 `pending_llm`）。
   - 任务页空态：条目为空且用户尚无账户时显示「还没有接入邮箱」+ 前往设置的按钮。
 - PWA：vite-plugin-pwa，manifest 名称 RakkoTasks，可添加到主屏幕。
 - 移动优先；MUI 默认主题即可，8dp 间距体系。

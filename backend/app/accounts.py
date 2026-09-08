@@ -16,6 +16,10 @@ from app.imap import mstoken
 from app.models import Account, Email, Item
 
 KINDS = ("gmail", "microsoft")
+# 每用户账户数上限。本系统没有用户白名单（任何通过 Phainon 鉴权的人都能用，见 DESIGN.md
+# 第 9 节），不设上限时单个用户就能建出任意多个账户，把 worker 的同步队列占满。
+# 已停用的账户同样计数：它仍占一行、仍可随时重新启用。
+MAX_ACCOUNTS_PER_USER = 10
 # 服务端生成的授权链接只允许这两个重定向地址：公共客户端 Thunderbird 的回跳页
 # 与 oob 形态（两者对微软 authorize 端点实测均被接受，见 mstoken.py）
 ALLOWED_REDIRECT_URIS = (mstoken.DEFAULT_REDIRECT_URI, "urn:ietf:wg:oauth:2.0:oob")
@@ -24,6 +28,7 @@ ALLOWED_REDIRECT_URIS = (mstoken.DEFAULT_REDIRECT_URI, "urn:ietf:wg:oauth:2.0:oo
 _STATUS_BY_CODE = {
     "account_exists": 409,
     "no_pending_flow": 409,
+    "too_many_accounts": 409,
 }
 
 
@@ -117,6 +122,9 @@ def add_account(
     ).scalars().first()
     if dup is not None:
         raise AccountError("account_exists")
+    # 数量上限查在重复检查之后：重复添加同一个邮箱该报「已经添加过了」，那更具体
+    if len(list_accounts(session, user_sub)) >= MAX_ACCOUNTS_PER_USER:
+        raise AccountError("too_many_accounts")
     account = Account(
         user_sub=user_sub,
         name=name,

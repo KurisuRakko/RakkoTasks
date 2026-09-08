@@ -60,10 +60,29 @@ function createErrorMessage(err: unknown): string {
       return '请填写应用专用密码';
     case 'bad_email':
       return '邮箱格式不对';
+    case 'too_many_accounts':
+      // 上限数字在后端，前端不复述，否则改一处忘一处
+      return '已达到邮箱账户数量上限，先移除一个再添加';
+    case 'rate_limited':
+      return '操作太频繁，请稍后再试';
     default:
       return '添加失败，请稍后再试';
   }
 }
+
+/** 邮箱形状的轻校验：只拦明显打错的（缺 @、缺域名、域名没有点），不做 RFC 全套——
+ *  地址真伪最终由能不能收信决定，前端过严只会把合法地址挡在门外。 */
+function looksLikeEmail(value: string): boolean {
+  const parts = value.trim().split('@');
+  if (parts.length !== 2) return false;
+  const [local, domain] = parts;
+  if (local.length === 0) return false;
+  const dot = domain.indexOf('.');
+  return dot > 0 && dot < domain.length - 1;
+}
+
+/** 需要「碰过才报错」的三个字段 */
+type FieldName = 'name' | 'email' | 'password';
 
 export default function AccountWizard({ onDone, onCancel }: Props) {
   const theme = useTheme();
@@ -77,6 +96,13 @@ export default function AccountWizard({ onDone, onCancel }: Props) {
   const [msClientId, setMsClientId] = useState('');
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [activeStep, setActiveStep] = useState(0);
+  // 校验红字只在字段被碰过（失焦一次）之后才显示：第 2 步刚进来时邮箱与密码必然是空的，
+  // 无条件显示就是一进门满屏红字。按钮该不该灰仍按真实校验结果——不显示红字不等于放行。
+  const [touched, setTouched] = useState<Record<FieldName, boolean>>({
+    name: false,
+    email: false,
+    password: false,
+  });
   const [created, setCreated] = useState<AccountInfo | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -93,6 +119,16 @@ export default function AccountWizard({ onDone, onCancel }: Props) {
     const untouched = name === '' || (kind !== null && name === defaultNameFor(kind));
     setKind(k);
     if (untouched) setName(defaultNameFor(k));
+    setError(null);
+  };
+
+  const touch = (field: FieldName) =>
+    setTouched((prev) => (prev[field] ? prev : { ...prev, [field]: true }));
+
+  /** 从基本信息回类型选择：已填的名称 / 邮箱 / 密码全部留着，回来还能接着填 */
+  const handleBack = () => {
+    if (submitting) return;
+    setActiveStep(0);
     setError(null);
   };
 
@@ -124,7 +160,7 @@ export default function AccountWizard({ onDone, onCancel }: Props) {
   };
 
   const nameInvalid = name.trim() === '';
-  const emailInvalid = !email.trim().includes('@');
+  const emailInvalid = !looksLikeEmail(email);
   // Gmail 的应用专用密码在客户端就拦空值（密码框有红字提示，见第 2 步），不靠后端绕一圈
   const passwordMissing = kind === 'gmail' && appPassword.trim() === '';
   const nextDisabled =
@@ -204,8 +240,9 @@ export default function AccountWizard({ onDone, onCancel }: Props) {
               fullWidth
               value={name}
               onChange={(e) => setName(e.target.value)}
-              error={nameInvalid}
-              helperText={nameInvalid ? '请填写名称' : undefined}
+              onBlur={() => touch('name')}
+              error={touched.name && nameInvalid}
+              helperText={touched.name && nameInvalid ? '请填写名称' : undefined}
               inputProps={{ autoComplete: 'off' }}
             />
             <TextField
@@ -215,8 +252,9 @@ export default function AccountWizard({ onDone, onCancel }: Props) {
               fullWidth
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              error={emailInvalid}
-              helperText={emailInvalid ? '请填写正确的邮箱地址' : undefined}
+              onBlur={() => touch('email')}
+              error={touched.email && emailInvalid}
+              helperText={touched.email && emailInvalid ? '请填写正确的邮箱地址' : undefined}
               inputProps={{ autoComplete: 'off' }}
             />
             {kind === 'gmail' ? (
@@ -228,8 +266,9 @@ export default function AccountWizard({ onDone, onCancel }: Props) {
                   fullWidth
                   value={appPassword}
                   onChange={(e) => setAppPassword(e.target.value)}
-                  error={passwordMissing}
-                  helperText={passwordMissing ? '请填写应用专用密码' : undefined}
+                  onBlur={() => touch('password')}
+                  error={touched.password && passwordMissing}
+                  helperText={touched.password && passwordMissing ? '请填写应用专用密码' : undefined}
                   inputProps={{ autoComplete: 'off' }}
                 />
                 <Typography variant="body2" color="text.secondary">
@@ -307,25 +346,28 @@ export default function AccountWizard({ onDone, onCancel }: Props) {
         )}
       </Box>
 
-      {/* 底部动作：每步都有「下一步」推进；步骤 1/2 可取消；微软授权步提供「稍后再授权」；完成页只有「完成」 */}
+      {/* 底部动作：前两步共用「〔上一步〕/ 取消 / 下一步」一排（第 1 步才有「上一步」，
+          回退保留已填内容）；微软授权步提供「稍后再授权」；完成页只有「完成」。
+          账户在第 2 步点「下一步」时就已建好，所以第 3 步之后不再给回退。 */}
       <Stack direction="row" justifyContent="flex-end" spacing={1} sx={{ mt: 2 }}>
-        {activeStep === 0 && (
+        {(activeStep === 0 || activeStep === 1) && (
           <>
+            {activeStep === 1 && (
+              <Button variant="text" onClick={handleBack} disabled={submitting}>
+                上一步
+              </Button>
+            )}
             <Button variant="outlined" onClick={onCancel} disabled={submitting}>
               取消
             </Button>
-            <Button variant="contained" onClick={handleNext} disabled={nextDisabled}>
-              {submitting ? <CircularProgress size={18} color="inherit" /> : '下一步'}
-            </Button>
-          </>
-        )}
-        {activeStep === 1 && (
-          <>
-            <Button variant="outlined" onClick={onCancel} disabled={submitting}>
-              取消
-            </Button>
-            <Button variant="contained" onClick={handleNext} disabled={nextDisabled}>
-              {submitting ? <CircularProgress size={18} color="inherit" /> : '下一步'}
+            <Button
+              variant="contained"
+              onClick={handleNext}
+              disabled={nextDisabled}
+              // 进度圈作 startIcon：文字留在原位，按钮宽度不会在提交时缩掉一半
+              startIcon={submitting ? <CircularProgress size={16} color="inherit" /> : undefined}
+            >
+              下一步
             </Button>
           </>
         )}
