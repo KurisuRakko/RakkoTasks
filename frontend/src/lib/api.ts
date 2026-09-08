@@ -14,6 +14,7 @@ import type {
   ItemsResponse,
   ItemStatus,
   ParsedTask,
+  ParseResponse,
   QuickAddResponse,
   RelatedEmail,
   SearchResponse,
@@ -163,11 +164,12 @@ export async function search(question: string): Promise<SearchResponse> {
   }
 }
 
-/** POST /api/items/parse {text, today, tz}：一句自然语言 → 条目字段，不落库；期望 200。
+/** POST /api/items/parse {text, today, tz}：一段自然语言 → 条目字段列表，不落库；期望 200。
+ *  一段话说了几件事就返回几条（只说一件也是一元数组），解 `{tasks:[...]}` 信封。
  *  today 为本地日期 YYYY-MM-DD，作 AI 判读「今天/明天」的基准日；tz 为浏览器 IANA
  *  时区，后端据此把模型产出的提醒墙上时刻换算成带偏移的绝对时刻（在函数内部取，
  *  调用方不用传）。后端没有显式超时，客户端 180s 兜底（与 search 同值）是唯一防线。 */
-export async function parseTask(text: string, today: string): Promise<ParsedTask> {
+export async function parseTask(text: string, today: string): Promise<ParsedTask[]> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 180_000);
   try {
@@ -178,14 +180,15 @@ export async function parseTask(text: string, today: string): Promise<ParsedTask
       signal: controller.signal,
     });
     if (res.status !== 200) throw new Error(`HTTP ${res.status}`);
-    return (await res.json()) as ParsedTask;
+    return ((await res.json()) as ParseResponse).tasks;
   } finally {
     clearTimeout(timer);
   }
 }
 
-/** POST /api/items/quick {text, today, tz}：解析并落库；期望 201。AI 解析失败时后端用
- *  原文兜底建条目（ai_parsed === false 仍是正常返回）。同样带 180s 客户端超时。
+/** POST /api/items/quick {text, today, tz}：解析并落库；期望 201。一段话说了几件事就
+ *  落几条。AI 解析失败时后端用原文兜底建**一条**（ai_parsed === false 仍是正常返回）。
+ *  同样带 180s 客户端超时。
  *  tz 语义同 parseTask：浏览器时区，供后端换算提醒的绝对时刻。 */
 export async function quickAddTask(text: string, today: string): Promise<QuickAddResponse> {
   const controller = new AbortController();

@@ -1,5 +1,7 @@
 // View Transitions 样式层测试：结构断言（选择器键、时长 token 换算、壳层持名时机、
 // 表面色打底、reduced-motion 总闸）+ 两条源码静态检查（禁 transition: all）。
+// FAB ↔ 速记面板已不走 View Transitions（纯 CSS transform + MUI Slide，断言在
+// tasks-page.test.tsx），所以这里只剩「换页时 FAB 持名保持静止」这一项与它有关。
 // 纯函数断言，不渲染 DOM——viewTransitionStyles 只依赖 theme 的 breakpoints 字符串。
 
 import { describe, expect, it } from 'vitest';
@@ -57,11 +59,14 @@ describe('viewTransitionStyles 结构', () => {
     expect(collapse.animationDuration).toBe(`${MOTION.largeExit}ms`);
   });
 
-  it('image-pair 打底：isolation auto、overflow clip（sheet 与 fab 一起）', () => {
-    const key = findKey(styles, '::view-transition-image-pair', VT_NAMES.sheet, VT_NAMES.fab);
+  it('image-pair 打底：isolation auto、overflow clip（只有 sheet）', () => {
+    const key = findKey(styles, '::view-transition-image-pair', VT_NAMES.sheet);
     const rule = ruleValue(styles, key);
     expect(rule.isolation).toBe('auto');
     expect(rule.overflow).toBe('clip');
+    // FAB 不再有容器变换：它的快照不该再被 objectFit/mixBlendMode 打底，
+    // 换页时和其它壳层一样走 UA 默认交叉淡化
+    expect(key).not.toContain(VT_NAMES.fab);
   });
 
   it('reduced-motion 总闸存在且内层规则关掉动画', () => {
@@ -77,36 +82,40 @@ describe('viewTransitionStyles 结构', () => {
   });
 });
 
-describe('悬浮按钮与对话框的转场互不干扰', () => {
+describe('FAB 不再有自己的容器变换', () => {
   const styles = viewTransitionStyles(createTheme()) as Styles;
 
-  it('FAB 形变挂在 expand-fab / collapse-fab 上，不蹭详情的 expand', () => {
-    // 圆角 morph 只在 FAB 自己的 kind 下跑
-    const expandRadius = findKey(styles, 'data-vt="expand-fab"', 'image-pair', VT_NAMES.fab);
-    expect(ruleValue(styles, expandRadius).animation).toContain(`${MOTION.large}ms`);
-    const collapseRadius = findKey(styles, 'data-vt="collapse-fab"', 'image-pair', VT_NAMES.fab);
-    expect(ruleValue(styles, collapseRadius).animation).toContain(`${MOTION.largeExit}ms`);
+  it('样式表里不存在任何 expand-fab / collapse-fab 规则', () => {
+    for (const key of Object.keys(styles)) {
+      expect(key).not.toContain('expand-fab');
+      expect(key).not.toContain('collapse-fab');
+    }
   });
 
-  it('详情的淡入淡出只落在 sheet 与 FAB 自己的 kind 上，不落在 expand 下的 fab', () => {
+  it('圆角与底色 morph 的 keyframes 已删干净（FAB 不再形变成对话框）', () => {
+    const serialized = JSON.stringify(styles);
+    for (const name of ['rtk-radius-expand', 'rtk-radius-collapse', 'rtk-fab-surface-in', 'rtk-fab-surface-out']) {
+      expect(serialized).not.toContain(name);
+    }
+  });
+
+  it('详情的淡入淡出只落在 sheet 上，FAB 一条都不沾', () => {
     const fadeKeys = Object.keys(styles).filter((k) => {
       const rule = styles[k] as Rule;
       return typeof rule?.animation === 'string' && rule.animation.startsWith('rtk-vt-fade');
     });
-    const expandFabFaded = fadeKeys.some((k) =>
-      k.includes(`data-vt="expand"]::view-transition-old(${VT_NAMES.fab})`),
-    );
-    expect(expandFabFaded).toBe(false);
-    // sheet 与 expand-fab 各自都有淡化规则
-    expect(fadeKeys.some((k) => k.includes(`data-vt="expand"]::view-transition-old(${VT_NAMES.sheet})`))).toBe(true);
-    expect(fadeKeys.some((k) => k.includes(`data-vt="expand-fab"]`))).toBe(true);
+    expect(fadeKeys.length).toBeGreaterThan(0);
+    for (const key of fadeKeys) {
+      expect(key).toContain(VT_NAMES.sheet);
+      expect(key).not.toContain(`(${VT_NAMES.fab})`);
+    }
   });
 });
 
 describe('壳层与 FAB 的持名时机', () => {
   const styles = viewTransitionStyles(createTheme()) as Styles;
 
-  it('换页时四件套按 VT_SHELL_ATTR 持名，FAB 另在 expand-fab / collapse-fab 持名', () => {
+  it('换页时四件套按 VT_SHELL_ATTR 持名；FAB 只在换页持名，没有别的持名时机', () => {
     const holding = (Object.entries(styles) as Array<[string, Rule]>).filter(
       ([, rule]) => typeof rule === 'object' && rule !== null && 'viewTransitionName' in rule,
     );
@@ -119,13 +128,10 @@ describe('壳层与 FAB 的持名时机', () => {
       );
       expect(hit, `route-* 下 [${VT_SHELL_ATTR}="${name}"] 应持名`).toBeDefined();
     }
-    const fabSelf = holding.find(
-      ([key, rule]) =>
-        key.includes(`data-vt="expand-fab"`) &&
-        key.includes(`data-vt="collapse-fab"`) &&
-        rule.viewTransitionName === VT_NAMES.fab,
-    );
-    expect(fabSelf, 'fab 在 expand-fab / collapse-fab 时应持名').toBeDefined();
+    // FAB 的持名规则有且仅有换页那一条
+    const fabHolding = holding.filter(([, rule]) => rule.viewTransitionName === VT_NAMES.fab);
+    expect(fabHolding).toHaveLength(1);
+    expect(fabHolding[0][0]).toContain('data-vt^="route-"');
   });
 
   it('打开/关闭详情（expand / collapse）不持名：壳层与 FAB 留在 root 快照里随遮罩压暗', () => {
@@ -187,27 +193,18 @@ describe('容器变换的表面色打底与快照形态', () => {
   const styles = viewTransitionStyles(createTheme()) as Styles;
 
   it('快照 object-fit: none：容器长大而内容不缩放，左上锚定', () => {
-    const key = findKey(
-      styles,
-      '::view-transition-old',
-      '::view-transition-new',
-      VT_NAMES.sheet,
-      VT_NAMES.fab,
-    );
+    const key = findKey(styles, '::view-transition-old', '::view-transition-new', VT_NAMES.sheet);
     const rule = ruleValue(styles, key);
     expect(rule.objectFit).toBe('none');
     expect(rule.objectPosition).toBe('top left');
+    expect(key).not.toContain(VT_NAMES.fab);
   });
 
-  it('表面色打底跟随主题：sheet 与 fab 的 image-pair 各有进场/出场纸色动画', () => {
+  it('表面色打底跟随主题：sheet 的 image-pair 有进场/出场纸色动画', () => {
     const themed = viewTransitionStyles(
-      createTheme({
-        palette: { background: { paper: '#123456' }, primary: { main: '#abcdef' } },
-      }),
+      createTheme({ palette: { background: { paper: '#123456' } } }),
     ) as Styles;
-    const serialized = JSON.stringify(themed);
-    expect(serialized).toContain('#123456');
-    expect(serialized).toContain('#abcdef');
+    expect(JSON.stringify(themed)).toContain('#123456');
     // sheet：expand 时纸色在 old 淡出的 90ms 内补上，collapse 时收尾 90ms 淡出
     const expandSheet = ruleValue(
       themed,
@@ -221,13 +218,6 @@ describe('容器变换的表面色打底与快照形态', () => {
     );
     expect(collapseSheet.animation).toContain('rtk-surface-out');
     expect(collapseSheet.animation).toContain(`${MOTION.largeExit - MOTION.fadeOut}ms`);
-    // fab：形变时长内圆角 morph 与 primary.main→纸色两段动画同跑
-    const expandFab = ruleValue(
-      themed,
-      findKey(themed, 'data-vt="expand-fab"', 'image-pair', VT_NAMES.fab),
-    );
-    expect(expandFab.animation).toContain('rtk-radius-expand');
-    expect(expandFab.animation).toContain('rtk-fab-surface-in');
   });
 });
 

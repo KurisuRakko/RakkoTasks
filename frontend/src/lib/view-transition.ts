@@ -6,19 +6,16 @@ import { flushSync } from 'react-dom';
 /**
  * 转场种类：写到 <html data-vt> 上，供样式层的 ::view-transition-* 规则选择。
  *
- * expand/collapse 与 expand-fab/collapse-fab 必须分开：一次 expand 里只有真正在形变的
- * 那个共享元素该做淡入淡出，其余同名元素（例如打开详情时原地不动的悬浮按钮）必须保持
- * 静止——CSS 无法从选择器上区分「这次形变的是谁」，只能靠 data-vt 的取值区分。
+ * 右下角悬浮按钮 ↔ 速记面板**不在这里**：那条链路已改成纯 CSS transform + MUI Slide
+ * 的对称编排。View Transitions 一旦被浏览器跳过（iOS Safari / PWA 上常见）就两个方向
+ * 同时落空，而那是全站点击最频繁的动效，不适合押在这套机制上。
  */
 export type VtKind =
   | 'route-forward'
   | 'route-back'
   /** 列表行 / 引用项 ↔ 对话框 */
   | 'expand'
-  | 'collapse'
-  /** 悬浮按钮 ↔ 编辑器 */
-  | 'expand-fab'
-  | 'collapse-fab';
+  | 'collapse';
 
 /** 共享元素名。同一时刻同名元素只能有一个，出现两个会让整个转场被浏览器跳过 */
 export const VT_NAMES = {
@@ -37,8 +34,7 @@ export const VT_NAMES = {
  * - 换页（route-*）：壳层与悬浮按钮全部持名，各自交叉淡化、保持静止；
  * - 打开 / 关闭详情（expand / collapse）：一律不持名——它们必须留在 root 快照里，
  *   才能被 Dialog 遮罩一起压暗；若单独成组就会浮在遮罩之上，直到转场结束瞬间才被
- *   压暗，看起来就是遮罩「闪一下」；
- * - 悬浮按钮另在 expand-fab / collapse-fab 时持名（它自己形变成编辑器）。
+ *   压暗，看起来就是遮罩「闪一下」。
  */
 export const VT_SHELL_ATTR = 'data-vt-shell';
 

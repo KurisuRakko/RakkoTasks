@@ -263,40 +263,48 @@ def create_app(
         db.commit()
         return _item_dict(item, [])
 
-    def _ai_parse(text: str, today: str | None, tz: str | None) -> dict:
+    def _ai_parse(text: str, today: str | None, tz: str | None) -> list[dict]:
         """/parse 与 /quick 共用的解析路径：解析「今天」与「时区」→ parse_task →
-        归一化 → 提醒换算成带偏移的绝对时刻。
+        归一化 → 逐条把提醒换算成带偏移的绝对时刻。
+
+        一段文本可能说了好几件事，所以返回列表；只说一件事时是一元列表。
+        无论几条都只打一次 LLM——拆条是模型在同一次输出里做的。
 
         from app.llm import ... 必须写在函数体内（延迟导入）：测试用
         monkeypatch.setattr("app.llm.get_llm", lambda settings=None: FakeLLM())
         打桩，模块顶层导入会让打桩失效。
         """
-        from app.llm import get_llm, normalize_parsed_task  # 延迟导入，便于测试 monkeypatch
+        from app.llm import get_llm, normalize_parsed_tasks  # 延迟导入，便于测试 monkeypatch
 
         llm = get_llm(settings)
-        parsed = normalize_parsed_task(llm.parse_task(text, _resolve_today(today, settings)))
+        tasks = normalize_parsed_tasks(llm.parse_task(text, _resolve_today(today, settings)))
+        zone = _resolve_zone(tz, settings)
         # 模型输出的 reminders 是本地墙上时刻串（normalize 拿不到时区、保持原样），
         # 只有这里同时握着模型输出和请求时区，所以换算放服务端：转成 naive UTC 后
         # 序列化成带 +00:00 偏移的绝对时刻。/parse 的响应要被前端直接回填进
         # POST /api/items 的 reminders，而那个端点只收带偏移的串（见 DESIGN.md 6）。
-        parsed["reminders"] = [
-            dt.replace(tzinfo=timezone.utc).isoformat()
-            for dt in local_wall_to_utc(parsed["reminders"], _resolve_zone(tz, settings))
-        ]
-        return parsed
+        for parsed in tasks:
+            parsed["reminders"] = [
+                dt.replace(tzinfo=timezone.utc).isoformat()
+                for dt in local_wall_to_utc(parsed["reminders"], zone)
+            ]
+        return tasks
 
     @app.post("/api/items/parse")
     def parse_item(
         body: ParseRequest, user: CurrentUser = Depends(require_auth)
     ) -> dict:
-        """一句自然语言 → 结构化任务 dict（不落库、不碰 db）。
+        """一段自然语言 → 结构化任务列表（不落库、不碰 db）。
+
+        响应是 {"tasks": [...]} 信封而不是裸数组：与 GET /api/items 的
+        {"items": [...]} 同款，留出以后加同级字段的余地。
 
         LLM 失败回 502，异常细节绝不能进响应体。
         """
         if not parse_limiter.allow(user.sub):
             raise HTTPException(status_code=429, detail={"code": "rate_limited"})
         try:
-            return _ai_parse(body.text, body.today, body.tz)
+            return {"tasks": _ai_parse(body.text, body.today, body.tz)}
         except Exception as exc:
             logger.exception("AI 解析失败")
             raise HTTPException(status_code=502, detail={"code": "parse_error"}) from exc
@@ -308,27 +316,39 @@ def create_app(
         """自然语言一键建条目：正常路径 AI 解析后落库；LLM 失败或字段仍非法时用原文
         兜底建条目，两种情况都 201。
 
+        一段话里说了几件事就落几条，响应是 {"items": [...]} 列表。兜底路径只落
+        一条（原文本身就是一件事，没有可信的拆分依据）。
+
         兜底放在服务端而非前端：请求一旦到达服务端就会跑完（同步 def 端点跑在
         starlette 线程池里，客户端断连不会杀线程），所以用户点完确定立刻关掉
         PWA，条目照样入库；前端两步编排做不到这点。
         """
         if not parse_limiter.allow(user.sub):
             raise HTTPException(status_code=429, detail={"code": "rate_limited"})
-        reminder_dts: list[datetime] = []  # 兜底路径（LLM 挂）没有 AI 判断可用，不挂任何提醒
+        # (字段, 提醒) 对的列表。兜底路径（LLM 挂）没有 AI 判断可用，不挂任何提醒。
+        drafts: list[tuple[dict, list[datetime]]] = []
         try:
-            parsed = _ai_parse(body.text, body.today, body.tz)
-            # 第二道保险：normalize_parsed_task 理论上已兜住字段非法，这里再校一次
-            due = validate_item_fields(
-                parsed["title"], parsed["summary"], parsed["category"],
-                parsed["due_date"], parsed["importance"],
-            )
+            for parsed in _ai_parse(body.text, body.today, body.tz):
+                # 第二道保险：normalize_parsed_task 理论上已兜住字段非法，这里再校一次
+                due = validate_item_fields(
+                    parsed["title"], parsed["summary"], parsed["category"],
+                    parsed["due_date"], parsed["importance"],
+                )
+                # _ai_parse 已按请求时区把模型输出的墙上时刻换成带 +00:00 的绝对时刻串，
+                # 这里再落成库里的 naive UTC（validate_reminders 收的就是带偏移串）
+                drafts.append((
+                    {
+                        "title": parsed["title"],
+                        "summary": parsed["summary"],
+                        "category": parsed["category"],
+                        "due_date": due,
+                        "importance": parsed["importance"],
+                        "actionable": parsed["actionable"],
+                    },
+                    validate_reminders(parsed["reminders"]) or [],
+                ))
             ai_parsed = True
-            title, summary = parsed["title"], parsed["summary"]
-            category, importance, actionable = parsed["category"], parsed["importance"], parsed["actionable"]
-            # _ai_parse 已按请求时区把模型输出的墙上时刻换成带 +00:00 的绝对时刻串，
-            # 这里再落成库里的 naive UTC（validate_reminders 收的就是带偏移串）
-            reminder_dts = validate_reminders(parsed["reminders"]) or []
-        except Exception as exc:
+        except Exception:
             logger.exception("AI 解析失败，改用原文兜底建条目")
             ai_parsed = False
             raw = body.text.strip()
@@ -338,23 +358,24 @@ def create_app(
                 title = raw[:128]
                 # 超过 128 字的部分放 summary：完整原文进 summary，别把用户的话弄丢
                 summary = "" if len(raw) <= 128 else raw
-            category, due, importance, actionable = "其他", None, "normal", True
-        item = Item(
-            user_sub=user.sub,
-            email_id=None,
-            title=title,
-            summary=summary,
-            category=category,
-            due_date=due,
-            importance=importance,
-            actionable=actionable,
-            status="open",
-        )
-        db.add(item)
-        for dt in reminder_dts:
-            item.reminders.append(Reminder(remind_at=dt))
+            # 整批丢弃已解析出的部分：一次请求要么全是 AI 结果、要么全是原文兜底，
+            # 半截 AI 半截原文的混合结果没法向用户解释（ai_parsed 只有一个）。
+            drafts = [(
+                {
+                    "title": title, "summary": summary, "category": "其他",
+                    "due_date": None, "importance": "normal", "actionable": True,
+                },
+                [],
+            )]
+        items: list[Item] = []
+        for fields, reminder_dts in drafts:
+            item = Item(user_sub=user.sub, email_id=None, status="open", **fields)
+            db.add(item)
+            for dt in reminder_dts:
+                item.reminders.append(Reminder(remind_at=dt))
+            items.append(item)
         db.commit()
-        return {"item": _item_dict(item, []), "ai_parsed": ai_parsed}
+        return {"items": [_item_dict(item, []) for item in items], "ai_parsed": ai_parsed}
 
     @app.patch("/api/items/{item_id}")
     def patch_item(
