@@ -56,20 +56,22 @@ afterEach(() => {
 });
 
 describe('SettingsPage 已停用账户', () => {
-  it('enabled=false 时卡片显示「已停用」Chip，且变暗走 filter 而非 opacity', async () => {
+  it('enabled=false 时账户行显示「已停用」Chip，且变暗走 filter 而非 opacity', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => json(STATUS)));
-    const { container } = render(
+    render(
       <ThemeModeProvider>
         <SettingsPage />
       </ThemeModeProvider>,
     );
 
-    expect(await screen.findByText('已停用')).toBeTruthy();
+    // 账户行卡片化已移除（分区本身是玻璃面板，行直接坐上面），变暗挂在行容器上：
+    // 行容器 =「已停用」Chip 所在 Stack 的外层
+    const chip = await screen.findByText('已停用');
     expect(screen.queryByText('同步中')).toBeNull();
 
-    const card = container.querySelector('.MuiCard-root');
-    expect(card).not.toBeNull();
-    const styles = getComputedStyle(card!);
+    const row = chip.closest('.MuiStack-root')?.parentElement as HTMLElement | null;
+    expect(row).not.toBeNull();
+    const styles = getComputedStyle(row!);
     // 变暗必须走 filter：退回旧的 opacity 写法时，opacity 计算值为 '0.6' 且
     // filter 不含 opacity(0.6)，两条断言都会失败
     expect(styles.filter).toContain('opacity(0.6)');
@@ -249,6 +251,56 @@ describe('SettingsPage 检查更新', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: '检查更新' }));
     expect(await screen.findByText('当前环境不支持自动更新')).toBeTruthy();
+  });
+});
+
+describe('SettingsPage 玻璃分区与按钮配色', () => {
+  function makeFetchMock(): ReturnType<typeof vi.fn> {
+    return vi.fn(async (url: string | URL) => {
+      const u = String(url);
+      if (u.includes('/api/caldav')) {
+        return json({ username: 'you@gmail.com', path: '/caldav/', configured: false });
+      }
+      if (u.includes('/api/calendar')) return json({ token: 'abc' });
+      return json(STATUS);
+    });
+  }
+
+  it('七个分区（账户状态…关于）都包在 data-glass="panel" 玻璃面板里，按渲染顺序对应', async () => {
+    vi.stubGlobal('fetch', makeFetchMock());
+    render(
+      <ThemeModeProvider>
+        <SettingsPage />
+      </ThemeModeProvider>,
+    );
+
+    // 分区标题是静态内容，渲染即可断言；渲染顺序与页面书写顺序一致
+    const titles = ['账户状态', '外观', '壁纸', '日历订阅', '提醒事项同步', '账户', '关于'];
+    const panels = Array.from(document.querySelectorAll('[data-glass="panel"]'));
+    expect(panels).toHaveLength(titles.length);
+    panels.forEach((panel, i) => {
+      expect(panel.textContent, `第 ${i + 1} 个面板应含「${titles[i]}」`).toContain(titles[i]);
+    });
+  });
+
+  it('按钮不再有 warning 配色（源码断言）：color="warning" 与 <Divider 均已删除', () => {
+    expect(settingsPageSource).not.toContain('color="warning"');
+    expect(settingsPageSource).not.toContain('<Divider');
+  });
+
+  it('日历操作排：主操作「在 iPhone 上订阅」是 contained，「重新生成」不再是 warning 色', async () => {
+    vi.stubGlobal('fetch', makeFetchMock());
+    render(
+      <ThemeModeProvider>
+        <SettingsPage />
+      </ThemeModeProvider>,
+    );
+
+    await screen.findByLabelText('订阅链接');
+    const subscribe = screen.getByRole('link', { name: '在 iPhone 上订阅' });
+    expect(subscribe.className).toMatch(/MuiButton-contained/);
+    const rotate = screen.getByRole('button', { name: '重新生成' });
+    expect(rotate.className).not.toMatch(/colorWarning/);
   });
 });
 
