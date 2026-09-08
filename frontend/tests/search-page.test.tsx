@@ -5,12 +5,18 @@
 // 段落不各自挂雾（[data-glass="haze"] 全页恰好 2 个）；引用行仍是 data-glass="panel"
 // 且数量 = citations 数；任何 data-glass 元素都不嵌套在另一块 data-glass 里（回答块
 // 与引用列表实测是兄弟关系）。
+// 输入区玻璃覆盖：问题输入框挂 data-glass="panel"（结果区早就位，输入区是搜索页最后
+// 补上玻璃的区块）——宿主是 TextField 的 FormControl 根而非 textarea 自身；材质由
+// rakko-glass.css 配方提供，宿主自身不下发 background（否则盖掉配方，同 MuiPaper /
+// MuiAppBar 的 &:not([data-glass]) 让位），sx 只补 RADIUS.card 圆角；内层 OutlinedInput
+// 显式清背景与 notchedOutline 边框（边框由配方的 --glass-rim 提供，不能叠两层）。
+// 故出结果后全页 panel 数 = 引用行数 + 输入区常驻 1 块。
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import SearchPage from '../src/pages/SearchPage';
 import searchSource from '../src/pages/SearchPage.tsx?raw';
-import { NEUTRAL_LIGHT } from '../src/rakko-tokens';
+import { NEUTRAL_LIGHT, RADIUS } from '../src/rakko-tokens';
 import type { SearchCitation, SearchResponse } from '../src/types';
 import { allStyleText, ownEmotionClass, renderWithAppTheme, ruleTextOf } from './glass-text-contrast.test-utils';
 
@@ -139,11 +145,14 @@ describe('SearchPage haze 底衬（AI 回答 note 档 + 引用标题 label 档�
     const fetchMock = makeFetchMock(makeResult(question, CITATIONS));
     const { container } = await renderAndSearch(fetchMock, question);
 
-    // 引用行保持 data-glass="panel"，一行一块玻璃，数量与 citations 一一对应
+    // 出结果后的 panel = 引用行（每行一块）+ 输入区常驻一块（TextField 根，见输入区
+    // 玻璃 describe）；带 ListItemButton 类的才是引用行，一一对应 citations
     const panels = container.querySelectorAll('[data-glass="panel"]');
-    expect(panels).toHaveLength(CITATIONS.length);
-    for (const panel of Array.from(panels)) {
-      expect(panel.classList.contains('MuiListItemButton-root')).toBe(true);
+    expect(panels).toHaveLength(CITATIONS.length + 1);
+    const rowPanels = Array.from(panels).filter((p) => p.classList.contains('MuiListItemButton-root'));
+    expect(rowPanels).toHaveLength(CITATIONS.length);
+    for (const panel of rowPanels) {
+      expect(panel.getAttribute('data-glass')).toBe('panel');
     }
 
     // 嵌套实测：引用列表不能落在回答雾内部——两团雾是同一容器的直接子级（兄弟），
@@ -226,5 +235,86 @@ describe('引用行时间摘要文字色（玻璃上没有次级色的守卫）'
         `color:${NEUTRAL_LIGHT[6]}`,
       );
     }
+  });
+});
+
+describe('搜索页输入区玻璃（输入框挂 data-glass="panel"）', () => {
+  // 结果区（回答 haze / 引用标题 haze / 引用行 panel）早就位，输入区是搜索页最后补上
+  // 玻璃的区块。材质（纸底 / 边框 / 高光 / 阴影 / 文字光晕）全部来自 rakko-glass.css
+  // 的 panel 配方，页面 sx 只补配方不管的圆角（RADIUS.card，与列表行一致）——宿主
+  // 自身一发 background 就会盖掉配方（同 theme.ts MuiPaper / MuiAppBar 让位的道理）。
+
+  it('输入框的玻璃宿主带 data-glass="panel"：是 FormControl 根，textarea 自身不挂；未出结果时全页恰一块 panel', async () => {
+    // SearchPage 的 lastResultCache 是模块级缓存，前序用例搜索后残留——空态断言必须先
+    // resetModules 再动态取一份全新模块（缓存为 null），否则初始帧就带着上一个用例的结果
+    vi.resetModules();
+    const { default: FreshSearchPage } = await import('../src/pages/SearchPage');
+    const { container } = render(<FreshSearchPage />);
+    const textarea = await screen.findByPlaceholderText(/问你的邮件库/);
+
+    // 玻璃挂在 TextField 的 FormControl 根（MUI 把 data-* 透传到根 div），textarea 只
+    // 是玻璃上的输入元素
+    expect(textarea.hasAttribute('data-glass')).toBe(false);
+    const host = textarea.closest('[data-glass="panel"]');
+    expect(host).not.toBeNull();
+    expect(host!.classList.contains('MuiFormControl-root')).toBe(true);
+    expect(host!.contains(textarea)).toBe(true);
+
+    // 空态（未出结果）时输入区是页面里唯一一块 panel；玻璃不允许嵌套
+    expect(container.querySelectorAll('[data-glass="panel"]')).toHaveLength(1);
+    expect(host!.parentElement!.closest('[data-glass]')).toBeNull();
+  });
+
+  it('宿主自身的样式不下发 background（让位给配方），只补 RADIUS.card 圆角', async () => {
+    renderWithAppTheme(<SearchPage />);
+    const textarea = await screen.findByPlaceholderText(/问你的邮件库/);
+    const host = textarea.closest('[data-glass="panel"]') as HTMLElement | null;
+    expect(host).not.toBeNull();
+
+    // 宿主规则 = 页面 sx 生成的局部 emotion 类（不含 MUI 类名样式）
+    expect(ownEmotionClass(host!), '宿主应带 emotion 局部类').not.toBeNull();
+    const css = allStyleText();
+    const rule = ruleTextOf(css, host!);
+    expect(rule, 'sx 只补配方不管的圆角').toContain(`border-radius:${RADIUS.card}px`);
+    expect(rule, '宿主不得下发 background / backgroundColor——盖掉配方就是两层底').not.toContain(
+      'background',
+    );
+
+    // 内层 OutlinedInput 显式清背景；notchedOutline 边框被清（边框由配方的 --glass-rim
+    // 提供，叠着就是两层边框）。规则是宿主类的后代选择器，落在宿主之外的规则文本里。
+    expect(
+      host!.querySelector('.MuiOutlinedInput-notchedOutline'),
+      'notchedOutline 结构仍在（边框由 CSS 清掉，不是不渲染）',
+    ).not.toBeNull();
+    expect(css).toContain('.MuiOutlinedInput-root{background-color:transparent;');
+    expect(css).toContain('border:none');
+  });
+
+  it('源码：TextField 段挂 data-glass="panel"；OutlinedInput 清背景；notchedOutline 边框清掉', () => {
+    // 内联材质断言落回源码原文（同 hazeHostTag 的约定）：jsdom 给不出可靠的 computed 值，
+    // 逐字断言组件开标签（TextField 无子节点，以 /> 收尾）
+    const start = searchSource.indexOf('<TextField');
+    expect(start).toBeGreaterThan(-1);
+    const tagEnd = searchSource.indexOf('/>', start);
+    expect(tagEnd).toBeGreaterThan(-1);
+    const tag = searchSource.slice(start, tagEnd + 2);
+
+    expect(tag).toContain('data-glass="panel"');
+    // 圆角用 token（RADIUS.card，与列表行同档），不许写死像素
+    expect(tag).toContain('borderRadius: `${RADIUS.card}px`');
+    // 玻璃宿主（FormControl 根）自身不下发 background——background 只允许出现在给
+    // OutlinedInput 让位的嵌套选择器里（缩进在 '& .MuiOutlinedInput-root' 之下）
+    expect(tag).not.toContain('\n            backgroundColor');
+    // OutlinedInput 让位：清背景 + 清 notchedOutline 边框
+    expect(tag).toContain("backgroundColor: 'transparent'");
+    expect(tag).toContain("'& .MuiOutlinedInput-notchedOutline': { border: 'none' }");
+    // 文字光晕由配方继承下发，不许自己再写 text-shadow
+    expect(tag).not.toContain('text-shadow');
+    // 按钮保持普通 contained（accent 实心块不贴玻璃），不挂 data-glass
+    const buttonStart = searchSource.indexOf('<Button');
+    expect(buttonStart).toBeGreaterThan(-1);
+    const buttonTag = searchSource.slice(buttonStart, searchSource.indexOf('/>', buttonStart) + 2);
+    expect(buttonTag).toContain('variant="contained"');
+    expect(buttonTag).not.toContain('data-glass');
   });
 });

@@ -25,7 +25,7 @@ import useMediaQuery from '@mui/material/useMediaQuery';
 import { useTheme } from '@mui/material/styles';
 import { search } from '../lib/api';
 import { columnDialogSx } from '../lib/layout';
-import { GLASS } from '../rakko-tokens';
+import { GLASS, RADIUS } from '../rakko-tokens';
 import type { SearchCitation, SearchResponse } from '../types';
 import EmailViewer from '../components/EmailViewer';
 import SafeMarkdown from '../components/SafeMarkdown';
@@ -68,6 +68,18 @@ export default function SearchPage() {
   return (
     <Box>
       <Box sx={{ px: 2, py: 2 }}>
+        {/* 问题输入区是搜索页最后一块没有玻璃的区域（结果区 haze / 引用行 panel
+            已就位），这里给输入框挂一块 panel：纸底 / 边框 / 高光 / 阴影 / 文字光晕
+            全部来自 rakko-glass.css 的配方（同列表行 cardRowSx 的道理），sx 只补配方
+            不管的圆角（RADIUS.card，与列表行一致）。
+            关键让位：玻璃挂在本元素（FormControl 根）上，主题层与本 sx 都不能再向
+            宿主下发 background——否则会盖掉配方（同 theme.ts 里 MuiPaper / MuiAppBar
+            用 &:not([data-glass]) 让位的同一个道理）。内层 OutlinedInput 也要让位：
+            notchedOutline 边框显式清掉（边框由配方的 --glass-rim 提供，叠着就是两层
+            边框）；背景显式置 transparent 作双保险——当前 MUI 的 outlined 根默认就不
+            带背景，一旦主题或版本给输入根补了背景，透明声明能让玻璃不被实心底盖住。
+            文字光晕随配方继承下发，这里不写 text-shadow。按钮保持普通 contained
+            （accent 实心块没有可透的东西，玻璃不贴按钮），禁用态交给 MUI。 */}
         <TextField
           fullWidth
           multiline
@@ -76,6 +88,14 @@ export default function SearchPage() {
           placeholder="问你的邮件库：例如「下周三之前有哪些截止日期？」"
           value={question}
           onChange={(e) => setQuestion(e.target.value)}
+          data-glass="panel"
+          sx={{
+            borderRadius: `${RADIUS.card}px`,
+            '& .MuiOutlinedInput-root': {
+              backgroundColor: 'transparent',
+              '& .MuiOutlinedInput-notchedOutline': { border: 'none' },
+            },
+          }}
         />
         <Button
           fullWidth
