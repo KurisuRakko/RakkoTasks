@@ -128,10 +128,22 @@ function TaskRow({
         data-glass="panel"
         sx={[
           cardRowSx(),
-          // 长按行体时 iOS 会弹系统文本选择菜单（触摸保持 500ms 即触发），行内文字
-          // 也不是可选中文本——userSelect 与 WebkitTouchCallout 一并关掉，长按只走
-          // 我们自己的手势（合并进 cardRowSx 的 sx 数组，surface.ts 不动）
-          { WebkitTouchCallout: 'none', userSelect: 'none' },
+          {
+            // 行内是两段竖排 grid：第一行 蓝点列(12px) / 勾选列(auto) / 标题+摘要(1fr)，
+            // 第二行 chips 独占整行。chips 从标题右侧挪走后不再与标题抢宽度——窄屏下
+            // 标题此前被右侧整组标签（flexShrink: 0）挤成竖排碎行，现在标题与摘要
+            // 吃满整行，chips 放不下时在自己行内换行。
+            display: 'grid',
+            gridTemplateColumns: '12px auto 1fr',
+            gridTemplateAreas: '"dot cb text" ". . chips"',
+            alignItems: 'start',
+            rowGap: '6px',
+            // 长按行体时 iOS 会弹系统文本选择菜单（触摸保持 500ms 即触发），行内文字
+            // 也不是可选中文本——userSelect 与 WebkitTouchCallout 一并关掉，长按只走
+            // 我们自己的手势（合并进 cardRowSx 的 sx 数组，surface.ts 不动）
+            WebkitTouchCallout: 'none',
+            userSelect: 'none',
+          },
         ]}
         onClick={() => onOpen(item)}
         onContextMenu={(e) => {
@@ -140,7 +152,7 @@ function TaskRow({
         }}
         {...longPress}
       >
-        <Box sx={{ width: 12, display: 'flex', justifyContent: 'center', flexShrink: 0 }}>
+        <Box sx={{ gridArea: 'dot', width: 12, display: 'flex', justifyContent: 'center', flexShrink: 0 }}>
           {isNewToday(item, today) && (
             <Box
               role="img"
@@ -154,6 +166,9 @@ function TaskRow({
           checked={leaving}
           tabIndex={-1}
           disableRipple
+          // 顶部对齐后勾选块在视觉上会比标题低一点（grid 第一行内它最高），
+          // 上提 4px 校正
+          sx={{ gridArea: 'cb', marginTop: '-4px' }}
           onClick={(e) => {
             e.stopPropagation();
             onToggle(item);
@@ -162,6 +177,7 @@ function TaskRow({
         <ListItemText
           primary={item.title}
           secondary={item.summary}
+          sx={{ gridArea: 'text', margin: 0 }}
           // 摘要直接压在行自己的 data-glass="panel" 玻璃上（纸色 58% 仍透壁纸）：
           // MUI 默认给 secondary 的 text.secondary（n7）实测对比度只有 2.4–2.6，
           // 远低于 AA 正文的 4.5。玻璃上没有次级色空间，层级靠字号字重（标题
@@ -177,13 +193,13 @@ function TaskRow({
             },
           }}
         />
-        {/* 右侧标签成组：整组 flexShrink: 0，长标题换行时标签不被挤压截断。
-            行已由 rowSx 的 grid 列撑满容器宽度（见 motion.ts），标签组自然贴右 */}
+        {/* 标签成组：chips 独占两段 grid 的第二行（gridArea: 'chips'），不再与标题
+            同排抢宽度；放不下时在行内自行换行（flexWrap + rowGap），不会挤回标题行 */}
         <Stack
           direction="row"
           spacing={0.5}
           alignItems="center"
-          sx={{ ml: 1, flexShrink: 0 }}
+          sx={{ gridArea: 'chips', flexWrap: 'wrap', rowGap: '4px' }}
         >
           {item.importance === 'high' && (
             <Chip
