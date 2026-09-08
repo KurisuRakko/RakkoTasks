@@ -78,11 +78,15 @@ export const TYPE_SCALE: Record<
   'title-28': { size: 28, lineHeight: 1.29 },
 };
 
-/** 圆角（px）：chip 4、默认 6、卡片 8、对话框 12 */
+/** 圆角（px）：chip 4、base 6、card 6、dialog 12。
+ * card 这一档同时供列表行玻璃（lib/surface.ts）、右键菜单（RowContextMenu）与 MuiCard
+ * 取用，三处是同一个视觉语汇，一起从 8 降到 6 是刻意的：浅色主题的玻璃边缘对比加强后，
+ * 8px 的方角与玻璃的柔和质感冲突；6px（= RADIUS.base）更利落，与 Rakko Design 的
+ * 克制圆角一致。 */
 export const RADIUS = {
   chip: 4,
   base: 6,
-  card: 8,
+  card: 6,
   dialog: 12,
 } as const;
 
