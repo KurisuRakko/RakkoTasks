@@ -5,12 +5,15 @@
 // 段落不各自挂雾（[data-glass="haze"] 全页恰好 2 个）；引用行仍是 data-glass="panel"
 // 且数量 = citations 数；任何 data-glass 元素都不嵌套在另一块 data-glass 里（回答块
 // 与引用列表实测是兄弟关系）。
-// 输入区玻璃覆盖：问题输入框挂 data-glass="panel"（结果区早就位，输入区是搜索页最后
-// 补上玻璃的区块）——宿主是 TextField 的 FormControl 根而非 textarea 自身；材质由
-// rakko-glass.css 配方提供，宿主自身不下发 background（否则盖掉配方，同 MuiPaper /
-// MuiAppBar 的 &:not([data-glass]) 让位），sx 只补 RADIUS.card 圆角；内层 OutlinedInput
-// 显式清背景与 notchedOutline 边框（边框由配方的 --glass-rim 提供，不能叠两层）。
-// 故出结果后全页 panel 数 = 引用行数 + 输入区常驻 1 块。
+// 输入区玻璃覆盖：提问台是一整块表面——TextField、搜索按钮、LinearProgress、错误
+// Alert 同坐一块 data-glass="panel" 的容器上。玻璃不嵌套是既有不变量，所以玻璃挂在
+// 这层外层容器而不是 TextField 的 FormControl 根（输入框及其后代都不带 data-glass）；
+// 材质由 rakko-glass.css 配方提供，宿主自身不下发 background（否则盖掉配方，同
+// MuiPaper / MuiAppBar 的 &:not([data-glass]) 让位），sx 只补 RADIUS.card 圆角与
+// p: 1.5 内边距；内层 OutlinedInput 显式清背景与 notchedOutline 边框（边框由配方的
+// --glass-rim 提供，不能叠两层）。
+// 故出结果后全页 panel 数 = 引用行数 + 提问台常驻 1 块（玻璃从 TextField 根搬到外层
+// 容器，块数不变，只是宿主换了个元素）。
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
@@ -145,8 +148,8 @@ describe('SearchPage haze 底衬（AI 回答 note 档 + 引用标题 label 档�
     const fetchMock = makeFetchMock(makeResult(question, CITATIONS));
     const { container } = await renderAndSearch(fetchMock, question);
 
-    // 出结果后的 panel = 引用行（每行一块）+ 输入区常驻一块（TextField 根，见输入区
-    // 玻璃 describe）；带 ListItemButton 类的才是引用行，一一对应 citations
+    // 出结果后的 panel = 引用行（每行一块）+ 提问台容器常驻一块（见输入区玻璃
+    // describe）；带 ListItemButton 类的才是引用行，一一对应 citations
     const panels = container.querySelectorAll('[data-glass="panel"]');
     expect(panels).toHaveLength(CITATIONS.length + 1);
     const rowPanels = Array.from(panels).filter((p) => p.classList.contains('MuiListItemButton-root'));
@@ -238,13 +241,16 @@ describe('引用行时间摘要文字色（玻璃上没有次级色的守卫）'
   });
 });
 
-describe('搜索页输入区玻璃（输入框挂 data-glass="panel"）', () => {
+describe('搜索页输入区玻璃（提问台容器挂 data-glass="panel"，裹住输入框 + 按钮 + 进度 + 告警）', () => {
   // 结果区（回答 haze / 引用标题 haze / 引用行 panel）早就位，输入区是搜索页最后补上
-  // 玻璃的区块。材质（纸底 / 边框 / 高光 / 阴影 / 文字光晕）全部来自 rakko-glass.css
-  // 的 panel 配方，页面 sx 只补配方不管的圆角（RADIUS.card，与列表行一致）——宿主
-  // 自身一发 background 就会盖掉配方（同 theme.ts MuiPaper / MuiAppBar 让位的道理）。
+  // 玻璃的区块。提问台是一整块表面：「输入 + 它的动作按钮」是同一块玻璃上的控件组，
+  // 所以玻璃挂在这层外层容器上而不是 TextField 的 FormControl 根——玻璃不嵌套是既有
+  // 不变量，TextField 及其后代都不带 data-glass。材质（纸底 / 边框 / 高光 / 阴影 /
+  // 文字光晕）全部来自 rakko-glass.css 的 panel 配方，宿主自身一发 background 就会
+  // 盖掉配方（同 theme.ts MuiPaper / MuiAppBar 让位的道理），页面 sx 只补配方不管的
+  // 圆角（RADIUS.card，与列表行一致）与 p: 1.5 内边距。
 
-  it('输入框的玻璃宿主带 data-glass="panel"：是 FormControl 根，textarea 自身不挂；未出结果时全页恰一块 panel', async () => {
+  it('玻璃宿主是提问台容器：TextField 的 FormControl 根及其后代都不带 data-glass；未出结果时全页恰一块 panel', async () => {
     // SearchPage 的 lastResultCache 是模块级缓存，前序用例搜索后残留——空态断言必须先
     // resetModules 再动态取一份全新模块（缓存为 null），否则初始帧就带着上一个用例的结果
     vi.resetModules();
@@ -252,36 +258,97 @@ describe('搜索页输入区玻璃（输入框挂 data-glass="panel"）', () => 
     const { container } = render(<FreshSearchPage />);
     const textarea = await screen.findByPlaceholderText(/问你的邮件库/);
 
-    // 玻璃挂在 TextField 的 FormControl 根（MUI 把 data-* 透传到根 div），textarea 只
-    // 是玻璃上的输入元素
+    // 玻璃不再挂在 TextField 上：textarea 与 FormControl 根都不带 data-glass，玻璃是
+    // 包住整个控件组的提问台容器（Box div）
     expect(textarea.hasAttribute('data-glass')).toBe(false);
+    const formRoot = textarea.closest('.MuiFormControl-root');
+    expect(formRoot, 'TextField 应渲染出 MUI FormControl 根').not.toBeNull();
+    expect(formRoot!.hasAttribute('data-glass')).toBe(false);
     const host = textarea.closest('[data-glass="panel"]');
     expect(host).not.toBeNull();
-    expect(host!.classList.contains('MuiFormControl-root')).toBe(true);
-    expect(host!.contains(textarea)).toBe(true);
+    expect(host!.tagName).toBe('DIV'); // Box 容器
+    expect(host!.classList.contains('MuiFormControl-root')).toBe(false);
+    expect(host!.contains(formRoot)).toBe(true);
+    // 提问台内部（含 TextField 全部后代）不允许再出现任何 data-glass——玻璃不嵌套
+    expect(host!.querySelectorAll('[data-glass]')).toHaveLength(0);
 
-    // 空态（未出结果）时输入区是页面里唯一一块 panel；玻璃不允许嵌套
+    // 空态（未出结果）时提问台是页面里唯一一块 panel；玻璃不允许嵌套
     expect(container.querySelectorAll('[data-glass="panel"]')).toHaveLength(1);
     expect(host!.parentElement!.closest('[data-glass]')).toBeNull();
   });
 
-  it('宿主自身的样式不下发 background（让位给配方），只补 RADIUS.card 圆角', async () => {
+  it('搜索按钮坐在提问台容器（[data-glass="panel"]）里：不带自己的 data-glass', async () => {
+    render(<SearchPage />);
+    await screen.findByPlaceholderText(/问你的邮件库/);
+
+    const button = screen.getByRole('button', { name: /搜索/ });
+    const host = button.closest('[data-glass="panel"]');
+    expect(host, '按钮不能裸在壁纸上，必须是提问台玻璃的后代').not.toBeNull();
+    expect(host!.contains(button)).toBe(true);
+    expect(button.hasAttribute('data-glass')).toBe(false);
+  });
+
+  it('搜索挂起时 LinearProgress 出现在提问台容器内（fetch 悬而不决 → searching 保持 true）', async () => {
+    // 门闩式 fetch（同 ai-add-integration.test.tsx 的 deferred 约定）：submit 停在
+    // await 上，searching 一直是 true → progress 可见；断言完放行让 search() 走完并
+    // 清掉它内部的 180s 超时定时器（不放行的话那个定时器会挂着不放）
+    let releaseFetch!: (r: Response) => void;
+    const fetchMock = vi.fn(() => new Promise<Response>((res) => { releaseFetch = res; }));
+    vi.stubGlobal('fetch', fetchMock);
+    const question = '进度条问题';
+    render(<SearchPage />);
+    const textarea = await screen.findByPlaceholderText(/问你的邮件库/);
+    fireEvent.change(textarea, { target: { value: question } });
+    fireEvent.click(screen.getByRole('button', { name: /搜索/ }));
+
+    const progress = await screen.findByRole('progressbar');
+    const host = progress.closest('[data-glass="panel"]');
+    expect(host, '进度条不能裸在壁纸上，必须是提问台玻璃的后代').not.toBeNull();
+    expect(host!.contains(progress)).toBe(true);
+    expect(host!.querySelectorAll('[data-glass]')).toHaveLength(0);
+
+    // 放行：fetch 返回结果，searching 回落、180s 定时器清掉
+    releaseFetch!(json(makeResult(question, [])));
+    await screen.findByText(`${question} 的第一段正文。`);
+  });
+
+  it('搜索失败时错误 Alert 出现在提问台容器内（fetch 抛错 → 「搜索失败，请稍后重试」）', async () => {
+    // resetModules 让本用例从空缓存开始，错误 Alert 是提问台里唯一的结果区外响应
+    vi.resetModules();
+    const { default: FreshSearchPage } = await import('../src/pages/SearchPage');
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('网络不可用'); }));
+    render(<FreshSearchPage />);
+    const textarea = await screen.findByPlaceholderText(/问你的邮件库/);
+    fireEvent.change(textarea, { target: { value: '失败提示问题' } });
+    fireEvent.click(screen.getByRole('button', { name: /搜索/ }));
+
+    // Alert 的 role 默认是 alert；告警文本在消息格子里，格子一路向上最近玻璃是提问台
+    const alertEl = await screen.findByRole('alert');
+    expect(alertEl).toHaveTextContent('搜索失败，请稍后重试');
+    const host = alertEl.closest('[data-glass="panel"]');
+    expect(host, '错误 Alert 不能裸在壁纸上，必须是提问台玻璃的后代').not.toBeNull();
+    expect(host!.contains(alertEl)).toBe(true);
+    expect(alertEl.hasAttribute('data-glass'), 'Alert 自身不带玻璃（玻璃不嵌套）').toBe(false);
+  });
+
+  it('提问台容器自身的样式不下发 background（让位给配方），只补 RADIUS.card 圆角与 p: 1.5 内边距', async () => {
     renderWithAppTheme(<SearchPage />);
     const textarea = await screen.findByPlaceholderText(/问你的邮件库/);
     const host = textarea.closest('[data-glass="panel"]') as HTMLElement | null;
     expect(host).not.toBeNull();
 
-    // 宿主规则 = 页面 sx 生成的局部 emotion 类（不含 MUI 类名样式）
+    // 宿主规则 = 页面 sx 生成的局部 emotion 类（Box 容器无 MUI 类名样式）
     expect(ownEmotionClass(host!), '宿主应带 emotion 局部类').not.toBeNull();
     const css = allStyleText();
     const rule = ruleTextOf(css, host!);
     expect(rule, 'sx 只补配方不管的圆角').toContain(`border-radius:${RADIUS.card}px`);
+    expect(rule, 'p: 1.5 = 12px：控件在玻璃内有呼吸').toContain('padding:12px');
     expect(rule, '宿主不得下发 background / backgroundColor——盖掉配方就是两层底').not.toContain(
       'background',
     );
 
     // 内层 OutlinedInput 显式清背景；notchedOutline 边框被清（边框由配方的 --glass-rim
-    // 提供，叠着就是两层边框）。规则是宿主类的后代选择器，落在宿主之外的规则文本里。
+    // 提供，叠着就是两层边框）。规则是 TextField sx 的后代选择器，落在宿主之外的规则文本里。
     expect(
       host!.querySelector('.MuiOutlinedInput-notchedOutline'),
       'notchedOutline 结构仍在（边框由 CSS 清掉，不是不渲染）',
@@ -290,27 +357,42 @@ describe('搜索页输入区玻璃（输入框挂 data-glass="panel"）', () => 
     expect(css).toContain('border:none');
   });
 
-  it('源码：TextField 段挂 data-glass="panel"；OutlinedInput 清背景；notchedOutline 边框清掉', () => {
+  it('源码：玻璃开在提问台容器上而非 TextField；OutlinedInput 让位清背景与 notchedOutline 边框', () => {
     // 内联材质断言落回源码原文（同 hazeHostTag 的约定）：jsdom 给不出可靠的 computed 值，
-    // 逐字断言组件开标签（TextField 无子节点，以 /> 收尾）
-    const start = searchSource.indexOf('<TextField');
-    expect(start).toBeGreaterThan(-1);
-    const tagEnd = searchSource.indexOf('/>', start);
-    expect(tagEnd).toBeGreaterThan(-1);
-    const tag = searchSource.slice(start, tagEnd + 2);
+    // 逐字断言组件开标签。提问台容器（源文件里第一处 data-glass="panel"，前面的注释不
+    // 出现该属性字面量）与引用行玻璃的区分靠出现次序。
+    const idx = searchSource.indexOf('data-glass="panel"');
+    expect(idx).toBeGreaterThan(-1);
+    const containerStart = searchSource.lastIndexOf('<', idx);
+    const containerEnd = searchSource.indexOf('>', idx);
+    expect(containerStart).toBeGreaterThan(-1);
+    expect(containerEnd).toBeGreaterThan(-1);
+    const containerTag = searchSource.slice(containerStart, containerEnd + 1);
 
-    expect(tag).toContain('data-glass="panel"');
-    // 圆角用 token（RADIUS.card，与列表行同档），不许写死像素
-    expect(tag).toContain('borderRadius: `${RADIUS.card}px`');
-    // 玻璃宿主（FormControl 根）自身不下发 background——background 只允许出现在给
-    // OutlinedInput 让位的嵌套选择器里（缩进在 '& .MuiOutlinedInput-root' 之下）
-    expect(tag).not.toContain('\n            backgroundColor');
-    // OutlinedInput 让位：清背景 + 清 notchedOutline 边框
-    expect(tag).toContain("backgroundColor: 'transparent'");
-    expect(tag).toContain("'& .MuiOutlinedInput-notchedOutline': { border: 'none' }");
+    expect(containerTag).toContain('data-glass="panel"');
+    // 圆角用 token（RADIUS.card，与列表行同档），不许写死像素；p: 1.5 给玻璃内呼吸
+    expect(containerTag).toContain('borderRadius: `${RADIUS.card}px`');
+    expect(containerTag).toContain('p: 1.5');
+    // 宿主让位：background / boxShadow / border / text-shadow 全由配方提供，不许自己下发
+    expect(containerTag).not.toContain('background');
+    expect(containerTag).not.toContain('boxShadow');
+    expect(containerTag).not.toContain('text-shadow');
+
+    // TextField 不带 data-glass 与圆角（玻璃与圆角都搬到外层容器），只留 OutlinedInput
+    // 的让位规则：清背景 + 清 notchedOutline 边框
+    const tfStart = searchSource.indexOf('<TextField');
+    expect(tfStart).toBeGreaterThan(-1);
+    const tfEnd = searchSource.indexOf('/>', tfStart);
+    expect(tfEnd).toBeGreaterThan(-1);
+    const tfTag = searchSource.slice(tfStart, tfEnd + 2);
+    expect(tfTag).not.toContain('data-glass');
+    expect(tfTag).not.toContain('borderRadius');
+    expect(tfTag).toContain("backgroundColor: 'transparent'");
+    expect(tfTag).toContain("'& .MuiOutlinedInput-notchedOutline': { border: 'none' }");
     // 文字光晕由配方继承下发，不许自己再写 text-shadow
-    expect(tag).not.toContain('text-shadow');
-    // 按钮保持普通 contained（accent 实心块不贴玻璃），不挂 data-glass
+    expect(tfTag).not.toContain('text-shadow');
+
+    // 搜索按钮保持普通 contained，不挂 data-glass——按钮是玻璃上的控件，不是另一块玻璃
     const buttonStart = searchSource.indexOf('<Button');
     expect(buttonStart).toBeGreaterThan(-1);
     const buttonTag = searchSource.slice(buttonStart, searchSource.indexOf('/>', buttonStart) + 2);

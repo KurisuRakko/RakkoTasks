@@ -68,51 +68,54 @@ export default function SearchPage() {
   return (
     <Box>
       <Box sx={{ px: 2, py: 2 }}>
-        {/* 问题输入区是搜索页最后一块没有玻璃的区域（结果区 haze / 引用行 panel
-            已就位），这里给输入框挂一块 panel：纸底 / 边框 / 高光 / 阴影 / 文字光晕
-            全部来自 rakko-glass.css 的配方（同列表行 cardRowSx 的道理），sx 只补配方
-            不管的圆角（RADIUS.card，与列表行一致）。
-            关键让位：玻璃挂在本元素（FormControl 根）上，主题层与本 sx 都不能再向
-            宿主下发 background——否则会盖掉配方（同 theme.ts 里 MuiPaper / MuiAppBar
-            用 &:not([data-glass]) 让位的同一个道理）。内层 OutlinedInput 也要让位：
-            notchedOutline 边框显式清掉（边框由配方的 --glass-rim 提供，叠着就是两层
-            边框）；背景显式置 transparent 作双保险——当前 MUI 的 outlined 根默认就不
-            带背景，一旦主题或版本给输入根补了背景，透明声明能让玻璃不被实心底盖住。
-            文字光晕随配方继承下发，这里不写 text-shadow。按钮保持普通 contained
-            （accent 实心块没有可透的东西，玻璃不贴按钮），禁用态交给 MUI。 */}
-        <TextField
-          fullWidth
-          multiline
-          minRows={3}
-          maxRows={6}
-          placeholder="问你的邮件库：例如「下周三之前有哪些截止日期？」"
-          value={question}
-          onChange={(e) => setQuestion(e.target.value)}
+        {/* 提问台是一整块表面：「输入 + 它的动作按钮」是同一块玻璃上的一个控件组——
+            搜索按钮、LinearProgress、错误 Alert 全都坐在提问台玻璃里，不裸在壁纸上。
+            玻璃不嵌套是既有不变量，所以玻璃挂在这层外层容器上：TextField 的
+            FormControl 根不带 data-glass，输入框只是玻璃上的控件（结果区的引用行
+            panel 与此容器是兄弟，互不嵌套）。宿主让位：纸底 / 边框 / 高光 / 阴影 /
+            文字光晕全部来自 rakko-glass.css 的 panel 配方，这里不写 background /
+            boxShadow / border / text-shadow，只补配方不管的圆角（RADIUS.card）与
+            玻璃内的呼吸（p: 1.5）。内层 OutlinedInput 也要让位：notchedOutline
+            边框显式清掉（边框由配方的 --glass-rim 提供，叠着就是两层边框）；背景
+            显式置 transparent 作双保险——当前 MUI 的 outlined 根默认不带背景，一旦
+            主题或版本补了背景，透明声明能让玻璃不被实心底盖住。禁用态配色由主题层
+            统一处理（MuiButton 让位配方那一路），本页不重复。 */}
+        <Box
           data-glass="panel"
-          sx={{
-            borderRadius: `${RADIUS.card}px`,
-            '& .MuiOutlinedInput-root': {
-              backgroundColor: 'transparent',
-              '& .MuiOutlinedInput-notchedOutline': { border: 'none' },
-            },
-          }}
-        />
-        <Button
-          fullWidth
-          variant="contained"
-          startIcon={<SearchIcon />}
-          disabled={searching || question.trim() === ''}
-          onClick={submit}
-          sx={{ mt: 1.5 }}
+          sx={{ borderRadius: `${RADIUS.card}px`, p: 1.5 }}
         >
-          搜索
-        </Button>
-        {searching && <LinearProgress sx={{ mt: 1.5 }} />}
-        {error && (
-          <Alert severity="error" sx={{ mt: 1.5 }}>
-            {error}
-          </Alert>
-        )}
+          <TextField
+            fullWidth
+            multiline
+            minRows={3}
+            maxRows={6}
+            placeholder="问你的邮件库：例如「下周三之前有哪些截止日期？」"
+            value={question}
+            onChange={(e) => setQuestion(e.target.value)}
+            sx={{
+              '& .MuiOutlinedInput-root': {
+                backgroundColor: 'transparent',
+                '& .MuiOutlinedInput-notchedOutline': { border: 'none' },
+              },
+            }}
+          />
+          <Button
+            fullWidth
+            variant="contained"
+            startIcon={<SearchIcon />}
+            disabled={searching || question.trim() === ''}
+            onClick={submit}
+            sx={{ mt: 1.5 }}
+          >
+            搜索
+          </Button>
+          {searching && <LinearProgress sx={{ mt: 1.5 }} />}
+          {error && (
+            <Alert severity="error" sx={{ mt: 1.5 }}>
+              {error}
+            </Alert>
+          )}
+        </Box>
         {result && (
           <Box sx={{ mt: 2 }}>
             {/* 整块回答挂一团雾，档位对应上游 showcase 的 .glass-review__note（12px 多行
