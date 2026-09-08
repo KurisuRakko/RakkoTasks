@@ -197,6 +197,36 @@ function buildThemeOptions(mode: Mode): ThemeOptions {
           ...viewTransitionStyles(themeParam),
         }),
       },
+      // Alert 走「语义色描边的纸色内嵌盒」：底色与 panel 档玻璃纸色同一个 color-mix
+      // 表达式（逐字一致，58% 不写死），在玻璃卡片上是更实一点的内嵌盒，裸页面背景上
+      // 落在实测安全的纸色阅读条件；文字强制 n9——玻璃上次级文字 n7 只有 2.36–2.64，
+      // 只有 n9 全场过 AA，MUI 默认的压暗语义色文字是 Material 做法，一律不用。
+      // 不挂 data-glass：Alert 常出现在 data-glass="panel" 卡片内部，挂上就破坏
+      // 「data-glass 不嵌套」既有不变量（search-page.test.tsx 在断言它），所以只要纸色
+      // 底，不要模糊、不要厚度边、不要光泽。severity 底色是 MUI 内部 variants，注入先于
+      // styleOverrides.root：emotion 片段拼接不按键合并，两套声明会同时留在规则文本里，
+      // 靠「覆盖声明追加在 variants 之后、同级级联后者生效」盖住它；若哪天顺序回归导致
+      // 盖不住，需补 standardSuccess / standardInfo / standardWarning / standardError
+      // 四个插槽显式清底（alert-glass.test.tsx 的生效值断言会先失败报警）。
+      MuiAlert: {
+        styleOverrides: {
+          root: ({ theme, ownerState }) => {
+            const severityMain = theme.palette[ownerState.severity ?? 'success'].main;
+            return {
+              borderRadius: RADIUS.base,
+              backgroundColor:
+                'color-mix(in srgb, var(--color-paper) var(--glass-panel-opacity), transparent)',
+              backgroundImage: 'none', // 压掉 MUI 深色 Paper 的 overlay 渐变
+              boxShadow: 'none',
+              border: `1px solid ${alpha(severityMain, mode === 'light' ? 0.34 : 0.42)}`,
+              color: theme.palette.text.primary,
+            };
+          },
+          icon: ({ theme, ownerState }) => ({
+            color: theme.palette[ownerState.severity ?? 'success'].main,
+          }),
+        },
+      },
       // AppBar 不再是 accent 大色块（accent 覆盖面 ≤5% 纪律）：paper 背景 + 下边框分层。
       // 挂了 data-glass 的 AppBar（壳层顶栏）由 rakko-glass.css 的 chrome 配方接管，
       // 主题层一个 background / border 声明都不许下发——不能写成「data-glass 时设
@@ -253,7 +283,17 @@ function buildThemeOptions(mode: Mode): ThemeOptions {
       },
       MuiButton: {
         styleOverrides: {
-          root: { borderRadius: RADIUS.base, textTransform: 'none' },
+          root: {
+            borderRadius: RADIUS.base,
+            textTransform: 'none',
+            // 禁用态换 Rakko 中性色：MUI 默认的 rgba(0,0,0,0.12) 填充 + 0.26 文字是
+            // Material 硬编码 alpha。纸底按 n9 出极淡填充（深浅各一档）、文字 n5——
+            // outlined / text 本来没有禁用填充，多盖一层淡中性填充也无害。
+            '&.Mui-disabled': {
+              backgroundColor: alpha(n9, mode === 'light' ? 0.08 : 0.12),
+              color: n5,
+            },
+          },
         },
       },
       // Fab 圆形是默认形状，不做圆角覆盖（圆保持默认）
