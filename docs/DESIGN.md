@@ -162,20 +162,41 @@ AI 搜索同一套 `search_emails` / `read_emails`）：若邮件涉及来历不
 - 最终输出 JSON `{"answer_md": "...", "citations": [email_id, ...]}`。
   前端把 citations 渲染为可点击邮件引用。
 
-### 4.4 自然语言快速记事（一句话 → 条目）
+### 4.4 自然语言快速记事（一段话 → 一条或多条条目）
 
-用户在「+」打开的对话框里说一句话（手机上直接用 iOS 键盘听写），LLM 解析成结构化
+用户在「+」打开的对话框里说一段话（手机上直接用 iOS 键盘听写），LLM 解析成结构化
 条目。系统提示 `PARSE_TASK_SYSTEM` 在 `backend/app/llm.py`，单轮调用走已有的
 `_chat_json`（`json_object` 模式 + `temperature=0.2`），非法 JSON 追加纠错消息重试
 一次——与 4.1 邮件分类完全同一套机制，**不走 agent.py 的工具循环**（这里不需要检索）。
 
-输出 JSON（经 `llm.normalize_parsed_task` 归一化后才交给调用方）：
+输出 JSON（经 `llm.normalize_parsed_tasks` 归一化后才交给调用方）：
 
 ```json
-{"title": "≤60字任务标题", "summary": "补充信息或空字符串",
- "category": "学业|工作|个人|账单|其他", "due_date": "2026-09-08 或 null",
- "actionable": true, "importance": "high|normal|low"}
+{"tasks": [
+  {"title": "≤60字任务标题", "summary": "补充信息或空字符串",
+   "category": "学业|工作|个人|账单|其他", "due_date": "2026-09-08 或 null",
+   "reminders": ["2026-09-08T15:00", ...],
+   "actionable": true, "importance": "high|normal|low"}
+]}
 ```
+
+**拆条**：一段话里说了几件不同的事就拆几条，按原话顺序，上限
+`itemrules.MAX_PARSED_TASKS`（10）。只说一件事时也是一元数组——调用方永远拿到列表，
+不必分支。无论几条都只打**一次** LLM，拆分是模型在同一次输出里做的，限流不受影响。
+
+拆与不拆的边界（三条都在提示里，改动时别互相冲垮）：
+
+- 几件**不同的事** → 拆。「明天 3 点买奶茶，6 点接人，9 点卖股票」是三条。
+- 同一件事的**模糊时间区间**（「这两天」「最近」）→ 不拆，取最早一天（见下）。
+- 同一件事的**多个提醒**（「周二提一次、周五再提一次、周日到期」）→ 不拆，
+  一条条目挂两个 reminder 加一个 due_date。这条最容易被「拆条」规则带歪，
+  提示里用的就是它做反例。
+
+归一化（`normalize_parsed_tasks`）**必须幂等且绝不抛异常**：`LLMClient.parse_task`
+自己洗过一轮，`api._ai_parse` 会在它的返回值上再洗一次（测试用 FakeLLM 顶替
+`get_llm` 时绕开了前者，端点层不能假设已归一化），所以它既吃 `{"tasks": [...]}`
+信封，也吃已归一化的裸列表；`tasks` 缺失就把整个对象当单条旧格式兜住，清洗后为空
+则兜成一条「未命名任务」。
 
 字段口径：
 
@@ -186,7 +207,10 @@ AI 搜索同一套 `search_emails` / `read_emails`）：若邮件涉及来历不
 - `actionable=false` 用于「记下一件将会发生、本人无需动手的事」（维修工要上门、
   快递会到），与 4.1 的语义一致；
 - 模糊区间（「这两天」「最近」「这周内」）取区间里**最早**的一天，不跨多天、
-  不拆成多条——数据模型只有单个 `due_date`，拆多条会让同一件事占好几行。
+  不拆成多条——数据模型只有单个 `due_date`，拆多条会让同一件事占好几行；
+- 用户给了具体时刻、既没说「提醒我」也没有截止含义（「下午 7 点玩一把原神」）
+  照样进 `reminders`。他把时刻说出来就是想在那个点做这件事，丢掉时刻等于没记
+  ——真机实测过：不写这条，这类子句会连时刻一起被吞掉。
 
 **与 4.1 刻意相反的一点：这里必须解析相对日期。** 4.1 明令「不得推测日期」，因为
 邮件没写日期就是真没写，猜了会造出用户没承诺的截止日；而这里用户说「明天」就是
@@ -206,10 +230,22 @@ AI 搜索同一套 `search_emails` / `read_emails`）：若邮件涉及来历不
 字段、不渲染 Markdown，所以不经 `strip_markdown_media`。
 
 **两种模式**（前端，第 8 节）：对话框右上角「速记」开关（默认关，存 localStorage）。
-关时走 `POST /api/items/parse` 拿字段填进预览编辑器、用户确认后才 `POST /api/items`；
-开时点「确定」立刻关窗，`POST /api/items/quick` 在后台解析并落库，结果回来弹
-Snackbar（带「查看」按钮）。`/quick` 的兜底放在服务端而非前端：请求一旦到达就会
-跑完，用户点完确定立刻关掉 PWA，条目照样入库。
+关时走 `POST /api/items/parse` 拿字段列表填进预览、用户确认后才逐条
+`POST /api/items`（没有批量端点，`Promise.allSettled` 循环复用已测代码，一条失败
+不连累其余，提示里报「已保存 M 条，N 条失败」）；开时点「提交」立刻关窗，
+`POST /api/items/quick` 在后台解析并落库，结果回来弹 Snackbar。**「查看」按钮只在
+恰好保存一条时出现**——多条没有唯一的目标可看。
+
+`/quick` 的兜底放在服务端而非前端：请求一旦到达就会跑完，用户点完提交立刻关掉
+PWA，条目照样入库。兜底路径**只落一条**（原文本身就是一件事，没有可信的拆分依据），
+且是**整批回退**：解析成功但落库前校验炸了，已解析出的那几条一并丢弃改用原文
+——半截 AI 半截原文的混合结果没法向用户解释，`ai_parsed` 只有一个。
+
+**多条的预览形态**（`components/ParsedTaskList.tsx`）：只在多于一条时出现，一行一条
+（标题 + 时间 + 分类 + 删除），点开才展成完整 `ItemFieldsForm`，默认全部收起——四条
+任务各铺一整套分类/重要度/日期/提醒区，在手机上要滚很久，而用户想核对的只是
+「拆对了没有、时间对不对」。**只有一条时不套这层壳**，直接铺 `ItemFieldsForm`，与
+只能记一条的那版完全一致。
 
 ## 5. 数据模型（SQLite，WAL）
 
@@ -295,20 +331,24 @@ POST /api/items                     新建手动条目（email_id=null）：{"ti
                                     too_many_reminders。后两个省略时落 normal / true
                                     （AI 快速添加的预览阶段用它们透传 AI 判断，界面上无编辑控件）；
                                     校验失败 400 bad_title|bad_summary|bad_category|bad_due_date|bad_importance；成功 201
-POST /api/items/parse               一句自然语言 → 条目字段，**不落库**（限流 20/60s）：
+POST /api/items/parse               一段自然语言 → 条目字段列表，**不落库**（限流 20/60s）：
                                     {"text"（≤2000 字）, "today"?（YYYY-MM-DD，用户本地日期）,
                                      "tz"?（IANA 时区名，如 "Australia/Sydney"）}
-                                    → 200 {"title","summary","category","due_date","importance",
-                                           "actionable","reminders"}
+                                    → 200 {"tasks": [{"title","summary","category","due_date",
+                                                      "importance","actionable","reminders"}, ...]}
+                                    一段话说了几件事就几条（只说一件也是一元数组），
+                                    上限 MAX_PARSED_TASKS=10；无论几条都只打一次 LLM。
                                     reminders 已由服务端用 tz 把模型输出的本地墙上时刻
                                     换算成带偏移的绝对时刻，前端可直接回填进 POST /api/items
                                     LLM 失败 → 502 parse_error；超长 text → 422
 POST /api/items/quick               解析并落库，速记模式用（限流与 /parse 共用同一个 20/60s 计数）：
-                                    请求体同 /parse → 201 {"item": {...}, "ai_parsed": bool}
-                                    解析失败不报错：用原文兜底落库（title=原文截 128、category="其他"、
+                                    请求体同 /parse → 201 {"items": [{...}, ...], "ai_parsed": bool}
+                                    解析失败不报错：用原文兜底落**一条**（title=原文截 128、category="其他"、
                                     due_date=null、importance=normal、actionable=true），仍 201 且 ai_parsed=false。
+                                    兜底是整批回退：已解析出的那几条一并丢弃——半截 AI 半截原文
+                                    没法向用户解释，ai_parsed 只有一个。
                                     兜底放在服务端而非前端：请求一旦到达就会跑完（同步 def 端点在
-                                    starlette 线程池里，客户端断连不杀线程），所以用户点完确定
+                                    starlette 线程池里，客户端断连不杀线程），所以用户点完提交
                                     立刻关掉 PWA，条目照样入库
 PATCH /api/items/{id}               {"status"} 任何条目可改；{"title","summary","category","due_date",
                                     "importance","actionable"} 任何条目都可改（含邮件条目）——与手动
@@ -400,20 +440,35 @@ CalDAV 例外：`/caldav/*` 与 `/.well-known/caldav` 不走上述 Bearer 中间
 - 条目详情（全屏 Dialog）：AI 详情（通常已预生成；未生成时首开现场生成，加载态）→ 底部「显示原邮件」展开 sandbox iframe
   → iframe 内「显示远程图片」开关。
 - 搜索页：问题输入 → 回答（Markdown 渲染）+ 引用邮件列表，点击打开邮件查看器。
-- 右下角「+」→ AI 快速添加（`AiAddDialog`，经 `expand-fab` 容器变换从按钮长出，
-  移动端全屏）。三阶段 `input → parsing → fields`，阶段过渡用 Collapse/Fade 走
-  `MOTION` token，**不新增 `VtKind`**（新增会连带改 `motion-styles.ts` 的转场契约）：
+- 右下角「+」→ 新建待办（`AiAddDialog`，移动端全屏）。三阶段
+  `input → parsing → fields`，阶段过渡用 Collapse/Fade 走 `MOTION` token，
+  **不新增 `VtKind`**（新增会连带改 `motion-styles.ts` 的转场契约）：
   - `input`：**只有一个输入框**（无分类无日期），过渡结束后手动 `focus()` 让 iOS
-    键盘弹起（Dialog 内 `autoFocus` 在 iOS Safari 上不可靠）。Cmd/Ctrl+Enter = 确定，
+    键盘弹起（Dialog 内 `autoFocus` 在 iOS Safari 上不可靠）。Cmd/Ctrl+Enter = 提交，
     裸 Enter 保持换行。
-  - `parsing`：Skeleton 骨架，容器带 `aria-busy` / `aria-label="正在解析"`。
-  - `fields`：`ItemFieldsForm`（与 `ItemEditor` 共用的受控字段区，DOM 与文案一处
-    定义），值由解析结果预填；`importance` / `actionable` 存进组件 state 于保存时
-    原样带进载荷，**界面上不给编辑控件**。
+  - `parsing`：Skeleton 骨架，容器带 `aria-busy` / `aria-label="正在识别"`。
+  - `fields`：解析出一条时直接铺 `ItemFieldsForm`（与 `ItemEditor` 共用的受控字段区，
+    DOM 与文案一处定义），多于一条时交给 `ParsedTaskList`（见 4.4）。值由解析结果
+    预填；`actionable` 存进 state 于保存时原样带进载荷，**界面上不给编辑控件**。
   右上角「速记」Switch（`role="switch"`，默认关，localStorage 键
-  `rakkotasks.quick-mode`）：开则跳过 `parsing`/`fields`，点「确定」立刻关窗并把原文
+  `rakkotasks.quick-mode`）：开则跳过 `parsing`/`fields`，点「提交」立刻关窗并把原文
   交给编排层走 `/api/items/quick`。解析失败回 `input`、**保留用户原文不清空**，
-  给一个「按原文添加」兜底按钮——绝不让用户白打一遍。
+  给一个「按原文保存」兜底按钮——绝不让用户白打一遍。
+- **「+」↔ 新建待办面板的入退场（不走 View Transitions，刻意的）**：按下时按钮
+  `translateY` 下沉让位（`MOTION.state` 160ms），面板同时 `Slide` 从底部升起
+  （`MOTION.large` 300ms）；关闭时面板先落下（`MOTION.largeExit` 250ms），按钮延后
+  `MOTION.fadeOut` 90ms 才回位，两者恰好同时收尾。按钮只过渡 `transform` 一个属性，
+  位移量 `translateY(calc(100% + <自身 bottom> + 8px))` 与它的 `bottom` 同源（含
+  `env(safe-area-inset-bottom)`，不写魔数）；`prefers-reduced-motion` 下按钮
+  `transition: none`、Dialog `transitionDuration={0}`。
+  **这条链路曾经是 `expand-fab` / `collapse-fab` 容器变换，已删。** 两个原因：
+  ① View Transitions 一旦被浏览器跳过（iOS Safari / PWA 上常见）就两个方向同时落空，
+  而这是全站点击最频繁的动效；② 更要命的是 `AiAddDialog` 当时 `open` 硬编码 `true`、
+  由调用方 `{addOpen && ...}` 条件渲染，关闭时整棵子树被直接卸载，**MUI 的退场过渡
+  根本跑不到**——在没有 VT 的浏览器上就是「滑上来、啪一下消失」。所以现在 `open` 是
+  props、组件常驻挂载，由 Dialog 自己在退场跑完后卸载内容，并在 `onExited` 里复位
+  阶段与草案。**不要**把它改回条件渲染，也不要给它套 `dialogTransitionProps()`
+  （那个会在支持 VT 的浏览器上把 MUI 过渡设成 0ms 让位）。
 - 提醒编辑（`ItemFieldsForm` 的提醒区，`ItemEditor` 与 `AiAddDialog` 共用）：一行一个
   原生 `input[type=datetime-local]` + 删除按钮，底部「加提醒」，上限 `REMINDERS_MAX`=5。
   组件内部持一份**本地墙上时刻草案 state**，只在外发回调时才经

@@ -164,7 +164,8 @@ export interface ItemFields {
 }
 
 /**
- * POST /api/items/parse 返回体：把一句自然语言解析成条目字段，不落库。
+ * POST /api/items/parse 的**单条**解析结果。一段话可能说了好几件事，
+ * 端点返回的是 ParseResponse（tasks 数组），这里是数组里的一项。
  * 字段语义与 ItemFields 一致，但这里全部必填——它是 AI 的完整判断，
  * 由前端决定是原样保存还是让用户改过再存。
  */
@@ -184,10 +185,19 @@ export interface ParsedTask {
   reminders: string[];
 }
 
+/**
+ * POST /api/items/parse 返回体。信封而不是裸数组，与 GET /api/items 的
+ * `{items:[...]}` 同款；只说了一件事时也是一元数组。
+ */
+export interface ParseResponse {
+  tasks: ParsedTask[];
+}
+
 /** POST /api/items/quick 返回体：解析并落库；解析失败时后端用原文兜底建条目 */
 export interface QuickAddResponse {
-  item: Item;
-  /** false = AI 解析失败，item 是按原文兜底建出来的 */
+  /** 一段话说了几件事就有几条；兜底路径固定一条 */
+  items: Item[];
+  /** false = AI 解析失败，items 是按原文兜底建出来的那一条 */
   ai_parsed: boolean;
 }
 

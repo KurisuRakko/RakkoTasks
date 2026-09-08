@@ -112,14 +112,15 @@ const PARSED: ParsedTask = {
 };
 
 function renderDialog(opts: {
-  onParse?: (text: string) => Promise<ParsedTask>;
-  onSubmit?: (fields: ItemFields) => void;
+  onParse?: (text: string) => Promise<ParsedTask[]>;
+  onSubmit?: (fieldsList: ItemFields[]) => void;
 } = {}) {
   const props = {
+    open: true,
     quickMode: false,
     onQuickModeChange: vi.fn<(next: boolean) => void>(),
-    onParse: opts.onParse ?? vi.fn(async () => PARSED),
-    onSubmit: opts.onSubmit ?? vi.fn<(fields: ItemFields) => void>(),
+    onParse: opts.onParse ?? vi.fn(async () => [PARSED]),
+    onSubmit: opts.onSubmit ?? vi.fn<(fieldsList: ItemFields[]) => void>(),
     onQuickSubmit: vi.fn<(text: string) => void>(),
     submitting: false,
     onClose: vi.fn<() => void>(),
@@ -337,9 +338,9 @@ describe('ItemDialog 详情里的提醒列表', () => {
 
 describe('AiAddDialog 的提醒预填与保存', () => {
   function deferred() {
-    let resolve!: (parsed: ParsedTask) => void;
+    let resolve!: (parsed: ParsedTask[]) => void;
     let reject!: (reason: unknown) => void;
-    const promise = new Promise<ParsedTask>((res, rej) => {
+    const promise = new Promise<ParsedTask[]>((res, rej) => {
       resolve = res;
       reject = rej;
     });
@@ -357,13 +358,13 @@ describe('AiAddDialog 的提醒预填与保存', () => {
       reminders: [R1, R2],
     };
     const d = deferred();
-    const onSubmit = vi.fn<(fields: ItemFields) => void>();
+    const onSubmit = vi.fn<(fieldsList: ItemFields[]) => void>();
     renderDialog({ onParse: vi.fn(() => d.promise), onSubmit });
 
-    fireEvent.change(screen.getByLabelText('要记的事'), { target: { value: '交房租' } });
-    fireEvent.click(screen.getByRole('button', { name: '确定' }));
+    fireEvent.change(screen.getByLabelText('待办内容'), { target: { value: '交房租' } });
+    fireEvent.click(screen.getByRole('button', { name: '解析' }));
     await act(async () => {
-      d.resolve(parsed);
+      d.resolve([parsed]);
     });
 
     // fields 阶段：提醒编辑区出现，解析出的两个时刻各占一行
@@ -377,7 +378,8 @@ describe('AiAddDialog 的提醒预填与保存', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '保存' }));
     expect(onSubmit).toHaveBeenCalledTimes(1);
-    expect(onSubmit.mock.calls[0][0].reminders).toEqual([R1, R2]);
+    expect(onSubmit.mock.calls[0][0]).toHaveLength(1);
+    expect(onSubmit.mock.calls[0][0][0].reminders).toEqual([R1, R2]);
   });
 
   it('12. input 阶段没有提醒编辑区（查不到「加提醒」与 datetime-local 输入框）', () => {
@@ -387,25 +389,22 @@ describe('AiAddDialog 的提醒预填与保存', () => {
     expect(document.querySelector('input[type="datetime-local"]')).toBeNull();
   });
 
-  it('13. 解析失败走「按原文添加」：onSubmit 载荷不含 reminders', async () => {
+  it('13. 解析失败走「按原文保存」：onSubmit 载荷不含 reminders', async () => {
     const d = deferred();
-    const onSubmit = vi.fn<(fields: ItemFields) => void>();
+    const onSubmit = vi.fn<(fieldsList: ItemFields[]) => void>();
     renderDialog({ onParse: vi.fn(() => d.promise), onSubmit });
 
-    fireEvent.change(screen.getByLabelText('要记的事'), { target: { value: '交房租' } });
-    fireEvent.click(screen.getByRole('button', { name: '确定' }));
+    fireEvent.change(screen.getByLabelText('待办内容'), { target: { value: '交房租' } });
+    fireEvent.click(screen.getByRole('button', { name: '解析' }));
     await act(async () => {
       d.reject(new Error('解析服务不可用'));
     });
 
-    fireEvent.click(screen.getByRole('button', { name: '按原文添加' }));
+    fireEvent.click(screen.getByRole('button', { name: '按原文保存' }));
     expect(onSubmit).toHaveBeenCalledTimes(1);
-    expect(onSubmit.mock.calls[0][0]).toEqual({
-      title: '交房租',
-      summary: '',
-      category: '其他',
-      due_date: null,
-    });
+    expect(onSubmit.mock.calls[0][0]).toEqual([
+      { title: '交房租', summary: '', category: '其他', due_date: null },
+    ]);
     expect(onSubmit.mock.calls[0][0]).not.toHaveProperty('reminders');
   });
 });

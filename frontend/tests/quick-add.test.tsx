@@ -20,19 +20,24 @@ const QUICK_TEXT = '明天提醒我去把空调修了';
 // vi.mock 工厂会被提升到 import 之前执行，只能引用字面量与 vi.hoisted 值，
 // 因此文案在此内联，不能引用文件里的 QUICK_TEXT 常量。
 vi.mock('../src/components/AiAddDialog', () => ({
-  default: (props: AiAddDialogProps) => (
+  // 替身认 open：真组件常驻挂载、由 Dialog 按 open 跑入退场并在退场后卸载内容，
+  // 替身若无视 open 就永远在场，「点确定立刻关窗」这条断言等于没测
+  default: (props: AiAddDialogProps) =>
+    !props.open ? null : (
     <div>
       <button onClick={() => props.onQuickSubmit('明天提醒我去把空调修了')}>替身-速记提交</button>
       <button
         onClick={() =>
-          props.onSubmit({
-            title: '买牛奶',
-            summary: '两盒',
-            category: '个人',
-            due_date: null,
-            importance: 'high',
-            actionable: true,
-          })
+          props.onSubmit([
+            {
+              title: '买牛奶',
+              summary: '两盒',
+              category: '个人',
+              due_date: null,
+              importance: 'high',
+              actionable: true,
+            },
+          ])
         }
       >
         替身-普通保存
@@ -72,9 +77,9 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
-function quickResponse(over: Partial<{ item: Item; ai_parsed: boolean }> = {}): Response {
+function quickResponse(over: Partial<{ items: Item[]; ai_parsed: boolean }> = {}): Response {
   return json(
-    { item: makeItem({ id: 9, title: QUICK_TEXT }), ai_parsed: true, ...over },
+    { items: [makeItem({ id: 9, title: QUICK_TEXT })], ai_parsed: true, ...over },
     201,
   );
 }
@@ -101,7 +106,7 @@ function renderPage(handler: (url: string, init?: RequestInit) => Response): Ret
 
 /** 点开「+」，返回对话框替身里的速记提交按钮 */
 async function openDialogAndQuickSubmit(): Promise<HTMLElement> {
-  fireEvent.click(await screen.findByRole('button', { name: '添加任务' }));
+  fireEvent.click(await screen.findByRole('button', { name: '新建待办' }));
   return screen.findByRole('button', { name: '替身-速记提交' });
 }
 
@@ -120,7 +125,7 @@ afterEach(() => {
 describe('速记模式后台落库', () => {
   it('点确定立刻关窗，POST /api/items/quick，请求体含 text、today 与 tz', async () => {
     const fetchMock = renderPage(() => quickResponse());
-    fireEvent.click(await screen.findByRole('button', { name: '添加任务' }));
+    fireEvent.click(await screen.findByRole('button', { name: '新建待办' }));
     // 对话框替身已渲染（addOpen 为 true）
     expect(await screen.findByText('速记模式：关')).toBeTruthy();
 
@@ -143,29 +148,29 @@ describe('速记模式后台落库', () => {
 
     // 对话框已收回（addOpen false），悬浮按钮仍在
     await waitFor(() => expect(screen.queryByText('替身-速记提交')).toBeNull());
-    expect(screen.getByRole('button', { name: '添加任务' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '新建待办' })).toBeTruthy();
   });
 
-  it('ai_parsed=true：Snackbar 文案「已添加：<title>」，带「查看」按钮', async () => {
-    renderPage(() => quickResponse({ item: makeItem({ id: 9, title: '预约空调维修' }) }));
+  it('ai_parsed=true：Snackbar 文案「已保存：<title>」，带「查看」按钮', async () => {
+    renderPage(() => quickResponse({ items: [makeItem({ id: 9, title: '预约空调维修' })] }));
     fireEvent.click(await openDialogAndQuickSubmit());
 
-    expect(await screen.findByText('已添加：预约空调维修')).toBeTruthy();
+    expect(await screen.findByText('已保存：预约空调维修')).toBeTruthy();
     expect(screen.getByRole('button', { name: '查看' })).toBeTruthy();
   });
 
-  it('ai_parsed=false（HTTP 仍是 201）：提示「AI 解析失败，已按原文添加」，不是「添加失败」', async () => {
+  it('ai_parsed=false（HTTP 仍是 201）：提示「未能识别内容，已按原文保存」，不是「保存失败」', async () => {
     renderPage(() =>
-      quickResponse({ item: makeItem({ id: 9, title: QUICK_TEXT }), ai_parsed: false }),
+      quickResponse({ items: [makeItem({ id: 9, title: QUICK_TEXT })], ai_parsed: false }),
     );
     fireEvent.click(await openDialogAndQuickSubmit());
 
-    expect(await screen.findByText('AI 解析失败，已按原文添加')).toBeTruthy();
-    // 证明没走 catch 分支：正常返回只有兜底文案，绝不出现「添加失败」
-    expect(screen.queryByText('添加失败')).toBeNull();
+    expect(await screen.findByText('未能识别内容，已按原文保存')).toBeTruthy();
+    // 证明没走 catch 分支：正常返回只有兜底文案，绝不出现「保存失败」
+    expect(screen.queryByText('保存失败')).toBeNull();
   });
 
-  it('quick 请求网络失败：提示「添加失败」，无「查看」按钮', async () => {
+  it('quick 请求网络失败：提示「保存失败」，无「查看」按钮', async () => {
     const fetchMock = renderPage(() => {
       throw new Error('network down');
     });
@@ -174,26 +179,26 @@ describe('速记模式后台落库', () => {
     await waitFor(() => {
       expect(fetchMock.mock.calls.some(([url]) => url === '/api/items/quick')).toBe(true);
     });
-    expect(await screen.findByText('添加失败')).toBeTruthy();
+    expect(await screen.findByText('保存失败')).toBeTruthy();
     expect(screen.queryByRole('button', { name: '查看' })).toBeNull();
   });
 
   it('点「查看」打开条目详情对话框', async () => {
-    renderPage(() => quickResponse({ item: makeItem({ id: 9, title: '预约空调维修' }) }));
+    renderPage(() => quickResponse({ items: [makeItem({ id: 9, title: '预约空调维修' })] }));
     fireEvent.click(await openDialogAndQuickSubmit());
 
     fireEvent.click(await screen.findByRole('button', { name: '查看' }));
 
     // ItemDialog 内容出现（AppBar 标题只存在于详情对话框），Snackbar 已关
     expect(await screen.findByText('任务详情')).toBeTruthy();
-    await waitFor(() => expect(screen.queryByText('已添加：预约空调维修')).toBeNull());
+    await waitFor(() => expect(screen.queryByText('已保存：预约空调维修')).toBeNull());
   });
 
   it('quick 成功的新条目进了列表缓存（upsertOpenItem 生效，列表能看到标题）', async () => {
-    renderPage(() => quickResponse({ item: makeItem({ id: 9, title: '把空调修好' }) }));
+    renderPage(() => quickResponse({ items: [makeItem({ id: 9, title: '把空调修好' })] }));
     fireEvent.click(await openDialogAndQuickSubmit());
 
-    // 标题出现在列表行（Snackbar 里的整句「已添加：…」是另一个文本节点，精确匹配不会撞上）
+    // 标题出现在列表行（Snackbar 里的整句「已保存：…」是另一个文本节点，精确匹配不会撞上）
     expect(await screen.findByText('把空调修好')).toBeTruthy();
     const row = screen.getByText('把空调修好').closest('li');
     expect(row).not.toBeNull();
@@ -203,20 +208,20 @@ describe('速记模式后台落库', () => {
 describe('速记模式开关', () => {
   it('默认关：初次渲染 quickMode 为 false', async () => {
     renderPage(() => quickResponse());
-    fireEvent.click(await screen.findByRole('button', { name: '添加任务' }));
+    fireEvent.click(await screen.findByRole('button', { name: '新建待办' }));
     expect(await screen.findByText('速记模式：关')).toBeTruthy();
   });
 
   it('localStorage 预置 on：重新渲染后 quickMode 为 true', async () => {
     localStorage.setItem(QUICK_MODE_KEY, 'on');
     renderPage(() => quickResponse());
-    fireEvent.click(await screen.findByRole('button', { name: '添加任务' }));
+    fireEvent.click(await screen.findByRole('button', { name: '新建待办' }));
     expect(await screen.findByText('速记模式：开')).toBeTruthy();
   });
 
   it('调用 onQuickModeChange(true)：状态翻转为开并写入 localStorage', async () => {
     renderPage(() => quickResponse());
-    fireEvent.click(await screen.findByRole('button', { name: '添加任务' }));
+    fireEvent.click(await screen.findByRole('button', { name: '新建待办' }));
     await screen.findByText('速记模式：关');
 
     fireEvent.click(screen.getByRole('button', { name: '替身-切速记' }));
@@ -231,7 +236,7 @@ describe('速记模式开关', () => {
     });
     renderPage(() => quickResponse());
 
-    const fab = await screen.findByRole('button', { name: '添加任务' });
+    const fab = await screen.findByRole('button', { name: '新建待办' });
     expect(fab).toBeTruthy();
     fireEvent.click(fab);
     expect(await screen.findByText('速记模式：关')).toBeTruthy();
@@ -243,7 +248,7 @@ describe('非速记模式路径', () => {
     const fetchMock = renderPage(() =>
       json(makeItem({ id: 11, email_id: null, title: '买牛奶', status: 'open' }), 201),
     );
-    fireEvent.click(await screen.findByRole('button', { name: '添加任务' }));
+    fireEvent.click(await screen.findByRole('button', { name: '新建待办' }));
 
     fireEvent.click(await screen.findByRole('button', { name: '替身-普通保存' }));
 
@@ -277,7 +282,7 @@ describe('非速记模式路径', () => {
         actionable: true,
       }),
     );
-    fireEvent.click(await screen.findByRole('button', { name: '添加任务' }));
+    fireEvent.click(await screen.findByRole('button', { name: '新建待办' }));
 
     fireEvent.click(await screen.findByRole('button', { name: '替身-解析' }));
 

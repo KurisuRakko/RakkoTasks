@@ -1,15 +1,23 @@
-// AiAddDialog：AI 快速添加任务的全屏对话框（移动端全屏、桌面端限宽），由右下角
-// 悬浮按钮经 expand-fab 容器变换长出。与 ItemEditor 的分工：ItemEditor 是「手填
-// 四个字段」，这里是「说一句话让 AI 填」，两者共用 ItemFieldsForm 渲染字段区。
+// AiAddDialog：AI 快速新建待办的全屏对话框（移动端全屏、桌面端限宽），由右下角
+// 悬浮按钮打开。与 ItemEditor 的分工：ItemEditor 是「手填四个字段」，这里是
+// 「说一段话让 AI 填」，两者共用 ItemFieldsForm 渲染字段区。
 //
-// 三个阶段（用 Collapse/Fade 过渡，不新增 VtKind——那会连带改 motion-styles 的
-// 转场契约与其断言；FAB 长出对话框那段容器变换沿用现成的 expand-fab）：
+// 三个阶段（用 Collapse/Fade 过渡，时长与缓动取 MOTION token）：
 //   input   → 只有一个多行输入框，自动聚焦让 iOS 键盘弹起
 //   parsing → 骨架卡（非速记模式等待 LLM 的 1-3 秒）
-//   fields  → ItemFieldsForm，值由解析结果预填，用户可改后保存
+//   fields  → 解析结果预览，值可改后保存
 //
-// 速记模式（AppBar 右上角 Switch）打开时跳过 parsing/fields：点「确定」直接把原文
+// 一段话可以说好几件事，所以 fields 阶段持有的是 drafts 数组：
+//   只有一条 → 直接铺 ItemFieldsForm（与只能记一条的那版完全一致）
+//   多于一条 → 交给 ParsedTaskList 列成可展开的行
+//
+// 速记模式（AppBar 右上角 Switch）打开时跳过 parsing/fields：点「提交」直接把原文
 // 交给 onQuickSubmit，由调用方立刻关窗并在后台落库。
+//
+// 入退场：固定用 SlideUp，两个方向都由 MUI 自己跑。**不要**改回
+// dialogTransitionProps()——那个会在支持 View Transitions 的浏览器上把 MUI 过渡设成
+// 0ms 让位给 VT，而 VT 在 iOS Safari / PWA 上一旦被跳过就两头落空。对称由 open prop
+// 保证：组件常驻挂载，Dialog 自己在退场跑完后卸载内容，退场后经 onExited 复位状态。
 //
 import { useRef, useState } from 'react';
 import type { KeyboardEvent } from 'react';
@@ -33,40 +41,100 @@ import { useTheme } from '@mui/material/styles';
 import CloseIcon from '@mui/icons-material/Close';
 import { MOTION } from '../rakko-tokens';
 import type { Category, Importance, ItemFields, ParsedTask } from '../types';
-import { dialogTransitionProps } from './DialogTransition';
+import { SlideUp } from './DialogTransition';
 import { MAX_TITLE_LENGTH, parseEditorText } from './ItemEditor';
 import ItemFieldsForm from './ItemFieldsForm';
+import ParsedTaskList from './ParsedTaskList';
+import { usePrefersReducedMotion } from '../lib/motion';
 import { mainAreaDialogSx } from '../lib/layout';
 
+/** fields 阶段里一条待办的可编辑草案。text 的第一行是标题，其余是详情 */
+export interface Draft {
+  text: string;
+  category: Category;
+  /** YYYY-MM-DD，空串表示无截止日 */
+  date: string;
+  importance: Importance;
+  /**
+   * 是否需要用户亲自动手。全前端没有任何可见表现，也没有编辑控件，只在保存时
+   * 原样带进载荷——不带的话速记与非速记两种模式对同一句话会存出不同的字段。
+   */
+  actionable: boolean;
+  /** 提醒时刻，带 UTC 偏移的 ISO 8601 串 */
+  reminders: string[];
+}
+
 export interface AiAddDialogProps {
+  /**
+   * 是否打开。组件常驻挂载、由 Dialog 按这个值跑入退场——**不要**改回调用方
+   * 条件渲染：那样关闭时整棵子树被直接卸载，退场过渡根本没机会跑。
+   */
+  open: boolean;
   /** 速记模式当前值。受控：状态与持久化（localStorage）都在 TasksPage */
   quickMode: boolean;
   /** 用户拨动速记开关 */
   onQuickModeChange: (next: boolean) => void;
   /**
-   * 非速记模式的解析入口：一句话 → 结构化字段。由调用方注入而非本组件直接调
-   * api.ts，测试才能不打 fetch 就驱动三个阶段。
-   * reject 时组件停在 input 阶段并给出错误提示与「按原文添加」兜底。
+   * 非速记模式的解析入口：一段话 → 结构化字段列表（一件事也是一元数组）。
+   * 由调用方注入而非本组件直接调 api.ts，测试才能不打 fetch 就驱动三个阶段。
+   * reject 时组件停在 input 阶段并给出错误提示与「按原文保存」兜底。
    */
-  onParse: (text: string) => Promise<ParsedTask>;
-  /** 阶段二「保存」：与 ItemEditor.onSubmit 同语义，走 POST /api/items */
-  onSubmit: (fields: ItemFields) => void;
+  onParse: (text: string) => Promise<ParsedTask[]>;
+  /** 阶段二「保存」：与 ItemEditor.onSubmit 同语义，走 POST /api/items，一次可多条 */
+  onSubmit: (fieldsList: ItemFields[]) => void;
   /**
-   * 速记模式「确定」：只把原文交出去。关窗与后台落库（POST /api/items/quick）
+   * 速记模式「提交」：只把原文交出去。关窗与后台落库（POST /api/items/quick）
    * 都由调用方负责——窗口要立刻关，落库不能绑在本组件的生命周期上。
    */
   onQuickSubmit: (text: string) => void;
   /** 阶段二保存中：禁用保存按钮 */
   submitting: boolean;
   onClose: () => void;
-  /** 容器变换共享名：传给 Dialog paper；缺省则 paper 不持名 */
-  viewTransitionName?: string;
 }
 
 /** 三阶段：input → parsing（仅非速记）→ fields；解析失败回 input */
 type Phase = 'input' | 'parsing' | 'fields';
 
+/** 解析结果 → 可编辑草案。标题/详情按单个换行拼回，与 ItemEditor 处理 initial 一致 */
+function toDraft(parsed: ParsedTask): Draft {
+  return {
+    text: [parsed.title, parsed.summary].filter(Boolean).join('\n'),
+    category: parsed.category,
+    date: parsed.due_date ?? '',
+    importance: parsed.importance,
+    actionable: parsed.actionable,
+    reminders: parsed.reminders,
+  };
+}
+
+/** 草案 → 保存载荷。reminders 只在非空时带键：创建场景下「没提醒」与「省略 reminders」
+ *  对后端等价，载荷形状要与解析结果为空时完全一致。 */
+function toFields(draft: Draft): ItemFields {
+  const { title, summary } = parseEditorText(draft.text);
+  const fields: ItemFields = {
+    title,
+    summary,
+    category: draft.category,
+    due_date: draft.date || null,
+    importance: draft.importance,
+    actionable: draft.actionable,
+  };
+  if (draft.reminders.length > 0) {
+    fields.reminders = draft.reminders;
+  }
+  return fields;
+}
+
+/** 单条草案的校验提示；空串表示这条合法。口径与 ItemEditor 完全一致 */
+function draftHelper(draft: Draft): string {
+  const { title } = parseEditorText(draft.text);
+  if (title.length === 0) return '第一行不能为空';
+  if (title.length > MAX_TITLE_LENGTH) return `标题最多 ${MAX_TITLE_LENGTH} 字`;
+  return '';
+}
+
 export default function AiAddDialog({
+  open,
   quickMode,
   onQuickModeChange,
   onParse,
@@ -74,40 +142,29 @@ export default function AiAddDialog({
   onQuickSubmit,
   submitting,
   onClose,
-  viewTransitionName,
 }: AiAddDialogProps) {
   const theme = useTheme();
   // 移动端全屏、桌面端限宽对话框（与 ItemEditor 同款判断）
   const fullScreen = useMediaQuery(theme.breakpoints.down('md'));
+  const reduced = usePrefersReducedMotion();
 
   const [phase, setPhase] = useState<Phase>('input');
-  // 原文（input）与预填文本（fields）共用一个 state；解析失败时保留原文不清空
+  // input 阶段的原文。解析失败时保留不清空，绝不让用户白打一遍
   const [text, setText] = useState('');
-  const [category, setCategory] = useState<Category>('个人');
-  const [date, setDate] = useState('');
-  // importance：AI 解析出的重要度预填到 fields 阶段的表单，用户可经重要度 chip 改
-  // （保存带当前值）；actionable（是否亲自动手）：全前端没有任何可见表现，无编辑
-  // 控件，只在保存时原样带进载荷，避免两种模式行为不一致。
-  const [importance, setImportance] = useState<Importance>('normal');
-  const [actionable, setActionable] = useState(true);
-  // 提醒时刻（带 UTC 偏移的绝对时刻串）：fields 阶段交给 ItemFieldsForm 编辑，
-  // 保存时原样带进载荷。初值来自解析结果，之后由编辑区的出参更新。
-  const [reminders, setReminders] = useState<string[]>([]);
+  // fields 阶段的草案列表；input/parsing 阶段为空
+  const [drafts, setDrafts] = useState<Draft[]>([]);
+  // 多条时当前展开的那一条；单条不走 ParsedTaskList，与它无关
+  const [expanded, setExpanded] = useState<number | null>(null);
   const [parseError, setParseError] = useState(false);
   // 阶段 input 的输入框：iOS Safari 上 Dialog 内 autoFocus 不可靠，改在过渡
   // 结束后手动 focus() 让键盘弹起
   const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null);
 
-  // 校验口径与 ItemEditor 完全一致：同一份 parseEditorText + MAX_TITLE_LENGTH
-  const { title, summary } = parseEditorText(text);
-  const titleEmpty = title.length === 0;
-  const titleTooLong = title.length > MAX_TITLE_LENGTH;
-  const invalid = titleEmpty || titleTooLong;
-  const helper = titleEmpty ? '第一行不能为空' : titleTooLong ? `标题最多 ${MAX_TITLE_LENGTH} 字` : '';
   const inFields = phase === 'fields';
-  const mainLabel = inFields ? '保存' : '确定';
+  const mainLabel = inFields ? '保存' : '解析';
+  const anyInvalid = drafts.some((d) => draftHelper(d) !== '');
   const mainDisabled = inFields
-    ? invalid || submitting
+    ? anyInvalid || submitting
     : phase === 'parsing' || text.trim().length === 0;
 
   const handleConfirm = async () => {
@@ -122,13 +179,9 @@ export default function AiAddDialog({
     setPhase('parsing');
     try {
       const parsed = await onParse(raw);
-      // 预填 fields 阶段：与 ItemEditor 处理 initial 的方式一致（标题/详情单个换行拼回）
-      setText([parsed.title, parsed.summary].filter(Boolean).join('\n'));
-      setCategory(parsed.category);
-      setDate(parsed.due_date ?? '');
-      setImportance(parsed.importance);
-      setActionable(parsed.actionable);
-      setReminders(parsed.reminders);
+      setDrafts(parsed.map(toDraft));
+      // 只有一条时 ParsedTaskList 不出场，expanded 无意义；多条默认全部收起
+      setExpanded(null);
       setPhase('fields');
     } catch {
       // 解析失败回 input 并保留用户原文：绝不让用户白打一遍
@@ -138,21 +191,8 @@ export default function AiAddDialog({
   };
 
   const handleSave = () => {
-    if (invalid || submitting) return;
-    const fields: ItemFields = {
-      title,
-      summary,
-      category,
-      due_date: date || null,
-      importance,
-      actionable,
-    };
-    // 提醒只在非空时带：创建场景下「没提醒」与「省略 reminders」对后端等价，
-    // 载荷形状保持与解析结果为空时完全一致（配对测试按无 reminders 键断言）。
-    if (reminders.length > 0) {
-      fields.reminders = reminders;
-    }
-    onSubmit(fields);
+    if (anyInvalid || submitting || drafts.length === 0) return;
+    onSubmit(drafts.map(toFields));
   };
 
   const handleMainClick = () => {
@@ -164,7 +204,7 @@ export default function AiAddDialog({
   };
 
   const handleInputKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
-    // Cmd/Ctrl + Enter = 点「确定」；裸 Enter 保持默认换行
+    // Cmd/Ctrl + Enter = 点主按钮；裸 Enter 保持默认换行
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();
       void handleConfirm();
@@ -184,14 +224,43 @@ export default function AiAddDialog({
     }
   };
 
-  const handleAddAsIs = () => {
-    onSubmit({
-      title: text.trim().slice(0, MAX_TITLE_LENGTH),
-      summary: '',
-      category: '其他',
-      due_date: null,
+  /** 退场跑完才复位：组件常驻挂载，不复位的话下次打开会看到上一次的内容。
+   *  放在 onExited 而不是 onClose，是为了让用户在退场那 250ms 里看到的还是原内容，
+   *  而不是文字先被抽空、空壳往下滑。 */
+  const handleDialogExited = () => {
+    setPhase('input');
+    setText('');
+    setDrafts([]);
+    setExpanded(null);
+    setParseError(false);
+  };
+
+  const updateDraft = (index: number, next: Draft) => {
+    setDrafts((prev) => prev.map((d, i) => (i === index ? next : d)));
+  };
+
+  const removeDraft = (index: number) => {
+    setDrafts((prev) => prev.filter((_, i) => i !== index));
+    // 删掉的若在展开项之前，展开项要跟着往前挪一位，否则展开的会串到别条上
+    setExpanded((prev) => {
+      if (prev === null) return null;
+      if (prev === index) return null;
+      return prev > index ? prev - 1 : prev;
     });
   };
+
+  const handleAddAsIs = () => {
+    onSubmit([
+      {
+        title: text.trim().slice(0, MAX_TITLE_LENGTH),
+        summary: '',
+        category: '其他',
+        due_date: null,
+      },
+    ]);
+  };
+
+  const single = drafts.length === 1 ? drafts[0] : null;
 
   return (
     <Dialog
@@ -199,17 +268,15 @@ export default function AiAddDialog({
       maxWidth="sm"
       fullWidth
       sx={mainAreaDialogSx}
-      {...dialogTransitionProps()}
+      TransitionComponent={SlideUp}
+      // 入退场时长刻意不等（MD2 惯例：出场比入场快一档），但两个方向都真的跑。
+      // reduced 下整段取消，状态瞬时切换。
+      transitionDuration={reduced ? 0 : { enter: MOTION.large, exit: MOTION.largeExit }}
       TransitionProps={{
-        // 合并而非覆盖：dialogTransitionProps 的字段（TransitionComponent /
-        // transitionDuration）经展开进 Dialog，这里只补 onEntered
         onEntered: handleDialogEntered,
+        onExited: handleDialogExited,
       }}
-      slotProps={{
-        // 不传 viewTransitionName 时不给 paper 设共享名
-        paper: { sx: viewTransitionName ? { viewTransitionName } : undefined },
-      }}
-      open
+      open={open}
       onClose={onClose}
     >
       <AppBar position="static" elevation={0}>
@@ -218,7 +285,7 @@ export default function AiAddDialog({
             <CloseIcon />
           </IconButton>
           <Typography variant="h6" sx={{ ml: 1, flexGrow: 1 }} noWrap>
-            添加任务
+            新建待办
           </Typography>
           {!inFields && (
             <FormControlLabel
@@ -248,25 +315,19 @@ export default function AiAddDialog({
           </Button>
         </Toolbar>
       </AppBar>
-      {/* 阶段内容区：Collapse/Fade 包住，时长与缓动取 MOTION token；切阶段按 key 重挂载 */}
-      <Collapse
-        key={phase}
-        in
-        timeout={{ enter: MOTION.enter, exit: MOTION.exit }}
-        easing={{ enter: MOTION.easeStandard, exit: MOTION.easeStandard }}
-      >
-        <Fade
-          in
-          timeout={{ enter: MOTION.enter, exit: MOTION.exit }}
-          easing={{ enter: MOTION.easeStandard, exit: MOTION.easeStandard }}
-        >
+      {/* 阶段内容区：入场用 Collapse+Fade，时长与缓动取 MOTION token。
+          切阶段按 key 重挂载（旧阶段是被销毁而不是 in=false），所以这里只配
+          enter 档——配 exit 是死配置，永远不会生效，留着只会误导。 */}
+      <Collapse key={phase} in timeout={MOTION.enter} easing={MOTION.easeStandard}>
+        <Fade in timeout={MOTION.enter} easing={MOTION.easeStandard}>
           {/* Fade 需要把 ref 挂到真实 DOM 元素：外包一层 Box，避免阶段内容是
               ItemFieldsForm 这类不透传 ref 的组件时 nodeRef 悬空 */}
           <Box>
             {phase === 'input' ? (
               <Box sx={{ px: 2, py: 2, pb: 'calc(16px + env(safe-area-inset-bottom))' }}>
                 <TextField
-                  label="说一件事"
+                  label="待办内容"
+                  placeholder="例如「明天 15:00 提醒我买奶茶，18:00 接斯卡蒂」"
                   multiline
                   minRows={4}
                   fullWidth
@@ -274,10 +335,10 @@ export default function AiAddDialog({
                   onChange={(e) => handleTextChange(e.target.value)}
                   onKeyDown={handleInputKeyDown}
                   inputRef={inputRef}
-                  inputProps={{ 'aria-label': '要记的事' }}
+                  inputProps={{ 'aria-label': '待办内容' }}
                 />
                 <Typography variant="caption" color="text.secondary">
-                  {quickMode ? '速记模式：确定后自动添加，不再确认' : '确定后先给你看一眼解析结果'}
+                  {quickMode ? '速记模式已开启，提交后直接保存' : '提交后可先确认识别结果再保存'}
                 </Typography>
                 {parseError && (
                   <Alert
@@ -285,18 +346,18 @@ export default function AiAddDialog({
                     sx={{ mt: 1.5 }}
                     action={
                       <Button size="small" color="inherit" onClick={handleAddAsIs}>
-                        按原文添加
+                        按原文保存
                       </Button>
                     }
                   >
-                    AI 解析失败，你可以重试，或按原文直接添加。
+                    未能识别内容，可重试或按原文保存
                   </Alert>
                 )}
               </Box>
             ) : phase === 'parsing' ? (
               <Box
                 aria-busy
-                aria-label="正在解析"
+                aria-label="正在识别"
                 sx={{ px: 2, py: 2, pb: 'calc(16px + env(safe-area-inset-bottom))' }}
               >
                 <Stack spacing={2}>
@@ -305,21 +366,36 @@ export default function AiAddDialog({
                   <Skeleton variant="rounded" height={32} />
                 </Stack>
               </Box>
-            ) : (
+            ) : single ? (
               <ItemFieldsForm
-                text={text}
-                onTextChange={setText}
-                category={category}
-                onCategoryChange={setCategory}
-                importance={importance}
-                onImportanceChange={setImportance}
-                date={date}
-                onDateChange={setDate}
-                invalid={invalid}
-                helper={helper}
-                reminders={reminders}
-                onRemindersChange={setReminders}
+                text={single.text}
+                onTextChange={(next) => updateDraft(0, { ...single, text: next })}
+                category={single.category}
+                onCategoryChange={(next) => updateDraft(0, { ...single, category: next })}
+                importance={single.importance}
+                onImportanceChange={(next) => updateDraft(0, { ...single, importance: next })}
+                date={single.date}
+                onDateChange={(next) => updateDraft(0, { ...single, date: next })}
+                invalid={draftHelper(single) !== ''}
+                helper={draftHelper(single)}
+                reminders={single.reminders}
+                onRemindersChange={(next) => updateDraft(0, { ...single, reminders: next })}
               />
+            ) : (
+              <Box sx={{ pb: 'calc(16px + env(safe-area-inset-bottom))' }}>
+                <Typography variant="caption" color="text.secondary" sx={{ px: 2, py: 1, display: 'block' }}>
+                  识别出 {drafts.length} 条，点开可修改
+                </Typography>
+                <ParsedTaskList
+                  drafts={drafts}
+                  onChange={updateDraft}
+                  onRemove={removeDraft}
+                  expanded={expanded}
+                  onExpandedChange={setExpanded}
+                  invalidAt={(i) => draftHelper(drafts[i]) !== ''}
+                  helperAt={(i) => draftHelper(drafts[i])}
+                />
+              </Box>
             )}
           </Box>
         </Fade>

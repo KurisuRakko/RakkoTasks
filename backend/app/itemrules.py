@@ -23,6 +23,10 @@ REMINDERS_MAX = 5
 # calendar.py 的 iCal 订阅源（TRIGGER;RELATED=START:PT10H）同口径，两条通道
 # 对「没指定时刻」的解释保持一致。
 DEFAULT_REMIND_HOUR = 10
+# 一段速记文本最多拆出几条待办。有上限是为了防一次请求灌进几十条：模型偶尔会把
+# 一句话里的每个从句都当成独立的事，10 条足够覆盖「明天三点买奶茶，六点接人，
+# 七点打游戏，九点卖股票」这类真实用法。
+MAX_PARSED_TASKS = 10
 
 
 class ItemFieldError(Exception):

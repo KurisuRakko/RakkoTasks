@@ -415,7 +415,7 @@ def test_parse_returns_absolute_instants_converted_by_tz(session_factory, monkey
     resp = client.post("/api/items/parse", json={"text": "周二提一次、周五再提一次", "tz": "Australia/Sydney"})
     assert resp.status_code == 200
     expected = _wall_to_naive_utc("2026-09-08T10:00", "Australia/Sydney")
-    assert resp.json()["reminders"] == [_naive_to_iso(expected)]
+    assert resp.json()["tasks"][0]["reminders"] == [_naive_to_iso(expected)]
 
 
 @pytest.mark.parametrize("bad_tz", ["", "Nope/Nope", "/etc/localtime"])
@@ -433,7 +433,7 @@ def test_parse_invalid_tz_falls_back_to_settings_zone(session_factory, monkeypat
     resp = client.post("/api/items/parse", json={"text": "周五叫我", "tz": bad_tz})
     assert resp.status_code == 200, bad_tz
     expected = _wall_to_naive_utc("2026-09-08T10:00", "Pacific/Kiritimati")
-    assert resp.json()["reminders"] == [_naive_to_iso(expected)], bad_tz
+    assert resp.json()["tasks"][0]["reminders"] == [_naive_to_iso(expected)], bad_tz
 
 
 def test_quick_persists_reminders_when_ai_parsed(session_factory, monkeypatch):
@@ -449,10 +449,10 @@ def test_quick_persists_reminders_when_ai_parsed(session_factory, monkeypatch):
     data = resp.json()
     assert data["ai_parsed"] is True
     expected = _wall_to_naive_utc("2026-09-08T10:00", "Australia/Sydney")
-    assert data["item"]["reminders"] == [
-        {"id": data["item"]["reminders"][0]["id"], "remind_at": _naive_to_iso(expected)}
+    assert data["items"][0]["reminders"] == [
+        {"id": data["items"][0]["reminders"][0]["id"], "remind_at": _naive_to_iso(expected)}
     ]
-    rows = _reminder_rows(session_factory, data["item"]["id"])
+    rows = _reminder_rows(session_factory, data["items"][0]["id"])
     assert len(rows) == 1
     assert rows[0].remind_at == expected
 
@@ -467,8 +467,8 @@ def test_quick_fallback_path_has_no_reminders(session_factory, monkeypatch):
     assert resp.status_code == 201
     data = resp.json()
     assert data["ai_parsed"] is False
-    assert data["item"]["reminders"] == []
-    assert _reminder_rows(session_factory, data["item"]["id"]) == []
+    assert data["items"][0]["reminders"] == []
+    assert _reminder_rows(session_factory, data["items"][0]["id"]) == []
 
 
 def test_quick_dirty_reminders_keeps_only_valid(session_factory, monkeypatch):
@@ -483,9 +483,9 @@ def test_quick_dirty_reminders_keeps_only_valid(session_factory, monkeypatch):
     assert resp.status_code == 201
     assert resp.json()["ai_parsed"] is True
     expected = _wall_to_naive_utc("2026-09-08T10:00", "Australia/Sydney")
-    reminders = resp.json()["item"]["reminders"]
+    reminders = resp.json()["items"][0]["reminders"]
     assert len(reminders) == 1
     assert reminders[0]["remind_at"] == _naive_to_iso(expected)
-    rows = _reminder_rows(session_factory, resp.json()["item"]["id"])
+    rows = _reminder_rows(session_factory, resp.json()["items"][0]["id"])
     assert len(rows) == 1
     assert rows[0].remind_at == expected

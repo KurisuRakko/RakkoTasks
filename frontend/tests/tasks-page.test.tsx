@@ -18,24 +18,27 @@ import tasksSource from '../src/pages/TasksPage.tsx?raw';
 import { resetLists } from '../src/lib/list-cache';
 import { LEAVE_DURATION } from '../src/lib/motion';
 import { cardRowSx } from '../src/lib/surface';
-import { NEUTRAL_LIGHT, RADIUS } from '../src/rakko-tokens';
+import { MOTION, NEUTRAL_LIGHT, RADIUS } from '../src/rakko-tokens';
 import { VT_SHELL_ATTR, VT_NAMES } from '../src/lib/view-transition';
 import type { AccountInfo, Item } from '../src/types';
 import { allStyleText, ownEmotionClass, renderWithAppTheme, ruleTextOf } from './glass-text-contrast.test-utils';
 
 // vi.mock 工厂提升到 import 之前执行，只能引用字面量，文案在此内联
 vi.mock('../src/components/AiAddDialog', () => ({
-  default: (props: AiAddDialogProps) => (
-    <div>
-      <button
-        onClick={() =>
-          props.onSubmit({ title: '买牛奶', summary: '两盒', category: '个人', due_date: null })
-        }
-      >
-        替身-保存
-      </button>
-    </div>
-  ),
+  // 替身也认 open：真组件常驻挂载、由 Dialog 按 open 跑入退场，替身若无视 open
+  // 就会一直在场，「点加号才打开」这条断言等于没测
+  default: (props: AiAddDialogProps) =>
+    props.open ? (
+      <div>
+        <button
+          onClick={() =>
+            props.onSubmit([{ title: '买牛奶', summary: '两盒', category: '个人', due_date: null }])
+          }
+        >
+          替身-保存
+        </button>
+      </div>
+    ) : null,
 }));
 
 function makeItem(partial: Partial<Item>): Item {
@@ -179,15 +182,15 @@ describe('今日新邮件蓝点', () => {
 });
 
 describe('TasksPage 手动添加', () => {
-  it('页面存在右下角「添加任务」悬浮按钮', async () => {
+  it('页面存在右下角「新建待办」悬浮按钮', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => json({ items: [] })));
 
     renderPage();
 
-    expect(await screen.findByRole('button', { name: '添加任务' })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: '新建待办' })).toBeTruthy();
   });
 
-  it('点「添加任务」打开 AI 添加对话框（替身驱动 onSubmit），保存后 POST /api/items 且新标题出现在列表', async () => {
+  it('点「新建待办」打开 AI 添加对话框（替身驱动 onSubmit），保存后 POST /api/items 且新标题出现在列表', async () => {
     const fetchMock = vi.fn(async (url: string | URL, init?: RequestInit) => {
       const u = String(url);
       if (init?.method === 'POST') {
@@ -212,7 +215,7 @@ describe('TasksPage 手动添加', () => {
     renderPage();
 
     // 加号打开的是 AiAddDialog（占位实现渲染 null），用替身的「保存」驱动 onSubmit
-    fireEvent.click(await screen.findByRole('button', { name: '添加任务' }));
+    fireEvent.click(await screen.findByRole('button', { name: '新建待办' }));
     fireEvent.click(await screen.findByRole('button', { name: '替身-保存' }));
 
     await waitFor(() => {
@@ -231,17 +234,36 @@ describe('TasksPage 手动添加', () => {
 
     // 新条目出现在列表中，并提示「已添加」
     expect(await screen.findByText('买牛奶')).toBeTruthy();
-    expect(await screen.findByText('已添加')).toBeTruthy();
+    expect(await screen.findByText('已保存：买牛奶')).toBeTruthy();
   });
 });
 
+/** 某元素自有 emotion 类的**全部**规则块拼起来（含 @media 里的那些）。
+ *  ruleTextOf 只取第一个块，响应式 sx 落在 media 块里就取不到。 */
+function allRulesFor(el: Element): string {
+  const cls = ownEmotionClass(el);
+  if (!cls) return '';
+  const css = allStyleText();
+  const blocks: string[] = [];
+  let from = 0;
+  for (;;) {
+    const start = css.indexOf(`.${cls}{`, from);
+    if (start < 0) break;
+    const end = css.indexOf('}', start);
+    if (end < 0) break;
+    blocks.push(css.slice(start, end));
+    from = end + 1;
+  }
+  return blocks.join('\n');
+}
+
 describe('TasksPage 容器变换与 portal', () => {
-  it('「添加任务」悬浮按钮的 parentElement 是 document.body（portal 生效）', async () => {
+  it('「新建待办」悬浮按钮的 parentElement 是 document.body（portal 生效）', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => json({ items: [] })));
 
     renderPage();
 
-    const fab = await screen.findByRole('button', { name: '添加任务' });
+    const fab = await screen.findByRole('button', { name: '新建待办' });
     expect(fab.parentElement).toBe(document.body);
   });
 
@@ -250,8 +272,75 @@ describe('TasksPage 容器变换与 portal', () => {
 
     renderPage();
 
-    const fab = await screen.findByRole('button', { name: '添加任务' });
+    const fab = await screen.findByRole('button', { name: '新建待办' });
     expect(fab.getAttribute(VT_SHELL_ATTR)).toBe(VT_NAMES.fab);
+  });
+
+  // 加号 ↔ 速记面板的编排：加号只过渡 transform，打开下沉让位、关闭延后回位。
+  // 面板那一侧（Slide 的 enter/exit 时长、退场跑完才卸载）在 ai-add-dialog.test.tsx。
+  it('加号让位：关闭态 translateY(0)、打开态位移出视口，且只过渡 transform', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => json({ items: [] })));
+
+    render(
+      <MemoryRouter useTransitions={false}>
+        <TasksPage />
+      </MemoryRouter>,
+    );
+    const fab = await screen.findByRole('button', { name: '新建待办' });
+
+    const closed = getComputedStyle(fab);
+    expect(closed.transform).toBe('translateY(0)');
+    // 关闭方向要等面板先落下去一截，所以回位是带延迟的
+    expect(closed.transitionDelay).toBe(`${MOTION.fadeOut}ms`);
+    expect(closed.transition).toBe(`transform ${MOTION.state}ms ${MOTION.easeStandard}`);
+    // 禁 transition: all（会连带动画布局与浏览器私有属性）
+    expect(closed.transition).not.toContain('all');
+
+    fireEvent.click(fab);
+
+    // 打开态的位移是响应式的（sx 传对象），emotion 把它放进 @media 块，而且带
+    // env(safe-area-inset-bottom) 让 jsdom 的 CSS 解析器整条丢弃——computed style
+    // 和只取首个规则块的 ruleTextOf 都读不到，得把该类的全部规则块收齐再看
+    const openCss = allRulesFor(fab);
+    expect(openCss).toContain('translateY(calc(100%');
+    expect(openCss).toContain('env(safe-area-inset-bottom)');
+    expect(getComputedStyle(fab).transitionDelay).toBe('0ms'); // 打开立刻让位，不拖泥带水
+  });
+
+  it('加号的让位位移与它自己的 bottom 同源（不写死魔数，安全区照样能出视口）', () => {
+    // xs 档：16px 间距 + 64px 底栏 + 安全区，位移 = 自身高度 + 这些 + 8px 余量
+    expect(tasksSource).toContain("xs: 'calc(16px + 64px + env(safe-area-inset-bottom))'");
+    expect(tasksSource).toContain(
+      'xs: `translateY(calc(100% + ${FAB_BOTTOM.xs} + 8px))`',
+    );
+    expect(tasksSource).toContain(
+      'md: `translateY(calc(100% + ${FAB_BOTTOM.md} + 8px))`',
+    );
+  });
+
+  it('reduced-motion 下加号不做位移过渡', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => json({ items: [] })));
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn((query: string) => ({
+        matches: query.includes('prefers-reduced-motion'),
+        media: query,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        onchange: null,
+        dispatchEvent: vi.fn(),
+      })),
+    );
+
+    render(
+      <MemoryRouter useTransitions={false}>
+        <TasksPage />
+      </MemoryRouter>,
+    );
+    const fab = await screen.findByRole('button', { name: '新建待办' });
+    expect(getComputedStyle(fab).transition).toBe('none');
   });
 
   it('勾选条目后推进 LEAVE_DURATION：PATCH {"status":"done"} 且条目从列表消失', async () => {

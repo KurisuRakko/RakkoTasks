@@ -45,8 +45,8 @@ import {
 import { useLongPress } from '../lib/long-press';
 import { cardRowSx } from '../lib/surface';
 import { formatReminder, todayIso } from '../lib/time';
-import { runViewTransition, shellAttr, VT_NAMES } from '../lib/view-transition';
-import { GLASS } from '../rakko-tokens';
+import { shellAttr, VT_NAMES } from '../lib/view-transition';
+import { GLASS, MOTION } from '../rakko-tokens';
 import type { Category, Item, ItemFields, Reminder } from '../types';
 import AiAddDialog from '../components/AiAddDialog';
 import CategoryChips from '../components/CategoryChips';
@@ -313,6 +313,39 @@ function GroupSection({
   );
 }
 
+/**
+ * 保存成功的提示文案。一条时报标题（用户看得出记成了什么），多条时只报条数
+ * ——四个标题连起来会撑爆 Snackbar 一行。
+ * attempted 是本次提交的总条数：只在「部分失败」时才提，全成功不啰嗦。
+ */
+function savedText(saved: Item[], attempted = saved.length): string {
+  const done = saved.length === 1 ? `已保存：${saved[0].title}` : `已保存 ${saved.length} 条`;
+  return saved.length < attempted ? `${done}，${attempted - saved.length} 条失败` : done;
+}
+
+/** Snackbar 的「查看」按钮只在恰好保存一条时给：多条没有唯一的目标可看 */
+function snackItem(saved: Item[]): Item | null {
+  return saved.length === 1 ? saved[0] : null;
+}
+
+/**
+ * 悬浮按钮距视口底边的距离。移动端要越过 64px 底栏并计入安全区。
+ * 打开速记面板时按钮下沉让位，位移量按这个值算，两处必须同源。
+ */
+const FAB_BOTTOM = {
+  xs: 'calc(16px + 64px + env(safe-area-inset-bottom))',
+  md: '24px',
+} as const;
+
+/**
+ * 让位位移：自身高度（translateY 的 100%，FAB 直径 56px）+ 距底距离 + 8px 余量，
+ * 保证连投影一起移出视口下沿。
+ */
+const FAB_HIDDEN = {
+  xs: `translateY(calc(100% + ${FAB_BOTTOM.xs} + 8px))`,
+  md: `translateY(calc(100% + ${FAB_BOTTOM.md} + 8px))`,
+} as const;
+
 export default function TasksPage() {
   const [category, setCategory] = useState<Category | null>(null);
   const [leavingIds, setLeavingIds] = useState<number[]>([]);
@@ -362,22 +395,28 @@ export default function TasksPage() {
     };
   }, [loading, error, items, accountsExist]);
 
-  // 保存新条目：成功写进缓存（分类匹配与否由缓存键决定），失败保持编辑器打开
-  const handleCreate = useCallback(
-    (fields: ItemFields) => {
-      setCreating(true);
-      createItem(fields)
-        .then((item) => {
-          upsertOpenItem(item);
-          // 保存成功后编辑器关闭同样走容器变换，缩回悬浮按钮
-          runViewTransition('collapse-fab', () => setAddOpen(false), reduced);
-          setSnack({ text: '已添加', item: null });
-        })
-        .catch(() => setSnack({ text: '添加失败', item: null }))
-        .finally(() => setCreating(false));
-    },
-    [reduced],
-  );
+  // 保存新条目（一次可能有好几条：一段速记文本拆出的多件事）。
+  // 没有批量端点，逐条打 POST /api/items 复用已测代码；allSettled 而非 all，
+  // 一条失败不该把已成功的那几条一起吞掉。
+  // 只要有一条成功就关窗（那几条已经在列表里了，留着窗口没有意义）；
+  // 全失败才保持打开，让用户能直接重试而不用重打一遍。
+  const handleCreate = useCallback((fieldsList: ItemFields[]) => {
+    setCreating(true);
+    Promise.allSettled(fieldsList.map((fields) => createItem(fields)))
+      .then((results) => {
+        const saved = results
+          .filter((r) => r.status === 'fulfilled')
+          .map((r) => (r as PromiseFulfilledResult<Item>).value);
+        saved.forEach(upsertOpenItem);
+        if (saved.length === 0) {
+          setSnack({ text: '保存失败', item: null });
+          return;
+        }
+        setAddOpen(false);
+        setSnack({ text: savedText(saved, fieldsList.length), item: snackItem(saved) });
+      })
+      .finally(() => setCreating(false));
+  }, []);
 
   // 速记开关变更：写状态并持久化（写失败仅本次会话生效，不崩页面）
   const handleQuickModeChange = useCallback((next: boolean) => {
@@ -389,7 +428,7 @@ export default function TasksPage() {
     }
   }, []);
 
-  // 非速记模式：一句话 → 字段交给 AiAddDialog 预览。失败由对话框自己捕获并显示
+  // 非速记模式：一段话 → 字段列表交给 AiAddDialog 预览。失败由对话框自己捕获并显示
   // 兜底 UI（契约如此），这里不处理 reject。
   const handleParse = useCallback((text: string) => parseTask(text, todayIso()), []);
 
@@ -398,21 +437,18 @@ export default function TasksPage() {
   // 不取消）：请求一旦到达服务端就会跑完并入库，用户切页也要让它继续。结果回来
   // 再弹提示：ai_parsed === false 是正常返回（HTTP 201，后端用原文兜底建了条目），
   // 只有网络失败 / 非 201 才进 catch。
-  const handleQuickSubmit = useCallback(
-    (text: string) => {
-      runViewTransition('collapse-fab', () => setAddOpen(false), reduced);
-      quickAddTask(text, todayIso())
-        .then(({ item, ai_parsed }) => {
-          upsertOpenItem(item);
-          setSnack({
-            text: ai_parsed ? `已添加：${item.title}` : 'AI 解析失败，已按原文添加',
-            item,
-          });
-        })
-        .catch(() => setSnack({ text: '添加失败', item: null }));
-    },
-    [reduced],
-  );
+  const handleQuickSubmit = useCallback((text: string) => {
+    setAddOpen(false);
+    quickAddTask(text, todayIso())
+      .then(({ items: saved, ai_parsed }) => {
+        saved.forEach(upsertOpenItem);
+        setSnack({
+          text: ai_parsed ? savedText(saved) : '未能识别内容，已按原文保存',
+          item: snackItem(saved),
+        });
+      })
+      .catch(() => setSnack({ text: '保存失败', item: null }));
+  }, []);
 
   // 组件卸载时清掉所有离场动画定时器，避免卸载后 setState
   useEffect(() => {
@@ -555,45 +591,52 @@ export default function TasksPage() {
         />
       )}
       {/*
-        右下角 + ：手动添加待办。移动端浮在 64px 底栏（zIndex 1100）之上，计入安全区。
+        右下角 + ：新建待办。移动端浮在 64px 底栏（zIndex 1100）之上，计入安全区。
         portal 到 body：路由转场内层动画盒带 transform，会让 fixed 后代的定位退化成
         相对该盒（换页后按钮跟着内容滚）；挂到 body 下才保持视口角落定位。
-        right/bottom/zIndex 保持原值不动。持名策略：编辑器打开期间这里内联 none 让名，
-        名字由 AiAddDialog 的 paper 独占、做来源按钮 → 对话框整页的容器变换；换页与
-        expand-fab / collapse-fab 时由样式层按 data-vt-shell 下发名字；打开详情
-        （expand / collapse）时不持名，按钮留在 root 快照里跟遮罩一起压暗。
+        持名只为换页服务（样式层按 data-vt-shell 在 route-* 下发名字，让它静止不动）；
+        打开详情（expand / collapse）时不持名，按钮留在 root 快照里跟遮罩一起压暗。
+
+        与速记面板的编排：按下时按钮下沉让位（state 160ms），面板同时从底部升起
+        （large 300ms）；关闭时面板先落下（largeExit 250ms），按钮延后 fadeOut 90ms
+        才回位，两者恰好同时收尾。只过渡 transform 一个属性，reduced 下整段取消。
       */}
       {createPortal(
         <Fab
           color="primary"
-          aria-label="添加任务"
+          aria-label="新建待办"
           {...shellAttr(VT_NAMES.fab)}
-          onClick={() => runViewTransition('expand-fab', () => setAddOpen(true), reduced)}
+          onClick={() => setAddOpen(true)}
           sx={{
             position: 'fixed',
             right: { xs: 16, md: 24 },
-            bottom: { xs: 'calc(16px + 64px + env(safe-area-inset-bottom))', md: 24 },
+            bottom: FAB_BOTTOM,
             zIndex: 1150,
-            // 对话框打开期间内联 none 让名给 AiAddDialog 的 paper；其余交给样式层
-            viewTransitionName: addOpen ? 'none' : undefined,
+            transform: addOpen ? FAB_HIDDEN : 'translateY(0)',
+            transition: reduced ? 'none' : `transform ${MOTION.state}ms ${MOTION.easeStandard}`,
+            // 打开时立刻让位；关闭时等面板落下去一截再回来，别和它迎头撞上
+            transitionDelay: addOpen ? '0ms' : `${MOTION.fadeOut}ms`,
           }}
         >
           <AddIcon />
         </Fab>,
         document.body,
       )}
-      {addOpen && (
-        <AiAddDialog
-          quickMode={quickMode}
-          onQuickModeChange={handleQuickModeChange}
-          onParse={handleParse}
-          onSubmit={handleCreate}
-          onQuickSubmit={handleQuickSubmit}
-          submitting={creating}
-          onClose={() => runViewTransition('collapse-fab', () => setAddOpen(false), reduced)}
-          viewTransitionName={VT_NAMES.fab}
-        />
-      )}
+      {/*
+        常驻挂载而不是 {addOpen && ...}：条件渲染会在关闭那一刻直接卸载整棵子树，
+        MUI 的退场过渡根本跑不到（这正是改版前「打开有动画、关闭没有」的原因）。
+        open 交给 Dialog，由它在退场跑完后自己卸载内容。
+      */}
+      <AiAddDialog
+        open={addOpen}
+        quickMode={quickMode}
+        onQuickModeChange={handleQuickModeChange}
+        onParse={handleParse}
+        onSubmit={handleCreate}
+        onQuickSubmit={handleQuickSubmit}
+        submitting={creating}
+        onClose={() => setAddOpen(false)}
+      />
       <Snackbar
         open={snack !== null}
         autoHideDuration={3000}

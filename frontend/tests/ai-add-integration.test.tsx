@@ -96,14 +96,14 @@ function renderPage(
 
 /** 点开「+」并等真实对话框的输入阶段落地 */
 async function openDialog(): Promise<void> {
-  fireEvent.click(await screen.findByRole('button', { name: '添加任务' }));
-  await screen.findByLabelText('要记的事');
+  fireEvent.click(await screen.findByRole('button', { name: '新建待办' }));
+  await screen.findByLabelText('待办内容');
 }
 
-/** 非速记走到 fields 阶段：输入原文 → 点「确定」→ parse 返回 PARSED → 预览落地 */
+/** 非速记走到 fields 阶段：输入原文 → 点「解析」→ parse 返回 PARSED → 预览落地 */
 async function parseIntoFields(fetchMock: ReturnType<typeof vi.fn>): Promise<void> {
-  fireEvent.change(await screen.findByLabelText('要记的事'), { target: { value: TEXT } });
-  fireEvent.click(screen.getByRole('button', { name: '确定' }));
+  fireEvent.change(await screen.findByLabelText('待办内容'), { target: { value: TEXT } });
+  fireEvent.click(screen.getByRole('button', { name: '解析' }));
   await waitFor(() => {
     expect(
       fetchMock.mock.calls.some(([url]) => url === '/api/items/parse'),
@@ -135,12 +135,12 @@ afterEach(() => {
 
 describe('非速记模式：真实对话框 × 真实页面闭环', () => {
   it('AI 解析预填 → 保存：importance/actionable 从 parse 响应一路穿进 POST /api/items', async () => {
-    // 网络层用门闩卡住 parse 响应，保证先看到「正在解析」骨架再落地
+    // 网络层用门闩卡住 parse 响应，保证先看到「正在识别」骨架再落地
     const gate = deferred();
     const fetchMock = renderPage(async (url) => {
       if (url === '/api/items/parse') {
         await gate.promise;
-        return json(PARSED);
+        return json({ tasks: [PARSED] });
       }
       return json(
         makeItem({ id: 11, title: PARSED.title, category: PARSED.category }),
@@ -149,11 +149,11 @@ describe('非速记模式：真实对话框 × 真实页面闭环', () => {
     });
 
     await openDialog();
-    fireEvent.change(screen.getByLabelText('要记的事'), { target: { value: TEXT } });
-    fireEvent.click(screen.getByRole('button', { name: '确定' }));
+    fireEvent.change(screen.getByLabelText('待办内容'), { target: { value: TEXT } });
+    fireEvent.click(screen.getByRole('button', { name: '解析' }));
 
     // 骨架出现（响应被门闩卡住，此刻必在 parsing）
-    expect(await screen.findByLabelText('正在解析')).toHaveAttribute('aria-busy', 'true');
+    expect(await screen.findByLabelText('正在识别')).toHaveAttribute('aria-busy', 'true');
     // parse 请求体：原文 + 本地基准日
     expect(JSON.parse(String(findPost(fetchMock, '/api/items/parse').body))).toEqual({
       text: TEXT,
@@ -171,7 +171,7 @@ describe('非速记模式：真实对话框 × 真实页面闭环', () => {
       'true',
     );
     expect(screen.getByLabelText('截止日期')).toHaveValue('2026-09-08');
-    // 主按钮文案随阶段切换：input「确定」→ fields「保存」
+    // 主按钮文案随阶段切换：input「解析」→ fields「保存」
     expect(screen.getByRole('button', { name: '保存' })).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: '保存' }));
@@ -196,7 +196,7 @@ describe('非速记模式：真实对话框 × 真实页面闭环', () => {
 
   it('解析后用户改过再存：载荷反映改动，importance/actionable 仍是 AI 给的那两个', async () => {
     const fetchMock = renderPage(async (url) => {
-      if (url === '/api/items/parse') return json(PARSED);
+      if (url === '/api/items/parse') return json({ tasks: [PARSED] });
       return json(makeItem({ id: 12, title: '自己修空调' }), 201);
     });
 
@@ -235,11 +235,11 @@ describe('非速记模式：真实对话框 × 真实页面闭环', () => {
 });
 
 describe('速记模式：真实对话框 × 真实页面闭环', () => {
-  it('点「确定」打 /api/items/quick 不打 /parse：关窗、Snackbar 带「查看」、新条目上列表', async () => {
+  it('点「解析」打 /api/items/quick 不打 /parse：关窗、Snackbar 带「查看」、新条目上列表', async () => {
     const fetchMock = renderPage(async (url) => {
       if (url === '/api/items/quick') {
         return json(
-          { item: makeItem({ id: 9, title: '把空调修好' }), ai_parsed: true },
+          { items: [makeItem({ id: 9, title: '把空调修好' })], ai_parsed: true },
           201,
         );
       }
@@ -249,9 +249,9 @@ describe('速记模式：真实对话框 × 真实页面闭环', () => {
     await openDialog();
     // 拨速记开关：受控回路（对话框 prop ← TasksPage 状态 ← localStorage 持久化）
     fireEvent.click(screen.getByRole('switch', { name: '速记模式' }));
-    expect(await screen.findByText('速记模式：确定后自动添加，不再确认')).toBeTruthy();
-    fireEvent.change(screen.getByLabelText('要记的事'), { target: { value: TEXT } });
-    fireEvent.click(screen.getByRole('button', { name: '确定' }));
+    expect(await screen.findByText('速记模式已开启，提交后直接保存')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('待办内容'), { target: { value: TEXT } });
+    fireEvent.click(screen.getByRole('button', { name: '解析' }));
 
     // 打的是 quick（不是 parse / 不是 items），请求体含原文与本地基准日
     await waitFor(() => {
@@ -269,22 +269,22 @@ describe('速记模式：真实对话框 × 真实页面闭环', () => {
     });
 
     // 对话框立刻收回：输入框消失，悬浮按钮还在
-    await waitFor(() => expect(screen.queryByLabelText('要记的事')).toBeNull());
-    expect(screen.getByRole('button', { name: '添加任务' })).toBeTruthy();
+    await waitFor(() => expect(screen.queryByLabelText('待办内容')).toBeNull());
+    expect(screen.getByRole('button', { name: '新建待办' })).toBeTruthy();
 
-    // ai_parsed=true：Snackbar「已添加：<title>」带文案恰为「查看」的按钮
-    expect(await screen.findByText('已添加：把空调修好')).toBeTruthy();
+    // ai_parsed=true：Snackbar「已保存：<title>」带文案恰为「查看」的按钮
+    expect(await screen.findByText('已保存：把空调修好')).toBeTruthy();
     expect(screen.getByRole('button', { name: '查看' })).toBeTruthy();
     // 新条目进了列表（upsertOpenItem 生效）
     const row = screen.getByText('把空调修好').closest('li');
     expect(row).not.toBeNull();
   });
 
-  it('quick 返回 201 且 ai_parsed=false：按原文添加的提示，不进「添加失败」错误分支', async () => {
+  it('quick 返回 201 且 ai_parsed=false：按原文保存的提示，不进「保存失败」错误分支', async () => {
     const fetchMock = renderPage(async (url) => {
       if (url === '/api/items/quick') {
         return json(
-          { item: makeItem({ id: 9, title: TEXT }), ai_parsed: false },
+          { items: [makeItem({ id: 9, title: TEXT })], ai_parsed: false },
           201,
         );
       }
@@ -293,42 +293,42 @@ describe('速记模式：真实对话框 × 真实页面闭环', () => {
 
     await openDialog();
     fireEvent.click(screen.getByRole('switch', { name: '速记模式' }));
-    fireEvent.change(screen.getByLabelText('要记的事'), { target: { value: TEXT } });
-    fireEvent.click(screen.getByRole('button', { name: '确定' }));
+    fireEvent.change(screen.getByLabelText('待办内容'), { target: { value: TEXT } });
+    fireEvent.click(screen.getByRole('button', { name: '解析' }));
 
     await waitFor(() => {
       expect(
         fetchMock.mock.calls.some(([url]) => url === '/api/items/quick'),
       ).toBe(true);
     });
-    expect(await screen.findByText('AI 解析失败，已按原文添加')).toBeTruthy();
+    expect(await screen.findByText('未能识别内容，已按原文保存')).toBeTruthy();
     // 正常返回只有兜底文案：证明没走 catch 错误分支
-    expect(screen.queryByText('添加失败')).toBeNull();
+    expect(screen.queryByText('保存失败')).toBeNull();
   });
 });
 
 describe('解析失败与速记持久化', () => {
-  it('parse 500 → 回 input 原文保留，「按原文添加」载荷无 importance/actionable', async () => {
+  it('parse 500 → 回 input 原文保留，「按原文保存」载荷无 importance/actionable', async () => {
     const fetchMock = renderPage(async (url) => {
       if (url === '/api/items/parse') return json({ detail: 'boom' }, 500);
       return json(makeItem({ id: 13, title: TEXT }), 201);
     });
 
     await openDialog();
-    fireEvent.change(screen.getByLabelText('要记的事'), { target: { value: TEXT } });
-    fireEvent.click(screen.getByRole('button', { name: '确定' }));
+    fireEvent.change(screen.getByLabelText('待办内容'), { target: { value: TEXT } });
+    fireEvent.click(screen.getByRole('button', { name: '解析' }));
 
     await waitFor(() => {
       expect(
         fetchMock.mock.calls.some(([url]) => url === '/api/items/parse'),
       ).toBe(true);
     });
-    // 失败兜底 UI：回 input 阶段、原文没被清空、「按原文添加」出现
-    expect(await screen.findByRole('button', { name: '按原文添加' })).toBeTruthy();
-    expect(screen.getByText(/AI 解析失败/)).toBeTruthy();
-    expect((screen.getByLabelText('要记的事') as HTMLTextAreaElement).value).toBe(TEXT);
+    // 失败兜底 UI：回 input 阶段、原文没被清空、「按原文保存」出现
+    expect(await screen.findByRole('button', { name: '按原文保存' })).toBeTruthy();
+    expect(screen.getByText(/未能识别内容/)).toBeTruthy();
+    expect((screen.getByLabelText('待办内容') as HTMLTextAreaElement).value).toBe(TEXT);
 
-    fireEvent.click(screen.getByRole('button', { name: '按原文添加' }));
+    fireEvent.click(screen.getByRole('button', { name: '按原文保存' }));
     await waitFor(() => {
       expect(
         fetchMock.mock.calls.some(([u, init]) => init?.method === 'POST' && u === '/api/items'),
@@ -362,7 +362,7 @@ describe('解析失败与速记持久化', () => {
       expect(screen.queryByRole('switch', { name: '速记模式' })).toBeNull(),
     );
 
-    fireEvent.click(await screen.findByRole('button', { name: '添加任务' }));
+    fireEvent.click(await screen.findByRole('button', { name: '新建待办' }));
     const reopened = await screen.findByRole('switch', { name: '速记模式' });
     expect(reopened).toHaveAttribute('aria-checked', 'true');
     expect(localStorage.getItem(QUICK_MODE_KEY)).toBe('on');
@@ -372,7 +372,7 @@ describe('解析失败与速记持久化', () => {
     renderPage(async (url) => {
       if (url === '/api/items/quick') {
         return json(
-          { item: makeItem({ id: 9, title: '把空调修好' }), ai_parsed: true },
+          { items: [makeItem({ id: 9, title: '把空调修好' })], ai_parsed: true },
           201,
         );
       }
@@ -381,8 +381,8 @@ describe('解析失败与速记持久化', () => {
 
     await openDialog();
     fireEvent.click(screen.getByRole('switch', { name: '速记模式' }));
-    fireEvent.change(screen.getByLabelText('要记的事'), { target: { value: TEXT } });
-    fireEvent.click(screen.getByRole('button', { name: '确定' }));
+    fireEvent.change(screen.getByLabelText('待办内容'), { target: { value: TEXT } });
+    fireEvent.click(screen.getByRole('button', { name: '解析' }));
 
     fireEvent.click(await screen.findByRole('button', { name: '查看' }));
 
@@ -392,6 +392,136 @@ describe('解析失败与速记持久化', () => {
     expect(screen.getByRole('heading', { name: '把空调修好' })).toBeTruthy();
     expect(screen.getByText('暂无详情')).toBeTruthy();
     // Snackbar 已随「查看」关闭
-    await waitFor(() => expect(screen.queryByText('已添加：把空调修好')).toBeNull());
+    await waitFor(() => expect(screen.queryByText('已保存：把空调修好')).toBeNull());
+  });
+});
+
+describe('一段话多条：真实对话框 × 真实页面闭环', () => {
+  /** 用户原句拆出的四件事，各带自己的提醒时刻 */
+  const FOUR: ParsedTask[] = [
+    { ...PARSED, title: '买奶茶', summary: '', due_date: null, importance: 'normal', actionable: true },
+    { ...PARSED, title: '接斯卡蒂', summary: '', due_date: null, importance: 'normal', actionable: true },
+    { ...PARSED, title: '玩一把原神', summary: '', due_date: null, importance: 'low', actionable: true },
+    { ...PARSED, title: '卖 TQQQ', summary: '', due_date: null, importance: 'high', actionable: true },
+  ];
+  const LONG = '明天3点提醒我去买奶茶，明天6点提醒我去接斯卡蒂，下午7点玩一把原神，9点记得去把TQQQ卖了';
+
+  it('非速记：解析出四条 → 列表预览 → 保存打四次 POST /api/items，四条都上列表', async () => {
+    let created = 0;
+    const fetchMock = renderPage(async (url) => {
+      if (url === '/api/items/parse') return json({ tasks: FOUR });
+      if (url === '/api/items') {
+        created += 1;
+        return json(makeItem({ id: 100 + created, title: FOUR[created - 1].title }), 201);
+      }
+      return json({}, 404);
+    });
+
+    await openDialog();
+    fireEvent.change(screen.getByLabelText('待办内容'), { target: { value: LONG } });
+    fireEvent.click(screen.getByRole('button', { name: '解析' }));
+
+    // 四条列成四行，默认收起
+    expect(await screen.findByText('识别出 4 条，点开可修改')).toBeTruthy();
+    expect(screen.getByRole('button', { name: '第 1 条：买奶茶' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '第 4 条：卖 TQQQ' })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+
+    await waitFor(() => {
+      const posts = fetchMock.mock.calls.filter(
+        ([u, init]) => u === '/api/items' && (init as RequestInit)?.method === 'POST',
+      );
+      expect(posts).toHaveLength(4);
+    });
+    const titles = fetchMock.mock.calls
+      .filter(([u, init]) => u === '/api/items' && (init as RequestInit)?.method === 'POST')
+      .map(([, init]) => JSON.parse(String((init as RequestInit).body)).title);
+    expect(titles).toEqual(['买奶茶', '接斯卡蒂', '玩一把原神', '卖 TQQQ']);
+    // importance 逐条穿到底，没有被统一成 normal
+    const importances = fetchMock.mock.calls
+      .filter(([u, init]) => u === '/api/items' && (init as RequestInit)?.method === 'POST')
+      .map(([, init]) => JSON.parse(String((init as RequestInit).body)).importance);
+    expect(importances).toEqual(['normal', 'normal', 'low', 'high']);
+
+    // 关窗 + 四条都进了列表
+    await waitFor(() => expect(screen.queryByLabelText('待办内容')).toBeNull());
+    expect(await screen.findByText('已保存 4 条')).toBeTruthy();
+  });
+
+  it('删掉解析错的一条再保存：只打三次 POST，被删的那条不在其中', async () => {
+    let created = 0;
+    const fetchMock = renderPage(async (url) => {
+      if (url === '/api/items/parse') return json({ tasks: FOUR });
+      if (url === '/api/items') {
+        created += 1;
+        return json(makeItem({ id: 200 + created }), 201);
+      }
+      return json({}, 404);
+    });
+
+    await openDialog();
+    fireEvent.change(screen.getByLabelText('待办内容'), { target: { value: LONG } });
+    fireEvent.click(screen.getByRole('button', { name: '解析' }));
+    await screen.findByText('识别出 4 条，点开可修改');
+
+    fireEvent.click(screen.getByRole('button', { name: '删除第 3 条' }));
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+
+    await waitFor(() => {
+      const posts = fetchMock.mock.calls.filter(
+        ([u, init]) => u === '/api/items' && (init as RequestInit)?.method === 'POST',
+      );
+      expect(posts).toHaveLength(3);
+    });
+    const titles = fetchMock.mock.calls
+      .filter(([u, init]) => u === '/api/items' && (init as RequestInit)?.method === 'POST')
+      .map(([, init]) => JSON.parse(String((init as RequestInit).body)).title);
+    expect(titles).toEqual(['买奶茶', '接斯卡蒂', '卖 TQQQ']);
+  });
+
+  it('速记：quick 返回四条 → 全部进列表，Snackbar 报条数且不给「查看」', async () => {
+    localStorage.setItem(QUICK_MODE_KEY, 'on');
+    renderPage(async (url) => {
+      if (url === '/api/items/quick') {
+        return json(
+          { items: FOUR.map((t, i) => makeItem({ id: 300 + i, title: t.title })), ai_parsed: true },
+          201,
+        );
+      }
+      return json({}, 404);
+    });
+
+    await openDialog();
+    fireEvent.change(screen.getByLabelText('待办内容'), { target: { value: LONG } });
+    fireEvent.click(screen.getByRole('button', { name: '解析' }));
+
+    expect(await screen.findByText('已保存 4 条')).toBeTruthy();
+    // 多条没有唯一目标可看，不给「查看」
+    expect(screen.queryByRole('button', { name: '查看' })).toBeNull();
+    expect(await screen.findByText('卖 TQQQ')).toBeTruthy();
+  });
+
+  it('部分失败：四条里第二条 500 → 其余三条照常入库，提示带失败条数', async () => {
+    let n = 0;
+    renderPage(async (url) => {
+      if (url === '/api/items/parse') return json({ tasks: FOUR });
+      if (url === '/api/items') {
+        n += 1;
+        if (n === 2) return json({ code: 'boom' }, 500);
+        return json(makeItem({ id: 400 + n, title: FOUR[n - 1].title }), 201);
+      }
+      return json({}, 404);
+    });
+
+    await openDialog();
+    fireEvent.change(screen.getByLabelText('待办内容'), { target: { value: LONG } });
+    fireEvent.click(screen.getByRole('button', { name: '解析' }));
+    await screen.findByText('识别出 4 条，点开可修改');
+
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+
+    // 成功的三条不该被失败的那条连累掉
+    expect(await screen.findByText('已保存 3 条，1 条失败')).toBeTruthy();
   });
 });
