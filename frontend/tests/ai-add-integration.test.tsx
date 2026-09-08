@@ -13,6 +13,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import TasksPage from '../src/pages/TasksPage';
 import { resetLists } from '../src/lib/list-cache';
 import { localTimeZone, todayIso } from '../src/lib/time';
@@ -85,7 +86,11 @@ function renderPage(
     return json({}, 404);
   });
   vi.stubGlobal('fetch', fetchMock);
-  render(<TasksPage />);
+  render(
+      <MemoryRouter useTransitions={false}>
+        <TasksPage />
+      </MemoryRouter>,
+    );
   return fetchMock;
 }
 

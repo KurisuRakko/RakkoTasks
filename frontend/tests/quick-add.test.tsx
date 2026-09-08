@@ -7,6 +7,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import TasksPage from '../src/pages/TasksPage';
 import type { AiAddDialogProps } from '../src/components/AiAddDialog';
 import { resetLists } from '../src/lib/list-cache';
@@ -90,7 +91,11 @@ function renderPage(handler: (url: string, init?: RequestInit) => Response): Ret
     return json({}, 404);
   });
   vi.stubGlobal('fetch', fetchMock);
-  render(<TasksPage />);
+  render(
+      <MemoryRouter useTransitions={false}>
+        <TasksPage />
+      </MemoryRouter>,
+    );
   return fetchMock;
 }
 

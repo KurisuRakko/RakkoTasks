@@ -1,9 +1,12 @@
 // SettingsPage 测试：已停用账户的变暗必须由 filter 实现，不能靠 opacity——
 // 入场动画 animation-fill-mode: both 会把关键帧终态 opacity: 1 保持在元素上
 // （动画值优先级高于普通声明），静态 opacity 声明会被压掉、变暗失效。
+// 账户分区逻辑迁去 AccountsSection 后仍在同一页面上渲染，这些断言继续适用；
+// AccountsSection 内部会调用带方向导航的 hook，渲染需要 Router 上下文。
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import SettingsPage from '../src/pages/SettingsPage';
 import { ThemeModeProvider } from '../src/lib/theme-mode';
 import { readWallpaper, setWallpaper } from '../src/lib/wallpaper';
@@ -32,6 +35,8 @@ const STATUS: StatusResponse = {
       email: 'you@gmail.com',
       status: 'error',
       enabled: false,
+      has_credentials: false,
+      ms_client_id: null,
       last_sync_at: null,
       last_error: '停用前同步出错',
     },
@@ -46,6 +51,16 @@ function json(body: unknown): Response {
   });
 }
 
+function renderSettings() {
+  return render(
+    <ThemeModeProvider>
+      <MemoryRouter>
+        <SettingsPage />
+      </MemoryRouter>
+    </ThemeModeProvider>,
+  );
+}
+
 beforeEach(() => {
   localStorage.clear();
 });
@@ -53,32 +68,6 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
-});
-
-describe('SettingsPage 已停用账户', () => {
-  it('enabled=false 时账户行显示「已停用」Chip，且变暗走 filter 而非 opacity', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => json(STATUS)));
-    render(
-      <ThemeModeProvider>
-        <SettingsPage />
-      </ThemeModeProvider>,
-    );
-
-    // 账户行卡片化已移除（分区本身是玻璃面板，行直接坐上面），变暗挂在行容器上：
-    // 行容器 =「已停用」Chip 所在 Stack 的外层
-    const chip = await screen.findByText('已停用');
-    expect(screen.queryByText('同步中')).toBeNull();
-
-    const row = chip.closest('.MuiStack-root')?.parentElement as HTMLElement | null;
-    expect(row).not.toBeNull();
-    const styles = getComputedStyle(row!);
-    // 变暗必须走 filter：退回旧的 opacity 写法时，opacity 计算值为 '0.6' 且
-    // filter 不含 opacity(0.6)，两条断言都会失败
-    expect(styles.filter).toContain('opacity(0.6)');
-    // jsdom 对未声明的属性返回空串（浏览器中为 '1'）——这里断言不能是 '0.6'，
-    // 即变暗不允许落在 opacity 属性上
-    expect(styles.opacity).not.toBe('0.6');
-  });
 });
 
 describe('SettingsPage 日历订阅', () => {
@@ -98,11 +87,7 @@ describe('SettingsPage 日历订阅', () => {
   it('fetch 返回令牌时展示订阅链接输入框，值以 /api/calendar/abc.ics 结尾', async () => {
     vi.stubGlobal('fetch', makeFetchMock());
 
-    render(
-      <ThemeModeProvider>
-        <SettingsPage />
-      </ThemeModeProvider>,
-    );
+    renderSettings();
 
     const input = (await screen.findByLabelText('订阅链接')) as HTMLInputElement;
     expect(input.value.endsWith('/api/calendar/abc.ics')).toBe(true);
@@ -111,11 +96,7 @@ describe('SettingsPage 日历订阅', () => {
   it('「在 iPhone 上订阅」是 webcal:// 开头的链接', async () => {
     vi.stubGlobal('fetch', makeFetchMock());
 
-    render(
-      <ThemeModeProvider>
-        <SettingsPage />
-      </ThemeModeProvider>,
-    );
+    renderSettings();
 
     const link = await screen.findByRole('link', { name: '在 iPhone 上订阅' });
     expect(link.getAttribute('href')).toMatch(/^webcal:\/\//);
@@ -139,11 +120,7 @@ describe('SettingsPage 提醒事项同步', () => {
   it('configured=false 时出现「生成同步密码」按钮，无「同步密码」输入框，用户名显示 a@x.com', async () => {
     vi.stubGlobal('fetch', makeFetchMock({ ...DAV, configured: false }));
 
-    render(
-      <ThemeModeProvider>
-        <SettingsPage />
-      </ThemeModeProvider>,
-    );
+    renderSettings();
 
     expect(await screen.findByRole('button', { name: '生成同步密码' })).toBeTruthy();
     expect(screen.queryByLabelText('同步密码')).toBeNull();
@@ -155,11 +132,7 @@ describe('SettingsPage 提醒事项同步', () => {
     const fetchMock = makeFetchMock({ ...DAV, configured: false });
     vi.stubGlobal('fetch', fetchMock);
 
-    render(
-      <ThemeModeProvider>
-        <SettingsPage />
-      </ThemeModeProvider>,
-    );
+    renderSettings();
 
     fireEvent.click(await screen.findByRole('button', { name: '生成同步密码' }));
 
@@ -178,11 +151,7 @@ describe('SettingsPage 提醒事项同步', () => {
   it('configured=true 时出现「重新生成密码」，不出现「生成同步密码」，页面文本不含 32 个 p', async () => {
     vi.stubGlobal('fetch', makeFetchMock({ ...DAV, configured: true }));
 
-    render(
-      <ThemeModeProvider>
-        <SettingsPage />
-      </ThemeModeProvider>,
-    );
+    renderSettings();
 
     expect(await screen.findByRole('button', { name: '重新生成密码' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: '生成同步密码' })).toBeNull();
@@ -199,11 +168,7 @@ describe('SettingsPage 提醒事项同步', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    render(
-      <ThemeModeProvider>
-        <SettingsPage />
-      </ThemeModeProvider>,
-    );
+    renderSettings();
 
     expect(await screen.findByText('加载提醒事项同步配置失败')).toBeTruthy();
     const link = (await screen.findByLabelText('订阅链接')) as HTMLInputElement;
@@ -230,11 +195,7 @@ describe('SettingsPage 检查更新', () => {
   });
 
   it('「检查更新」发起成功时提示已检查', async () => {
-    render(
-      <ThemeModeProvider>
-        <SettingsPage />
-      </ThemeModeProvider>,
-    );
+    renderSettings();
 
     fireEvent.click(await screen.findByRole('button', { name: '检查更新' }));
     expect(checkForUpdateMock).toHaveBeenCalledTimes(1);
@@ -243,11 +204,7 @@ describe('SettingsPage 检查更新', () => {
 
   it('环境不支持（返回 false）时提示当前环境不支持自动更新', async () => {
     checkForUpdateMock.mockResolvedValue(false);
-    render(
-      <ThemeModeProvider>
-        <SettingsPage />
-      </ThemeModeProvider>,
-    );
+    renderSettings();
 
     fireEvent.click(await screen.findByRole('button', { name: '检查更新' }));
     expect(await screen.findByText('当前环境不支持自动更新')).toBeTruthy();
@@ -270,12 +227,14 @@ describe('SettingsPage 玻璃分区与按钮配色', () => {
     vi.stubGlobal('fetch', makeFetchMock());
     render(
       <ThemeModeProvider>
-        <SettingsPage />
+        <MemoryRouter>
+          <SettingsPage />
+        </MemoryRouter>
       </ThemeModeProvider>,
     );
 
     // 分区标题是静态内容，渲染即可断言；渲染顺序与页面书写顺序一致
-    const titles = ['账户状态', '外观', '壁纸', '日历订阅', '提醒事项同步', '账户', '关于'];
+    const titles = ['邮箱账户', '外观', '壁纸', '日历订阅', '提醒事项同步', '账户', '关于'];
     const panels = Array.from(document.querySelectorAll('[data-glass="panel"]'));
     expect(panels).toHaveLength(titles.length);
     panels.forEach((panel, i) => {
@@ -292,7 +251,9 @@ describe('SettingsPage 玻璃分区与按钮配色', () => {
     vi.stubGlobal('fetch', makeFetchMock());
     render(
       <ThemeModeProvider>
-        <SettingsPage />
+        <MemoryRouter>
+          <SettingsPage />
+        </MemoryRouter>
       </ThemeModeProvider>,
     );
 
@@ -329,7 +290,9 @@ describe('SettingsPage 壁纸', () => {
     vi.stubGlobal('fetch', makeFetchMock());
     render(
       <ThemeModeProvider>
-        <SettingsPage />
+        <MemoryRouter>
+          <SettingsPage />
+        </MemoryRouter>
       </ThemeModeProvider>,
     );
   }

@@ -32,10 +32,16 @@ import Snackbar from '@mui/material/Snackbar';
 import Stack from '@mui/material/Stack';
 import Typography from '@mui/material/Typography';
 import AddIcon from '@mui/icons-material/Add';
-import { createItem, fetchItems, parseTask, patchItem, quickAddTask } from '../lib/api';
+import { createItem, fetchItems, fetchStatus, parseTask, patchItem, quickAddTask } from '../lib/api';
 import { formatDueDate, groupItems, isNewToday, isOverdue } from '../lib/grouping';
 import { moveItem, openKey, removeItem, upsertOpenItem, useCachedList } from '../lib/list-cache';
-import { LEAVE_DURATION, rowSx, useMorphDialog, usePrefersReducedMotion } from '../lib/motion';
+import {
+  LEAVE_DURATION,
+  rowSx,
+  useMorphDialog,
+  usePrefersReducedMotion,
+  useTransitionNavigate,
+} from '../lib/motion';
 import { useLongPress } from '../lib/long-press';
 import { cardRowSx } from '../lib/surface';
 import { formatReminder, todayIso } from '../lib/time';
@@ -316,7 +322,11 @@ export default function TasksPage() {
   const [quickMode, setQuickMode] = useState<boolean>(readQuickMode);
   // 行右键 / 长按的上下文菜单：anchor 与当前条目收在页面，组件只挂一份
   const [rowMenu, setRowMenu] = useState<{ item: Item; point: Point } | null>(null);
+  // 空态分流：条目为空时额外查一次账户（有账户 →「没有待办任务」，无账户 → 引导去设置接入）。
+  // 只在这一轮列表确实为空时请求一次，不做每次刷新的常驻轮询；失败按「有账户」兜底。
+  const [accountsExist, setAccountsExist] = useState<boolean | null>(null);
   const reduced = usePrefersReducedMotion();
+  const go = useTransitionNavigate();
   // 详情容器变换：current 非空即详情对话框打开（来源行与 paper 共享 VT_NAMES.sheet）
   const { current, open, close, sourceName } = useMorphDialog<Item>((item) => item.id);
   const timers = useRef<number[]>([]);
@@ -335,6 +345,22 @@ export default function TasksPage() {
   const openRowMenu = useCallback((item: Item, point: Point) => {
     setRowMenu({ item, point });
   }, []);
+
+  useEffect(() => {
+    if (loading || error || (items ?? []).length > 0 || accountsExist !== null) return;
+    let alive = true;
+    fetchStatus()
+      .then((s) => {
+        if (alive) setAccountsExist((s.accounts?.length ?? 0) > 0);
+      })
+      .catch(() => {
+        // 状态接口失败静默按「有账户」处理，不阻断任务页本身
+        if (alive) setAccountsExist(true);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [loading, error, items, accountsExist]);
 
   // 保存新条目：成功写进缓存（分类匹配与否由缓存键决定），失败保持编辑器打开
   const handleCreate = useCallback(
@@ -473,11 +499,24 @@ export default function TasksPage() {
             sourceName={sourceName}
             onMenuOpen={openRowMenu}
           />
-          {(items ?? []).length === 0 && (
-            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', py: 6 }}>
-              没有待办任务
-            </Typography>
-          )}
+          {/* 空态：条目为空时立刻给「没有待办任务」（不等账户探测），只有确认没接入邮箱
+              才切换成引导块——有账户/探测失败/探测中都不打断原有文案 */}
+          {(items ?? []).length === 0 &&
+            (accountsExist === false ? (
+              <Stack alignItems="center" spacing={0.5} sx={{ py: 6, px: 2 }}>
+                <Typography variant="body1">还没有接入邮箱</Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center' }}>
+                  接入 Gmail 或 Outlook 后，系统会自动把邮件里的待办整理到这里
+                </Typography>
+                <Button variant="contained" onClick={() => go('/settings')} sx={{ mt: 1 }}>
+                  前往设置接入
+                </Button>
+              </Stack>
+            ) : (
+              <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', py: 6 }}>
+                没有待办任务
+              </Typography>
+            ))}
         </>
       )}
       {/* 行右键 / 长按的上下文菜单：全页只挂这一份（anchor 状态在上面），动作全部

@@ -122,7 +122,9 @@ def _seed_account(sf) -> None:
     with sf() as s:
         s.add(User(sub="user-1"))
         s.commit()
-        s.add(Account(user_sub="user-1", name="测试邮箱", kind="gmail", email="t@example.com", status="pending"))
+        # app_password 必填：run_once 自 2026-09-06 起跳过无凭据账户（本轮需真实走 IMAP 路径）
+        s.add(Account(user_sub="user-1", name="测试邮箱", kind="gmail", email="t@example.com",
+                      app_password="app-pw", status="pending"))
         s.commit()
 
 

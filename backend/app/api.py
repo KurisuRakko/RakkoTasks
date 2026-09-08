@@ -18,6 +18,8 @@ from sqlalchemy import select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.accounts import account_info
+from app.accounts_api import register_accounts
 from app.auth import CurrentUser, require_auth
 from app.calendar import build_ics
 from app.caldav import register_caldav
@@ -620,21 +622,13 @@ def create_app(
             ).scalars().all()
         )
         return {
-            "accounts": [
-                {
-                    "id": a.id,
-                    "name": a.name,
-                    "kind": a.kind,
-                    "email": a.email,
-                    "status": a.status,
-                    "enabled": bool(a.enabled),
-                    "last_sync_at": a.last_sync_at.isoformat() if a.last_sync_at else None,
-                    "last_error": a.last_error,
-                }
-                for a in accounts
-            ],
+            # AccountInfo 与 /api/accounts* 共用同一序列化函数（含 has_credentials / ms_client_id）
+            "accounts": [account_info(a) for a in accounts],
             "pending_llm": pending_llm,
         }
+
+    # 邮箱账户自助管理（/api/accounts*）；须在 SPA fallback 之前注册
+    register_accounts(app, settings, _get_db)
 
     # CalDAV（iPhone 提醒事项）：必须在 SPA fallback 之前注册，否则 /caldav/ 会被 GET 兜底吞掉；
     # 失败鉴权每来源每分钟 30 次

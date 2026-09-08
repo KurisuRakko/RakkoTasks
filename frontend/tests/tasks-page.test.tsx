@@ -10,6 +10,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import TasksPage from '../src/pages/TasksPage';
 import type { AiAddDialogProps } from '../src/components/AiAddDialog';
 import chipsSource from '../src/components/CategoryChips.tsx?raw';
@@ -19,7 +20,7 @@ import { LEAVE_DURATION } from '../src/lib/motion';
 import { cardRowSx } from '../src/lib/surface';
 import { NEUTRAL_LIGHT, RADIUS } from '../src/rakko-tokens';
 import { VT_SHELL_ATTR, VT_NAMES } from '../src/lib/view-transition';
-import type { Item } from '../src/types';
+import type { AccountInfo, Item } from '../src/types';
 import { allStyleText, ownEmotionClass, renderWithAppTheme, ruleTextOf } from './glass-text-contrast.test-utils';
 
 // vi.mock 工厂提升到 import 之前执行，只能引用字面量，文案在此内联
@@ -71,6 +72,31 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
+function makeAccount(partial: Partial<AccountInfo>): AccountInfo {
+  return {
+    id: 1,
+    name: 'Gmail',
+    kind: 'gmail',
+    email: 'you@gmail.com',
+    status: 'ok',
+    enabled: true,
+    has_credentials: true,
+    ms_client_id: null,
+    last_sync_at: null,
+    last_error: null,
+    ...partial,
+  };
+}
+
+/** TasksPage 内部会调用带方向导航的 hook（空态「前往设置接入」按钮），渲染需要 Router */
+function renderPage() {
+  return render(
+    <MemoryRouter useTransitions={false}>
+      <TasksPage />
+    </MemoryRouter>,
+  );
+}
+
 beforeEach(() => {
   localStorage.clear();
   // list-cache 是模块级缓存，跨用例残留会互相污染，每个用例从空缓存开始
@@ -87,7 +113,7 @@ describe('TasksPage 重要度标记', () => {
     const fetchMock = vi.fn(async () => json({ items: ITEMS }));
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<TasksPage />);
+    renderPage();
 
     expect(await screen.findByText('重要任务')).toBeTruthy();
     expect(await screen.findByText('普通任务')).toBeTruthy();
@@ -115,7 +141,7 @@ describe('TasksPage 重要度标记', () => {
     const fetchMock = vi.fn(async () => json({ items: ITEMS }));
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<TasksPage />);
+    renderPage();
 
     await screen.findByText('重要任务');
 
@@ -133,7 +159,7 @@ describe('今日新邮件蓝点', () => {
     const fetchMock = vi.fn(async () => json({ items }));
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<TasksPage />);
+    renderPage();
 
     await screen.findByText('今天的新条目');
 
@@ -156,7 +182,7 @@ describe('TasksPage 手动添加', () => {
   it('页面存在右下角「添加任务」悬浮按钮', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => json({ items: [] })));
 
-    render(<TasksPage />);
+    renderPage();
 
     expect(await screen.findByRole('button', { name: '添加任务' })).toBeTruthy();
   });
@@ -183,7 +209,7 @@ describe('TasksPage 手动添加', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<TasksPage />);
+    renderPage();
 
     // 加号打开的是 AiAddDialog（占位实现渲染 null），用替身的「保存」驱动 onSubmit
     fireEvent.click(await screen.findByRole('button', { name: '添加任务' }));
@@ -213,7 +239,7 @@ describe('TasksPage 容器变换与 portal', () => {
   it('「添加任务」悬浮按钮的 parentElement 是 document.body（portal 生效）', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => json({ items: [] })));
 
-    render(<TasksPage />);
+    renderPage();
 
     const fab = await screen.findByRole('button', { name: '添加任务' });
     expect(fab.parentElement).toBe(document.body);
@@ -222,7 +248,7 @@ describe('TasksPage 容器变换与 portal', () => {
   it('悬浮按钮打 data-vt-shell 标记（持名由样式层按转场种类下发）', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => json({ items: [] })));
 
-    render(<TasksPage />);
+    renderPage();
 
     const fab = await screen.findByRole('button', { name: '添加任务' });
     expect(fab.getAttribute(VT_SHELL_ATTR)).toBe(VT_NAMES.fab);
@@ -237,7 +263,7 @@ describe('TasksPage 容器变换与 portal', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<TasksPage />);
+    renderPage();
     await screen.findByText('重要任务');
 
     vi.useFakeTimers();
@@ -268,12 +294,12 @@ describe('TasksPage 容器变换与 portal', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     // 首次挂载：先加载后渲染，数据落进模块级缓存
-    render(<TasksPage />);
+    renderPage();
     await screen.findByText('重要任务');
     cleanup();
 
     // 再次挂载（模拟切走再切回）：缓存命中，无加载圈、列表同步渲染
-    render(<TasksPage />);
+    renderPage();
     expect(screen.queryByRole('progressbar')).toBeNull();
     expect(screen.getByText('重要任务')).toBeTruthy();
     // 命中缓存仍会发起一次后台刷新
@@ -293,7 +319,11 @@ describe('列表行玻璃视觉（cardRowSx）', () => {
     const fetchMock = vi.fn(async () => json({ items: ITEMS }));
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<TasksPage />);
+    render(
+      <MemoryRouter useTransitions={false}>
+        <TasksPage />
+      </MemoryRouter>,
+    );
     await screen.findByText('重要任务');
 
     for (const title of ['重要任务', '普通任务', '低重要任务']) {
@@ -307,7 +337,11 @@ describe('列表行玻璃视觉（cardRowSx）', () => {
     const fetchMock = vi.fn(async () => json({ items: ITEMS }));
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<TasksPage />);
+    render(
+      <MemoryRouter useTransitions={false}>
+        <TasksPage />
+      </MemoryRouter>,
+    );
     await screen.findByText('重要任务');
 
     const rowBtn = screen.getByText('重要任务').closest(
@@ -342,7 +376,11 @@ describe('列表行两段布局（chips 不再挤压标题）', () => {
 
   it('行按钮是两段 grid：勾选/文本一行、chips 独占第二行（grid-template-areas）', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => json({ items: ITEMS })));
-    render(<TasksPage />);
+    render(
+      <MemoryRouter useTransitions={false}>
+        <TasksPage />
+      </MemoryRouter>,
+    );
     await screen.findByText('重要任务');
 
     const rowBtn = screen.getByText('重要任务').closest(
@@ -360,7 +398,11 @@ describe('列表行两段布局（chips 不再挤压标题）', () => {
 
   it('chips Stack 挂 gridArea: chips、可换行，且不再带 flexShrink: 0 与 ml', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => json({ items: ITEMS })));
-    render(<TasksPage />);
+    render(
+      <MemoryRouter useTransitions={false}>
+        <TasksPage />
+      </MemoryRouter>,
+    );
     await screen.findByText('重要任务');
 
     const highRow = screen.getByText('重要任务').closest('li') as HTMLElement;
@@ -393,7 +435,11 @@ describe('TasksPage haze 底衬（分组标题与 chips 行）', () => {
     const fetchMock = vi.fn(async () => json({ items: ITEMS }));
     vi.stubGlobal('fetch', fetchMock);
 
-    const { container } = render(<TasksPage />);
+    const { container } = render(
+      <MemoryRouter useTransitions={false}>
+        <TasksPage />
+      </MemoryRouter>,
+    );
     await screen.findByText('重要任务');
 
     // ITEMS 全部无截止日期：high 进「重要」组，其余进「无期限」组；今天/本周是空组不渲染
@@ -424,7 +470,11 @@ describe('TasksPage haze 底衬（分组标题与 chips 行）', () => {
     const fetchMock = vi.fn(async () => json({ items: ITEMS }));
     vi.stubGlobal('fetch', fetchMock);
 
-    const { container } = render(<TasksPage />);
+    const { container } = render(
+      <MemoryRouter useTransitions={false}>
+        <TasksPage />
+      </MemoryRouter>,
+    );
     await screen.findByText('重要任务');
 
     // MUI 源码里 sticky 类由 `!disableSticky && 'sticky'` 决定，disableSticky 时不会加，
@@ -441,7 +491,11 @@ describe('TasksPage haze 底衬（分组标题与 chips 行）', () => {
     const fetchMock = vi.fn(async () => json({ items: ITEMS }));
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<TasksPage />);
+    render(
+      <MemoryRouter useTransitions={false}>
+        <TasksPage />
+      </MemoryRouter>,
+    );
     await screen.findByText('重要任务');
 
     // 从 chips 行的文字往上层找它所在的唯一 haze（分类 chips 行在加载条件之外，同步渲染）
@@ -477,7 +531,11 @@ describe('TasksPage haze 底衬（分组标题与 chips 行）', () => {
     const fetchMock = vi.fn(async () => json({ items: ITEMS }));
     vi.stubGlobal('fetch', fetchMock);
 
-    const { container } = render(<TasksPage />);
+    const { container } = render(
+      <MemoryRouter useTransitions={false}>
+        <TasksPage />
+      </MemoryRouter>,
+    );
     await screen.findByText('重要任务');
 
     // 每个分组标题一团雾（它们之间隔着整组卡片，距离远超 bleed，不重叠），
@@ -490,7 +548,11 @@ describe('TasksPage haze 底衬（分组标题与 chips 行）', () => {
     const fetchMock = vi.fn(async () => json({ items: ITEMS }));
     vi.stubGlobal('fetch', fetchMock);
 
-    const { container } = render(<TasksPage />);
+    const { container } = render(
+      <MemoryRouter useTransitions={false}>
+        <TasksPage />
+      </MemoryRouter>,
+    );
     await screen.findByText('重要任务');
 
     // 分组标题雾 + chips 行雾各一团（前述用例已断言数量）。cloud 是上游配方默认形态，
@@ -543,7 +605,11 @@ describe('TasksPage 行上下文菜单', () => {
   it('右键行弹出上下文菜单：菜单纸面带 data-glass="panel"，含 完成/编辑/删除 三项', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => json({ items: ITEMS })));
 
-    render(<TasksPage />);
+    render(
+      <MemoryRouter useTransitions={false}>
+        <TasksPage />
+      </MemoryRouter>,
+    );
     await screen.findByText('重要任务');
 
     fireEvent.contextMenu(rowButton('重要任务'), { clientX: 210, clientY: 96 });
@@ -568,7 +634,11 @@ describe('TasksPage 行上下文菜单', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<TasksPage />);
+    render(
+      <MemoryRouter useTransitions={false}>
+        <TasksPage />
+      </MemoryRouter>,
+    );
     await screen.findByText('重要任务');
 
     fireEvent.contextMenu(rowButton('重要任务'), { clientX: 40, clientY: 40 });
@@ -590,7 +660,11 @@ describe('TasksPage 行上下文菜单', () => {
   it('菜单打开时全页只有一份 RowContextMenu（菜单纸面 ≤1），且不构成嵌套玻璃', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => json({ items: ITEMS })));
 
-    render(<TasksPage />);
+    render(
+      <MemoryRouter useTransitions={false}>
+        <TasksPage />
+      </MemoryRouter>,
+    );
     await screen.findByText('重要任务');
 
     // 打开前页面上没有菜单纸面（按需挂载）
@@ -623,7 +697,11 @@ describe('列表行摘要文字色（玻璃上没有次级色的守卫）', () =
       makeItem({ id: 2, title: '任务乙', summary: '下周三前交实验报告' }),
     ];
     vi.stubGlobal('fetch', vi.fn(async () => json({ items: withSummary })));
-    const { container } = renderWithAppTheme(<TasksPage />);
+    const { container } = renderWithAppTheme(
+      <MemoryRouter useTransitions={false}>
+        <TasksPage />
+      </MemoryRouter>,
+    );
     await screen.findByText('任务甲');
 
     // 摘要节点：ListItemText 的 secondary 渲染成 .MuiListItemText-secondary span
@@ -638,5 +716,53 @@ describe('列表行摘要文字色（玻璃上没有次级色的守卫）', () =
         `color:${NEUTRAL_LIGHT[6]}`,
       );
     }
+  });
+});
+
+describe('TasksPage 空态账户引导', () => {
+  it('条目为空且账户列表为空：先显示「没有待办任务」，账户探测返回后切换成引导', async () => {
+    // /api/status 用可控 promise：模拟「探测还没回来」的窗口，验证空态文案不依赖账户探测
+    let resolveStatus!: (v: Response) => void;
+    const statusPromise = new Promise<Response>((resolve) => {
+      resolveStatus = resolve;
+    });
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const u = String(input);
+      if (u.includes('/api/status')) return statusPromise;
+      return json({ items: [] });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    renderPage();
+
+    // 探测未返回：不打断原有「没有待办任务」文案
+    expect(await screen.findByText('没有待办任务')).toBeTruthy();
+    resolveStatus(json({ accounts: [], pending_llm: 0 }));
+
+    // 确认无账户后切换成设置引导，旧文案消失
+    expect(await screen.findByText('还没有接入邮箱')).toBeTruthy();
+    expect(screen.getByText(/邮件里的待办整理到这里/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: '前往设置接入' })).toBeTruthy();
+    expect(screen.queryByText('没有待办任务')).toBeNull();
+    // 只在列表为空时查一次 /api/status（后续刷新不再重复打）
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.filter(([u]) => String(u).includes('/api/status'))).toHaveLength(1),
+    );
+  });
+
+  it('条目为空但有账户：显示「没有待办任务」，不出现设置引导', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const u = String(input);
+      if (u.includes('/api/status')) {
+        return json({ accounts: [makeAccount({})], pending_llm: 0 });
+      }
+      return json({ items: [] });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    renderPage();
+
+    expect(await screen.findByText('没有待办任务')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '前往设置接入' })).toBeNull();
   });
 });

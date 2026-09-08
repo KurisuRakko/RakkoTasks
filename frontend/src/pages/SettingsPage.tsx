@@ -1,12 +1,11 @@
-// 设置页：账户状态 / 外观 / 账户 / 关于 四个纵向分区（原 StatusPage 逻辑迁入账户状态区）。
+// 设置页：邮箱账户 / 外观 / 日历订阅 / 提醒事项同步 / 账户 / 关于 纵向分区。
+// 账户分区的全部展示逻辑（fetchStatus、卡片、Chip、空态）迁去了
+// components/accounts/AccountsSection.tsx，本页只负责放行与其余分区。
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Alert from '@mui/material/Alert';
-import Avatar from '@mui/material/Avatar';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
-import Chip from '@mui/material/Chip';
-import CircularProgress from '@mui/material/CircularProgress';
 import Dialog from '@mui/material/Dialog';
 import DialogActions from '@mui/material/DialogActions';
 import DialogContent from '@mui/material/DialogContent';
@@ -17,7 +16,6 @@ import List from '@mui/material/List';
 import ListItem from '@mui/material/ListItem';
 import ListItemText from '@mui/material/ListItemText';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
-import RefreshIcon from '@mui/icons-material/Refresh';
 import Skeleton from '@mui/material/Skeleton';
 import Snackbar from '@mui/material/Snackbar';
 import Stack from '@mui/material/Stack';
@@ -25,27 +23,25 @@ import TextField from '@mui/material/TextField';
 import ToggleButton from '@mui/material/ToggleButton';
 import ToggleButtonGroup from '@mui/material/ToggleButtonGroup';
 import Typography from '@mui/material/Typography';
+import AccountsSection from '../components/accounts/AccountsSection';
 import {
   caldavTarget,
   calendarUrls,
   fetchCaldavInfo,
   fetchCalendarToken,
-  fetchStatus,
   generateCaldavPassword,
   rotateCalendarToken,
 } from '../lib/api';
 import { copyText } from '../lib/clipboard';
 import { API_BASE_URL, PHAINON_API_BASE } from '../lib/env';
-import { enterSx, usePrefersReducedMotion } from '../lib/motion';
 import { logout, startLogin } from '../lib/phainon';
 import { checkForUpdate } from '../lib/pwa-update';
 import { useSession } from '../lib/session';
 import { ROW_GAP_PX } from '../lib/surface';
 import { useThemeMode } from '../lib/theme-mode';
-import { timeAgo } from '../lib/time';
 import { compressWallpaper, setWallpaper, useWallpaper } from '../lib/wallpaper';
 import { RADIUS } from '../rakko-tokens';
-import type { CaldavInfo, StatusResponse } from '../types';
+import type { CaldavInfo } from '../types';
 
 /** 分区玻璃面板：材质（纸底 / 边框 / 高光 / 阴影）由 rakko-glass.css 的
  *  data-glass="panel" 配方提供——挂了 data-glass 的元素，主题层与局部 sx 都不能再
@@ -54,9 +50,6 @@ import type { CaldavInfo, StatusResponse } from '../types';
 const PANEL_SX = { px: 2, py: 2, borderRadius: `${RADIUS.card}px` };
 
 export default function SettingsPage() {
-  const [status, setStatus] = useState<StatusResponse | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   // 日历订阅：令牌 + 订阅链接，加载失败降级为 Alert
   const [token, setToken] = useState<string | null>(null);
   const [calLoading, setCalLoading] = useState(true);
@@ -73,7 +66,6 @@ export default function SettingsPage() {
   const [davGenerating, setDavGenerating] = useState(false);
   const { mode, setMode } = useThemeMode();
   const me = useSession();
-  const reduced = usePrefersReducedMotion();
   // 壁纸：订阅模块级状态（同 useThemeMode 之外的 list-cache 模式），无壁纸为 null
   const wallpaper = useWallpaper();
   // 「选择图片」按钮触发的是隐藏的 file input
@@ -99,27 +91,6 @@ export default function SettingsPage() {
       setSnack(quota ? '图片太大，换一张小一点的' : '无法保存壁纸，浏览器存储不可用');
     }
   };
-
-  const load = useCallback(() => {
-    let alive = true;
-    setLoading(true);
-    setError(null);
-    fetchStatus()
-      .then((s) => {
-        if (alive) setStatus(s);
-      })
-      .catch(() => {
-        if (alive) setError('加载状态失败');
-      })
-      .finally(() => {
-        if (alive) setLoading(false);
-      });
-    return () => {
-      alive = false;
-    };
-  }, []);
-
-  useEffect(() => load(), [load]);
 
   // 挂载时取日历订阅令牌（服务端尚无则生成后返回）
   useEffect(() => {
@@ -250,83 +221,10 @@ export default function SettingsPage() {
         gap: `${ROW_GAP_PX}px`,
       }}
     >
-      {/* 账户状态：原 StatusPage 全部展示逻辑，key 用后端补回的 a.id */}
+      {/* 邮箱账户：账户列表 + 添加向导 / 详情 / 移除（AccountsSection 内部按断点分流
+          Dialog 或路由页）。分区玻璃由本页统一给，AccountsSection 只管内容。 */}
       <Box data-glass="panel" sx={PANEL_SX}>
-        <Stack direction="row" alignItems="center" sx={{ mb: 1 }}>
-          <Typography variant="overline" sx={{ flexGrow: 1 }}>
-            账户状态
-          </Typography>
-          <IconButton size="small" aria-label="刷新" onClick={load} disabled={loading}>
-            <RefreshIcon fontSize="small" />
-          </IconButton>
-        </Stack>
-        {loading && !status ? (
-          <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}>
-            <CircularProgress />
-          </Box>
-        ) : error && !status ? (
-          <Alert severity="error">{error}</Alert>
-        ) : status ? (
-          <Stack spacing={1.5}>
-            {status.accounts.length === 0 ? (
-              <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', py: 2 }}>
-                还没有配置邮箱账户。请联系管理员在服务器上用命令行添加。
-              </Typography>
-            ) : (
-              <>
-                <Alert severity="info" icon={false} sx={{ py: 0.5 }}>
-                  LLM 待处理邮件：{status.pending_llm} 封
-                </Alert>
-                {status.accounts.map((a, index) => (
-                  // 账户行不再是 outlined 卡片：外层分区已是玻璃面板，再套一层带边框的
-                  // 卡片就是两层框，层次压平后行直接坐在面板玻璃上。
-                  <Box
-                    key={a.id}
-                    // 变暗用 filter 而非 opacity：入场动画 animation-fill-mode: both
-                    // 会把关键帧终态 opacity: 1 保持在元素上（动画值优先级高于普通声明），
-                    // 静态 opacity 会被压掉；filter 与动画互不干扰，动画期间/结束后都有效。
-                    sx={{ ...enterSx(index, reduced), filter: a.enabled === false ? 'opacity(0.6)' : 'none' }}
-                  >
-                    <Stack direction="row" spacing={1.5} alignItems="center">
-                      <Avatar>{a.kind === 'gmail' ? 'G' : 'O'}</Avatar>
-                      <Box sx={{ flexGrow: 1, minWidth: 0 }}>
-                        <Typography variant="subtitle1" noWrap>
-                          {a.name}
-                        </Typography>
-                        <Typography variant="body2" color="text.secondary" noWrap>
-                          {a.email}
-                        </Typography>
-                        <Typography variant="caption" color="text.secondary">
-                          上次同步：
-                          {a.last_sync_at ? timeAgo(a.last_sync_at) : '从未'}
-                        </Typography>
-                      </Box>
-                      {a.enabled === false ? (
-                        <Chip label="已停用" size="small" color="default" variant="outlined" />
-                      ) : (
-                        <Chip
-                          label={a.status === 'ok' ? '正常' : a.status === 'error' ? '异常' : '同步中'}
-                          size="small"
-                          color={a.status === 'ok' ? 'success' : a.status === 'error' ? 'error' : 'warning'}
-                          variant="outlined"
-                        />
-                      )}
-                    </Stack>
-                    {a.status === 'error' && a.last_error && (
-                      <Typography
-                        variant="body2"
-                        color="error"
-                        sx={{ mt: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                      >
-                        {a.last_error}
-                      </Typography>
-                    )}
-                  </Box>
-                ))}
-              </>
-            )}
-          </Stack>
-        ) : null}
+        <AccountsSection />
       </Box>
 
       {/* 外观：深浅色三态，读写 useThemeMode */}

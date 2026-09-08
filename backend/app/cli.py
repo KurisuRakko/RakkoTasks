@@ -1,19 +1,38 @@
 """账户与用户 CLI：python -m app.cli accounts add/connect/auth-url/auth-code/list/set-password/remove、users list、reclassify、regen-details。
 
-账户管理只走命令行；Gmail 应用专用密码仅经 getpass 交互录入，绝不进命令行参数或日志。
+accounts 子命令（connect 除外）复用 app/accounts.py 服务层，与网页 /api/accounts* 语义一致；
+网页已提供自助管理，CLI 保留为运维兜底。Gmail 应用专用密码仅经 getpass 交互录入，
+绝不进命令行参数或日志。
 """
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 
 from sqlalchemy import func, select
 
+from app import accounts
 from app.auth import find_user_by_spec
 from app.config import Settings, get_settings
 from app.db import init_db, make_engine, make_session_factory
 from app.models import Account, Email, Item, User
+
+# AccountError code → 中文说明（_die_account_error 统一打到 stderr；auth_failed 的
+# 分 kind 详细提示另见 _print_auth_failure，此处只是总括句）
+_ACCOUNT_ERR_TEXT = {
+    "bad_kind": "不支持的账户类型（仅支持 gmail / microsoft）",
+    "bad_name": "账户名称需为 1-128 个字符",
+    "bad_email": "邮箱地址无效（需包含 @ 且不超过 256 个字符）",
+    "password_required": "应用专用密码不能为空",
+    "account_exists": "该邮箱账户已存在（含已停用账户）",
+    "invalid_kind": "账户类型与操作不匹配（应用专用密码仅 gmail；OAuth 授权仅 microsoft）",
+    "bad_redirect": "不支持的 OAuth 重定向地址",
+    "bad_request": "请求参数无效",
+    "no_pending_flow": "未找到进行中的授权流程，请先运行 accounts auth-url",
+    "auth_failed": "微软 OAuth 授权失败",
+}
+# 流程类错误退出码沿用 1（授权流程可重试）；参数/校验类沿用 2
+_FLOW_ERROR_CODES = frozenset({"no_pending_flow", "bad_request", "auth_failed"})
 
 
 def _resolve_user(session, spec: str) -> User:
@@ -60,6 +79,49 @@ def _cmd_users_list(args: argparse.Namespace, settings: Settings) -> None:  # no
             )
 
 
+def _require_account(session, user: User, email: str) -> Account:
+    """CLI 按邮箱寻址（服务层按 id）：一条 select 精确找该用户的账户，找不到 exit 2。"""
+    account = accounts.get_account_by_email(session, user.sub, email)
+    if account is None:
+        print(f"错误：未找到账户 {email}（用户 {user.sub}）", file=sys.stderr)
+        sys.exit(2)
+    return account
+
+
+def _print_auth_failure(kind: str, detail: str, sub: str | None = None, email: str | None = None) -> None:
+    """auth_failed 按 kind 给中文提示（含可复制的重试命令），输出 stdout，与授权码流程既有文案一致。"""
+    if kind == "expired":
+        print("授权流程已过期：授权码未在有效期内使用，请重新生成授权链接。")
+        if sub and email:
+            _print_auth_url_retry(sub, email)
+    elif kind == "declined":
+        if sub and email:
+            _print_auth_url_retry(sub, email)
+        print("授权被拒绝：你在微软页面上点了拒绝。如需继续，请重新生成授权链接并选择同意。")
+    elif kind == "admin_required":
+        print(
+            "该租户要求管理员同意此应用。可改用你自己的 Azure 应用注册："
+            f"accounts add 时追加 --client-id <你的client_id>。原始信息：{detail}"
+        )
+    else:
+        print(f"授权码流程失败：{detail}")
+
+
+def _die_account_error(
+    exc: accounts.AccountError, *, user_sub: str | None = None, email: str | None = None
+) -> None:
+    """AccountError → stderr 中文说明 + 退出码（校验类 2、流程类 1），不冒 traceback。
+
+    auth_failed 的具体原因与重试命令已由 _print_auth_failure 打到 stdout，
+    这里不再重复泛句，直接按流程类退出。
+    """
+    if exc.code == "auth_failed":
+        _print_auth_failure(exc.extra.get("kind", "other"), exc.extra.get("detail", ""), user_sub, email)
+        sys.exit(1)
+    print(f"错误：{_ACCOUNT_ERR_TEXT.get(exc.code, exc.code)}", file=sys.stderr)
+    sys.exit(1 if exc.code in _FLOW_ERROR_CODES else 2)
+
+
 def _cmd_accounts_add(args: argparse.Namespace, settings: Settings) -> None:
     from getpass import getpass as _getpass
 
@@ -67,30 +129,20 @@ def _cmd_accounts_add(args: argparse.Namespace, settings: Settings) -> None:
     init_db(engine)
     with make_session_factory(engine)() as session:
         user = _resolve_user(session, args.user)
-        existing = session.execute(
-            select(Account).where(
-                Account.user_sub == user.sub, Account.email == args.email, Account.kind == args.kind
+        try:
+            account = accounts.add_account(
+                session,
+                user.sub,
+                name=args.name,
+                kind=args.kind,
+                email=args.email,
+                app_password=(
+                    _getpass("Gmail 应用专用密码（输入不回显）：") if args.kind == "gmail" else None
+                ),
+                ms_client_id=args.client_id,
             )
-        ).first()
-        if existing:
-            print(f"账户已存在：{args.email}（kind={args.kind}）")
-            return
-        app_password = None
-        if args.kind == "gmail":
-            app_password = _getpass("Gmail 应用专用密码（输入不回显）：")
-            if not app_password:
-                print("错误：应用专用密码不能为空", file=sys.stderr)
-                sys.exit(2)
-        account = Account(
-            user_sub=user.sub,
-            name=args.name,
-            kind=args.kind,
-            email=args.email,
-            ms_client_id=args.client_id,
-            status="pending",
-            app_password=app_password,
-        )
-        session.add(account)
+        except accounts.AccountError as exc:
+            _die_account_error(exc)
         session.commit()
         print(f"已添加账户 #{account.id}：{account.name} <{account.email}>（{account.kind}，用户 {user.sub}）")
     if args.kind == "microsoft":
@@ -104,20 +156,14 @@ def _cmd_accounts_set_password(args: argparse.Namespace, settings: Settings) -> 
     init_db(engine)
     with make_session_factory(engine)() as session:
         user = _resolve_user(session, args.user)
-        account = session.execute(
-            select(Account).where(Account.user_sub == user.sub, Account.email == args.email)
-        ).scalars().first()
-        if account is None:
-            print(f"错误：未找到账户 {args.email}（用户 {user.sub}）", file=sys.stderr)
-            sys.exit(2)
-        if account.kind != "gmail":
-            print(f"错误：账户 {args.email} 类型为 {account.kind}，仅 gmail 使用应用专用密码", file=sys.stderr)
-            sys.exit(2)
-        app_password = _getpass("Gmail 应用专用密码（输入不回显）：")
-        if not app_password:
-            print("错误：应用专用密码不能为空", file=sys.stderr)
-            sys.exit(2)
-        account.app_password = app_password
+        account = _require_account(session, user, args.email)
+        try:
+            accounts.set_app_password(
+                account,
+                _getpass("Gmail 应用专用密码（输入不回显）：") if account.kind == "gmail" else None,
+            )
+        except accounts.AccountError as exc:
+            _die_account_error(exc)
         session.commit()
         print(f"已更新密码：{account.email}")
 
@@ -190,24 +236,17 @@ def _print_auth_url_retry(sub: str, email: str) -> None:
 
 def _cmd_accounts_auth_url(args: argparse.Namespace, settings: Settings) -> None:
     """授权码流程第一步：生成授权链接并把 flow 落盘（/data 卷），第二步另起进程。"""
-    from app.imap import mstoken
-
     engine = make_engine(settings.database_path)
     init_db(engine)
     with make_session_factory(engine)() as session:
         user = _resolve_user(session, args.user)
-        account = session.execute(
-            select(Account).where(Account.user_sub == user.sub, Account.email == args.email)
-        ).scalars().first()
-        if account is None:
-            print(f"错误：未找到账户 {args.email}（用户 {user.sub}）", file=sys.stderr)
-            sys.exit(2)
-        if account.kind != "microsoft":
-            print(f"错误：账户 {args.email} 类型为 {account.kind}，仅 microsoft 需要 OAuth 授权", file=sys.stderr)
-            sys.exit(2)
-        initiated = mstoken.initiate_auth_code_flow(account, settings, args.redirect_uri)
+        account = _require_account(session, user, args.email)
+        try:
+            uri = accounts.start_ms_auth(account, settings, args.redirect_uri)
+        except accounts.AccountError as exc:
+            _die_account_error(exc)
     print("请用浏览器打开下面的链接，用该邮箱登录并完成 MFA：")
-    print(initiated["auth_uri"])
+    print(uri)
     print()
     print("登录成功后浏览器会停在一个空白页。把地址栏里的完整 URL 复制回来，")
     print("或复制页面上显示的授权码，然后运行第二步（URL 含 & 符号，务必保留引号）：")
@@ -216,53 +255,16 @@ def _cmd_accounts_auth_url(args: argparse.Namespace, settings: Settings) -> None
 
 def _cmd_accounts_auth_code(args: argparse.Namespace, settings: Settings) -> None:
     """授权码流程第二步：读回第一步落盘的 flow，用粘贴回的 URL/授权码换 token。"""
-    from app.imap import mstoken
-
     engine = make_engine(settings.database_path)
     init_db(engine)
     with make_session_factory(engine)() as session:
         user = _resolve_user(session, args.user)
-        account = session.execute(
-            select(Account).where(Account.user_sub == user.sub, Account.email == args.email)
-        ).scalars().first()
-        if account is None:
-            print(f"错误：未找到账户 {args.email}（用户 {user.sub}）", file=sys.stderr)
-            sys.exit(2)
-        if account.kind != "microsoft":
-            print(f"错误：账户 {args.email} 类型为 {account.kind}，仅 microsoft 需要 OAuth 授权", file=sys.stderr)
-            sys.exit(2)
-        flow_path = mstoken.flow_file_path(account, settings)
-        if not flow_path.exists():
-            # 两步是两次独立的 docker compose run 进程，flow 靠文件接力；文件不存在
-            # 说明第一步没跑过，或已被上一次 auth-code 消费（授权码一次性有效）
-            print("未找到进行中的授权流程，请先运行 accounts auth-url", file=sys.stderr)
-            sys.exit(1)
+        account = _require_account(session, user, args.email)
         try:
-            flow = json.loads(flow_path.read_text())
-        except (OSError, ValueError):
-            print("进行中的授权流程文件已损坏，请重新运行 accounts auth-url", file=sys.stderr)
-            sys.exit(1)
-        try:
-            mstoken.complete_auth_code_flow(account, flow, args.auth_response, settings)
-        except mstoken.DeviceFlowError as exc:
-            # 失败语义与设备码流程一致：按类别给提示与可复制的重试命令，不冒 traceback
-            sub = args.user or account.user_sub
-            if exc.kind == "expired":
-                print("授权流程已过期：授权码未在有效期内使用，请重新生成授权链接。")
-                _print_auth_url_retry(sub, args.email)
-            elif exc.kind == "declined":
-                _print_auth_url_retry(sub, args.email)
-                print("授权被拒绝：你在微软页面上点了拒绝。如需继续，请重新生成授权链接并选择同意。")
-            elif exc.kind == "admin_required":
-                print(
-                    "该租户要求管理员同意此应用。可改用你自己的 Azure 应用注册："
-                    f"accounts add 时追加 --client-id <你的client_id>。原始信息：{exc.detail}"
-                )
-            else:
-                print(f"授权码流程失败：{exc.detail}")
-            sys.exit(1)
-        account.status = "ok"
-        account.last_error = None
+            accounts.finish_ms_auth(account, settings, args.auth_response)
+        except accounts.AccountError as exc:
+            # 两步是两次独立进程，flow 靠文件接力；失败按类别提示并给可复制重试命令
+            _die_account_error(exc, user_sub=user.sub, email=account.email)
         session.commit()
         print(f"授权成功：{account.email}，token 已保存")
 
@@ -271,20 +273,20 @@ def _cmd_accounts_list(args: argparse.Namespace, settings: Settings) -> None:
     engine = make_engine(settings.database_path)
     init_db(engine)
     with make_session_factory(engine)() as session:
-        stmt = select(Account).order_by(Account.id)
         if args.user:
             user = _resolve_user(session, args.user)
-            stmt = stmt.where(Account.user_sub == user.sub)
-        accounts = session.execute(stmt).scalars().all()
-        if not accounts:
+            rows = accounts.list_accounts(session, user.sub)
+        else:
+            rows = session.execute(select(Account).order_by(Account.id)).scalars().all()
+        if not rows:
             print("（暂无账户，用 `accounts add` 添加）")
             return
         header = f"{'所属用户':<28} {'name':<16} {'kind':<10} {'email':<36} {'status':<9} {'凭据':<6} last_sync"
         print(header)
         print("-" * len(header))
-        for a in accounts:
+        for a in rows:
             # 凭据列只显示是否已设置，绝不打印密码/token 本身
-            has_cred = bool(a.app_password) or bool(a.token_cache)
+            has_cred = accounts.has_credentials(a)
             last_sync = _dt(a.last_sync_at)
             print(
                 f"{a.user_sub:<28} {a.name:<16} {a.kind:<10} {a.email:<36} "
@@ -298,21 +300,14 @@ def _cmd_accounts_remove(args: argparse.Namespace, settings: Settings) -> None:
     init_db(engine)
     with make_session_factory(engine)() as session:
         user = _resolve_user(session, args.user)
-        account = session.execute(
-            select(Account).where(Account.user_sub == user.sub, Account.email == args.email)
-        ).scalars().first()
-        if account is None:
-            print(f"错误：未找到账户 {args.email}（用户 {user.sub}）", file=sys.stderr)
-            sys.exit(2)
+        account = _require_account(session, user, args.email)
         n_emails = session.execute(
             select(func.count(Email.id)).where(Email.account_id == account.id)
         ).scalar() or 0
         n_items = session.execute(
             select(func.count(Item.id)).join(Email, Item.email_id == Email.id).where(Email.account_id == account.id)
         ).scalar() or 0
-        account.enabled = False
-        account.app_password = None
-        account.token_cache = None
+        accounts.set_enabled(account, False)
         session.commit()
         print(
             f"账户已停用：{account.email}（{account.name}），不再同步；"
@@ -464,8 +459,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="python -m app.cli", description="RakkoTasks 账户与用户管理")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    accounts = sub.add_parser("accounts", help="账户管理")
-    accounts_sub = accounts.add_subparsers(dest="action", required=True)
+    accounts_p = sub.add_parser("accounts", help="账户管理")
+    accounts_sub = accounts_p.add_subparsers(dest="action", required=True)
 
     add = accounts_sub.add_parser("add", help="添加账户")
     add.add_argument("--user", required=True, help="用户 sub 或邮箱")

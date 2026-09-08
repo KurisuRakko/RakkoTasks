@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     # 数据与同步
     database_path: str = "data/rakkotasks.db"
     sync_interval_minutes: int = 15
-    initial_backfill_days: int = 180
+    initial_backfill_days: int = 7  # 首次接入回补天数；2026-09-06 起默认 7 天（原 180）
     search_index_days: int = 90
 
     # LLM（OpenAI-compatible）

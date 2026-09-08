@@ -9,6 +9,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import AiAddDialog from '../src/components/AiAddDialog';
 import ItemDialog from '../src/components/ItemDialog';
 import ItemFieldsForm from '../src/components/ItemFieldsForm';
@@ -260,7 +261,11 @@ describe('TasksPage 列表行的提醒 chip', () => {
     ];
     vi.stubGlobal('fetch', vi.fn(async () => json({ items })));
 
-    render(<TasksPage />);
+    render(
+      <MemoryRouter useTransitions={false}>
+        <TasksPage />
+      </MemoryRouter>,
+    );
     await screen.findByText('三提醒');
 
     const chips = screen.getAllByLabelText(/^提醒 /);
@@ -282,7 +287,11 @@ describe('TasksPage 列表行的提醒 chip', () => {
     ];
     vi.stubGlobal('fetch', vi.fn(async () => json({ items })));
 
-    render(<TasksPage />);
+    render(
+      <MemoryRouter useTransitions={false}>
+        <TasksPage />
+      </MemoryRouter>,
+    );
     await screen.findByText('两个都有');
 
     const row = screen.getByText('两个都有').closest('li') as HTMLElement;

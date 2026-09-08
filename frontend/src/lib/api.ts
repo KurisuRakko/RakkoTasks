@@ -5,6 +5,11 @@ import { authedFetch } from './phainon';
 import { API_BASE_URL } from './env';
 import { localTimeZone } from './time';
 import type {
+  AccountCreate,
+  AccountInfo,
+  AccountPatch,
+  AccountsResponse,
+  AuthFailedKind,
   CaldavInfo,
   CalendarTokenResponse,
   Category,
@@ -21,6 +26,50 @@ import type {
 } from '../types';
 
 const API_BASE = `${API_BASE_URL}/api`;
+
+/** 后端按契约返回的业务错误：code/kind/detail 取自 JSON 体（解析失败时 code 退回 http_<status>） */
+export class ApiError extends Error {
+  status: number;
+  code: string;
+  /** 微软授权失败的细分原因（仅 auth_failed 携带） */
+  kind?: AuthFailedKind;
+  detail?: string;
+
+  constructor(status: number, code: string, kind?: AuthFailedKind, detail?: string) {
+    super(`HTTP ${status}`);
+    this.status = status;
+    this.code = code;
+    if (kind !== undefined) this.kind = kind;
+    if (detail !== undefined) this.detail = detail;
+  }
+}
+
+/** 把非 2xx 响应解析成 ApiError 抛出（只给新账户 API 用，既有函数维持原 throw 不动） */
+async function raiseApiError(res: Response): Promise<never> {
+  let code = `http_${res.status}`;
+  let kind: AuthFailedKind | undefined;
+  let detail: string | undefined;
+  try {
+    const body = (await res.json()) as {
+      code?: unknown;
+      kind?: unknown;
+      detail?: unknown;
+    };
+    if (typeof body.code === 'string' && body.code !== '') code = body.code;
+    if (
+      body.kind === 'expired' ||
+      body.kind === 'declined' ||
+      body.kind === 'admin_required' ||
+      body.kind === 'other'
+    ) {
+      kind = body.kind;
+    }
+    if (typeof body.detail === 'string') detail = body.detail;
+  } catch {
+    // 非 JSON 体：code 保持 http_<status>，调用方仍能拿到状态码兜底
+  }
+  throw new ApiError(res.status, code, kind, detail);
+}
 
 /** GET /api/items?status=&category=；响应为 {"items": [...]} 信封，返回其中的数组 */
 export async function fetchItems(params: {
@@ -209,4 +258,63 @@ export async function fetchStatus(): Promise<StatusResponse> {
   const res = await authedFetch(`${API_BASE}/status`);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return (await res.json()) as StatusResponse;
+}
+
+/** GET /api/accounts：当前用户全部账户（含已停用），响应为信封，返回其中的数组 */
+export async function fetchAccounts(): Promise<AccountInfo[]> {
+  const res = await authedFetch(`${API_BASE}/accounts`);
+  if (!res.ok) await raiseApiError(res);
+  const data = (await res.json()) as AccountsResponse;
+  return data.accounts;
+}
+
+/** POST /api/accounts 新建账户；成功 201 + 完整 AccountInfo */
+export async function createAccount(body: AccountCreate): Promise<AccountInfo> {
+  const res = await authedFetch(`${API_BASE}/accounts`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (res.status !== 201) await raiseApiError(res);
+  return (await res.json()) as AccountInfo;
+}
+
+/** PATCH /api/accounts/{id}：改名称 / Gmail 应用专用密码 / 启停 */
+export async function patchAccount(id: number, body: AccountPatch): Promise<AccountInfo> {
+  const res = await authedFetch(`${API_BASE}/accounts/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) await raiseApiError(res);
+  return (await res.json()) as AccountInfo;
+}
+
+/** DELETE /api/accounts/{id} 彻底删除账户及其邮件与任务；成功 204 无正文 */
+export async function deleteAccount(id: number): Promise<void> {
+  const res = await authedFetch(`${API_BASE}/accounts/${id}`, { method: 'DELETE' });
+  if (res.status !== 204) await raiseApiError(res);
+}
+
+/** POST /api/accounts/{id}/auth-url 生成微软授权链接；返回 auth_uri（redirect_uri 缺省用服务端默认） */
+export async function requestMsAuthUrl(id: number, redirectUri?: string): Promise<string> {
+  const res = await authedFetch(`${API_BASE}/accounts/${id}/auth-url`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(redirectUri ? { redirect_uri: redirectUri } : {}),
+  });
+  if (!res.ok) await raiseApiError(res);
+  const data = (await res.json()) as { auth_uri: string };
+  return data.auth_uri;
+}
+
+/** POST /api/accounts/{id}/auth-code：用地址栏完整 URL（或裸授权码）换 token 落库 */
+export async function submitMsAuthCode(id: number, authResponse: string): Promise<AccountInfo> {
+  const res = await authedFetch(`${API_BASE}/accounts/${id}/auth-code`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ auth_response: authResponse }),
+  });
+  if (!res.ok) await raiseApiError(res);
+  return (await res.json()) as AccountInfo;
 }
