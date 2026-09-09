@@ -1,5 +1,5 @@
 // AccountWizard 测试：添加向导两条路径与错误映射。
-// Gmail：选类型 → 填表 → createAccount 收到正确 body → 直接进完成页（文案含「7 天」）；
+// Gmail：选类型 → 填表 → createAccount 收到正确 body → 直接进完成页；
 // 微软：建账户后进入授权引导 → 生成链接 → 粘贴完整地址 → submitMsAuthCode → 完成页；
 // auth_failed declined 显示对应文案并可重新生成链接；account_exists 显示对应文案并留在原步。
 // api 全部 mock ../src/lib/api；渲染包 ThemeModeProvider + MemoryRouter（向导不用路由，
@@ -89,9 +89,10 @@ describe('AccountWizard Gmail 路径', () => {
       app_password: 'abcd efgh ijkl mnop',
     });
 
-    // Gmail 建好即进完成页：文案含「最近 7 天」
+    // Gmail 建好即进完成页。回补天数由后端 INITIAL_BACKFILL_DAYS 决定，前端不复述具体数字
     expect(await screen.findByText(/已接入 Gmail。/)).toBeTruthy();
-    expect(screen.getByText(/最近 7 天/)).toBeTruthy();
+    expect(screen.getByText(/开始拉取近期邮件/)).toBeTruthy();
+    expect(screen.queryByText(/7 天/)).toBeNull();
     // 完成页不再有创建请求按钮
     expect(screen.queryByRole('button', { name: '下一步' })).toBeNull();
 
@@ -183,7 +184,8 @@ describe('AccountWizard 微软路径', () => {
     // 粘贴内容提交前 trim 过
     await waitFor(() => expect(api.submitMsAuthCodeMock).toHaveBeenCalledWith(2, authUri));
     expect(await screen.findByText(/已接入 Outlook。/)).toBeTruthy();
-    expect(screen.getByText(/最近 7 天/)).toBeTruthy();
+    expect(screen.getByText(/开始拉取近期邮件/)).toBeTruthy();
+    expect(screen.queryByText(/7 天/)).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: '完成' }));
     expect(onDone).toHaveBeenCalledWith(authorized);

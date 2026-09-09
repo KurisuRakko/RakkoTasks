@@ -342,8 +342,10 @@ export default function AccountWizard({ onDone, onCancel }: Props) {
         {activeStep === doneStep && created && (
           <Stack alignItems="center" spacing={1} sx={{ py: 2 }}>
             <CheckCircleOutlineIcon color="success" sx={{ fontSize: 48 }} />
+            {/* 不写死回补天数：那个值在后端 INITIAL_BACKFILL_DAYS（部署方可改，生产实测
+                与代码默认值并不一致），前端复述一遍就是在替后端撒谎 */}
             <Typography variant="body2" sx={{ textAlign: 'center' }}>
-              已接入 {created.name}。系统会在下一轮同步（最多 15 分钟）开始拉取最近 7 天的邮件并生成任务。
+              已接入 {created.name}。系统会在下一轮同步（最多 15 分钟）开始拉取近期邮件并生成任务。
             </Typography>
           </Stack>
         )}

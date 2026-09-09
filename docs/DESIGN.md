@@ -71,7 +71,8 @@ docs/       本文档等
 
 - worker 常驻进程，每 `SYNC_INTERVAL_MINUTES`（默认 15）跑一轮，账户串行处理，单账户异常不影响其余。
 - 只同步 INBOX。增量游标：每账户存 `uidvalidity` + `last_uid`；UIDVALIDITY 变化则重置游标全量回补。
-- 首次回补 `INITIAL_BACKFILL_DAYS`（默认 180）天。
+- 首次回补 `INITIAL_BACKFILL_DAYS` 天（代码默认 7，2026-09-06 起；部署方在 `.env` 里
+  可覆盖，生产实测为 30）。**前端任何文案都不许复述这个数字**——复述就是替后端撒谎。
 - 去重键 `(account_id, message_id)`；无 Message-ID 的邮件用内容哈希替代。
 - 解析：标准库 `email`，取 subject/from/to/date、text/plain 与 text/html 正文；附件只记文件名列表，不存内容。
 
@@ -521,7 +522,8 @@ CalDAV 例外：`/caldav/*` 与 `/.well-known/caldav` 不走上述 Bearer 中间
     Gmail 附应用专用密码输入与生成指引（Google 账号 → 安全性 → 两步验证 → 应用专用密码）；
     微软可展开「高级」填自定义 client_id（默认 Thunderbird）→ ③ 微软授权引导：生成链接 →
     新标签登录并完成 MFA → 浏览器停在空白页 → 把完整地址粘回 → 完成；auth_failed 按 kind 给
-    中文提示与重试 → ④ 完成页：说明「下一轮同步（最多 15 分钟）开始拉取最近 7 天邮件」。
+    中文提示与重试 → ④ 完成页：说明「下一轮同步（最多 15 分钟）开始拉取近期邮件」
+    （不写具体天数，理由见第 5 节的 `INITIAL_BACKFILL_DAYS`）。
     ①②两步之间可「上一步」回改类型，已填内容全部保留；表单校验红字只在字段失焦过或
     点过「下一步」之后才显示——邮箱与密码在刚进第 ② 步时必然是空的，无条件报错等于一进门满屏红。
   - 账户详情：同步状态（上次同步时间常驻；`last_error` 全文摊开，列表行只能单行截断，
