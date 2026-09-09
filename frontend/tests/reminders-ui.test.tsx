@@ -1,5 +1,5 @@
 // 提醒 UI 集成测试：ItemFieldsForm 的提醒行编辑（增/删/改/清空、排序去重出参、
-// 上限与默认时刻）、TasksPage 列表行的提醒 chip（最早一条 +N）、ItemDialog 详情
+// 上限与默认时刻）、TasksPage 列表行不再渲染提醒 chip、ItemDialog 详情
 // 的只读提醒列表、AiAddDialog 解析结果预填提醒并随保存载荷提交。
 //
 // 时刻一律经 fromDatetimeLocalValue 从本地墙上时刻构造（与组件同一套换算），
@@ -33,10 +33,9 @@ function mkReminder(id: number, remindAt: string): Reminder {
   return { id, remind_at: remindAt };
 }
 
-/** 三个互不相同且远离今天/明天的时刻（2030 年，formatReminder 输出稳定） */
+/** 两个互不相同且远离今天/明天的时刻（2030 年，formatReminder 输出稳定） */
 const R1 = remind('2030-01-05T09:30');
 const R2 = remind('2030-01-05T10:30');
-const R3 = remind('2030-01-06T11:00');
 
 function makeItem(partial: Partial<Item>): Item {
   return {
@@ -248,36 +247,13 @@ describe('ItemFieldsForm 提醒行编辑', () => {
   });
 });
 
-describe('TasksPage 列表行的提醒 chip', () => {
+describe('TasksPage 列表行不再有提醒 chip', () => {
   beforeEach(() => {
     localStorage.clear();
     resetLists();
   });
 
-  it('8. 有 1 个提醒 → 按「提醒 」前缀 aria-label 找到；有 3 个 → 文案含 +2', async () => {
-    const items: Item[] = [
-      makeItem({ id: 1, title: '单提醒', reminders: [mkReminder(1, R1)] }),
-      // 故意乱序喂 3 个提醒：取最早靠组件显式排序
-      makeItem({ id: 2, title: '三提醒', reminders: [mkReminder(2, R3), mkReminder(3, R1), mkReminder(4, R2)] }),
-    ];
-    vi.stubGlobal('fetch', vi.fn(async () => json({ items })));
-
-    render(
-      <MemoryRouter useTransitions={false}>
-        <TasksPage />
-      </MemoryRouter>,
-    );
-    await screen.findByText('三提醒');
-
-    const chips = screen.getAllByLabelText(/^提醒 /);
-    expect(chips).toHaveLength(2);
-    // 3 个提醒的那条 chip 文案是「🔔 最早时刻 +2」
-    const texts = chips.map((c) => c.textContent ?? '');
-    expect(texts).toContain(`🔔 ${formatReminder(R1)} +2`);
-    expect(texts).toContain(`🔔 ${formatReminder(R1)}`);
-  });
-
-  it('9. 同时有提醒和截止日期：两个 chip 都在行内', async () => {
+  it('9. 同时有提醒和截止日期：行内只剩截止 chip，提醒只在详情对话框展示', async () => {
     const items: Item[] = [
       makeItem({
         id: 1,
@@ -297,7 +273,10 @@ describe('TasksPage 列表行的提醒 chip', () => {
 
     const row = screen.getByText('两个都有').closest('li') as HTMLElement;
     expect(row).not.toBeNull();
-    expect(within(row).getByLabelText(/^提醒 /)).toBeTruthy();
+    // 列表行不再渲染提醒 chip：提醒信息只在详情对话框（ItemDialog 只读提醒列表）展示
+    expect(within(row).queryByLabelText(/^提醒 /)).toBeNull();
+    expect(within(row).queryByText(/🔔/)).toBeNull();
+    // 截止 chip 保留
     expect(within(row).getByText('6月1日')).toBeTruthy();
   });
 });

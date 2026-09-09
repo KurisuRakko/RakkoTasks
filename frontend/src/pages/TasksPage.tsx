@@ -3,7 +3,7 @@
 // 静默刷新，不再每次先闪加载圈；勾选 → 离场动画 → moveItem 进 done 缓存并 PATCH。
 // 入场 stagger 只在「这份列表首次拿到数据」时跑（useCachedList.animateEnter），
 // 命中缓存直接就位不重放。已完成列表在 /done，本页不持有 done 数据。
-// 条目左侧小蓝点表示源邮件是今天发的，按日期自动过期，与查看/勾选状态无关。
+// 条目左侧今日点表示源邮件是今天发的，按日期自动过期，与查看/勾选状态无关。
 // 列表行与详情 Dialog 共用 VT_NAMES.sheet 做容器变换（点哪行哪行长成对话框）；
 // 右下角悬浮按钮经 portal 挂到 body——路由转场内层动画盒的 transform 会成为
 // fixed 后代的包含块，换页后按钮会跟着内容漂移。按钮只打 data-vt-shell 标记，
@@ -44,10 +44,10 @@ import {
 } from '../lib/motion';
 import { useLongPress } from '../lib/long-press';
 import { cardRowSx } from '../lib/surface';
-import { formatReminder, todayIso } from '../lib/time';
+import { todayIso } from '../lib/time';
 import { shellAttr, VT_NAMES } from '../lib/view-transition';
-import { GLASS, MOTION } from '../rakko-tokens';
-import type { Category, Item, ItemFields, Reminder } from '../types';
+import { GLASS, MOTION, TYPE_SCALE } from '../rakko-tokens';
+import type { Category, Item, ItemFields } from '../types';
 import AiAddDialog from '../components/AiAddDialog';
 import CategoryChips from '../components/CategoryChips';
 import DueChip from '../components/DueChip';
@@ -67,20 +67,6 @@ function readQuickMode(): boolean {
   }
 }
 
-/**
- * 行上提醒 chip 的展示：🔔 最早一条提醒的展示文案，多于一条时追加「 +N」。
- * 显式按 remind_at 的绝对时刻排序取最早，不依赖后端数组顺序（后端契约虽是升序，
- * 展示方不赌调用方守约）。返回可见文案（label）与 aria-label 用的纯文案。
- */
-function reminderChipLabel(reminders: Reminder[]): { text: string; label: string } {
-  const sorted = [...reminders].sort(
-    (a, b) => new Date(a.remind_at).getTime() - new Date(b.remind_at).getTime(),
-  );
-  const text = formatReminder(sorted[0].remind_at);
-  const extra = sorted.length > 1 ? ` +${sorted.length - 1}` : '';
-  return { text, label: `🔔 ${text}${extra}` };
-}
-
 /** Snackbar 内容：text 是提示文案；item 非 null 时右侧多一个「查看」按钮开详情 */
 type Snack = { text: string; item: Item | null };
 
@@ -92,14 +78,18 @@ type Point = { x: number; y: number };
  *  内边距收到 6px。 */
 const META_CHIP_H = 20;
 const META_CHIP_GAP = '3px';
-/** 元信息列最多两行标签，超出折到第二列（column 方向的 flexWrap 靠限高触发） */
-const META_ROWS_MAX_H = `${META_CHIP_H * 2 + 3}px`;
 
 const META_CHIP_SX = {
   height: META_CHIP_H,
   fontSize: '0.6875rem',
   '& .MuiChip-label': { px: 0.75 },
 } as const;
+
+/** 标题首行的行盒高度：行左侧的今日点与勾选框都以它为中线基准。与 theme 的
+ *  body1 同源（copy-14），不另开一份数字。 */
+const TITLE_LINE_H = Math.round(
+  TYPE_SCALE['copy-14'].size * TYPE_SCALE['copy-14'].lineHeight,
+); // 22
 
 /** 单行任务（拆成独立组件：长按 hook 需要逐行一份实例，不能放在 map 的循环体里） */
 function TaskRow({
@@ -130,8 +120,6 @@ function TaskRow({
   // 长按 500ms 弹菜单（touch 路径与桌面 contextmenu 分开，理由见 lib/long-press.ts）；
   // 触发点坐标给菜单定位。长按与点击各自独立：长按不吞行点击，弹菜单后由菜单项接手
   const longPress = useLongPress((point) => onMenuOpen(item, point));
-  // 提醒 chip 的展示（最早一条 + 超出条数）；无提醒时不渲染
-  const reminder = item.reminders.length > 0 ? reminderChipLabel(item.reminders) : null;
   return (
     <ListItem
       disablePadding
@@ -150,7 +138,7 @@ function TaskRow({
         sx={[
           cardRowSx(),
           {
-            // 行内是四列单行 grid：蓝点(12px) / 勾选(auto) / 标题+摘要(可收缩 1fr) /
+            // 行内是四列单行 grid：今日点(12px) / 勾选(auto) / 标题+摘要(可收缩 1fr) /
             // 元信息列(按内容，有硬上限)。标签此前独占第二行，可绝大多数条目只有一两个
             // 标签——整整一行高度里九成是空的。改成竖着码在行右侧后那段留白消失，行高
             // 由标题决定。标题列写 minmax(0, 1fr) 而不是 1fr：grid 项默认 min-width
@@ -176,7 +164,17 @@ function TaskRow({
         }}
         {...longPress}
       >
-        <Box sx={{ gridArea: 'dot', width: 12, display: 'flex', justifyContent: 'center', flexShrink: 0 }}>
+        <Box
+          sx={{
+            gridArea: 'dot',
+            width: 12,
+            height: TITLE_LINE_H,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexShrink: 0,
+          }}
+        >
           {isNewToday(item, today) && (
             <Box
               role="img"
@@ -185,19 +183,23 @@ function TaskRow({
             />
           )}
         </Box>
-        <Checkbox
-          edge="start"
-          checked={leaving}
-          tabIndex={-1}
-          disableRipple
-          // 顶部对齐后勾选块在视觉上会比标题低一点（grid 第一行内它最高），
-          // 上提 4px 校正
-          sx={{ gridArea: 'cb', marginTop: '-4px' }}
-          onClick={(e) => {
-            e.stopPropagation();
-            onToggle(item);
-          }}
-        />
+        {/* 勾选框与今日点共用「标题首行」这条中线：盒高取 TITLE_LINE_H、alignItems
+            居中，比盒高的勾选框对称溢出——不再靠 marginTop 猜偏移（原来那个 -4px 只把
+            中心从 21 挪到 17，离标题首行的 11 还差 6px，三个元素三条中线）。溢出的是
+            勾选框透明的 padding（disableRipple，没有涟漪要画），被行的 overflow: hidden
+            裁掉约 2px 不影响观感。 */}
+        <Box sx={{ gridArea: 'cb', height: TITLE_LINE_H, display: 'flex', alignItems: 'center' }}>
+          <Checkbox
+            edge="start"
+            checked={leaving}
+            tabIndex={-1}
+            disableRipple
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggle(item);
+            }}
+          />
+        </Box>
         <ListItemText
           primary={item.title}
           secondary={item.summary}
@@ -218,24 +220,25 @@ function TaskRow({
           }}
         />
         {/* 元信息码在行右侧（gridArea: 'meta'）：一条任务通常只有一两个标签，让它们
-            独占一整行等于为一个小标签空出整行高度，右边九成是留白。
-            竖着排，超过两个就折成第二列（column + wrap + maxHeight）——column 方向的
-            flexWrap 只有在容器限高时才生效，不写 maxHeight 那条 wrap 就是死配置，
-            四个标签会排成一列把行撑成一段楼梯。META_ROWS_MAX_H = 2 行标签 + 行距。
-            maxWidth 是标题的护栏：绝不让标签把标题挤成碎字。 */}
+            独占一整行等于为一个小标签空出整行高度，右边九成是留白。标签单列竖排，
+            右对齐（alignItems: flex-end）。
+            不许再折成第二列——column 方向的 flexWrap 只受容器限高触发，折叠后的
+            视觉阅读顺序（重要 → 分类 → 截止）会与 DOM 顺序对不上，第一列剩下的标签
+            孤零零挂在左下、各行右边缘参差；而且 column-wrap 下 flex-shrink 作用在
+            主轴（竖向），两列宽度合计一旦超过 maxWidth 就直接顶出卡片右缘，横向
+            没有任何收缩机制兜底。就是这两条把折叠列写法判了死刑。
+            maxWidth: 8.5rem 现在纯粹是标题的护栏：分类全是两个汉字（约 33px），
+            截止 chip 最宽的是 12月31日（约 47px），没有任何 chip 逼近 119px
+            （htmlFontSize: 14 下 8.5rem 的实际宽度）。也不许回到更老的「整组标签
+            flexShrink: 0 放标题右侧」，窄屏上标题会被挤成竖排碎字。 */}
         <Stack
-          // useFlexGap：Stack 默认把 spacing 编译成相邻兄弟的 margin-top，换列时
-          // 第二列的头一个标签仍是 DOM 里的相邻兄弟，会白白多出一截、与第一列对不齐。
-          // 走 gap 才是 wrap 场景下正确的间距实现。
+          // useFlexGap：不开它的话，MUI 把 spacing 编译成后代选择器隔空改写子元素
+          // ——相邻兄弟逐个加 marginTop、其余一律重置 margin: 0（防双重叠加），
+          // 每个 chip 的 margin 都会被盖掉；写在容器上的 gap 才是直接机制。
           useFlexGap
           spacing={META_CHIP_GAP}
           alignItems="flex-end"
-          sx={{
-            gridArea: 'meta',
-            flexWrap: 'wrap',
-            maxHeight: META_ROWS_MAX_H,
-            maxWidth: '8.5rem',
-          }}
+          sx={{ gridArea: 'meta', maxWidth: '8.5rem' }}
         >
           {item.importance === 'high' && (
             <Chip label="重要" color="warning" size="small" variant="outlined" sx={META_CHIP_SX} />
@@ -243,14 +246,6 @@ function TaskRow({
           <Chip label={item.category} size="small" variant="outlined" sx={META_CHIP_SX} />
           {/* 截止日的三档配色与读屏文案收在 DueChip，详情对话框用的是同一个组件 */}
           <DueChip item={item} today={today} sx={META_CHIP_SX} />
-          {reminder && (
-            <Chip
-              label={reminder.label}
-              size="small"
-              sx={META_CHIP_SX}
-              aria-label={`提醒 ${reminder.text}`}
-            />
-          )}
         </Stack>
       </ListItemButton>
     </ListItem>

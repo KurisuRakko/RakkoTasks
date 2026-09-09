@@ -154,8 +154,8 @@ describe('TasksPage 重要度标记', () => {
   });
 });
 
-describe('今日新邮件蓝点', () => {
-  it('今天发送的条目显示蓝点，旧条目不显示', async () => {
+describe('今日新邮件标记点', () => {
+  it('今天发送的条目显示今日点，旧条目不显示', async () => {
     const items: Item[] = [
       makeItem({ id: 11, title: '今天的新条目', email_sent_at: new Date().toISOString() }),
       makeItem({ id: 12, title: '旧条目', email_sent_at: '2026-08-01T00:00:00+00:00' }),
@@ -167,15 +167,15 @@ describe('今日新邮件蓝点', () => {
 
     await screen.findByText('今天的新条目');
 
-    // 只有发送于今天的那条带蓝点
+    // 只有发送于今天的那条带今日点
     expect(screen.getAllByLabelText('今日新邮件')).toHaveLength(1);
 
-    // 蓝点位于新条目所在行内
+    // 今日点位于新条目所在行内
     const newRow = screen.getByText('今天的新条目').closest('li');
     expect(newRow).not.toBeNull();
     expect(within(newRow!).getByLabelText('今日新邮件')).toBeTruthy();
 
-    // 旧条目行内没有蓝点
+    // 旧条目行内没有今日点
     const oldRow = screen.getByText('旧条目').closest('li');
     expect(oldRow).not.toBeNull();
     expect(within(oldRow!).queryByLabelText('今日新邮件')).toBeNull();
@@ -480,7 +480,7 @@ describe('列表行布局（标签竖排在右侧，且不挤压标题）', () =
     expect(rule, '行内是 grid，不是单行 flex').toContain('display:grid');
     // 标题列必须是 minmax(0, 1fr)：grid 项默认 min-width 是 auto，写 1fr 会让长标题
     // 撑出自己的列、反过来挤扁元信息列
-    expect(rule, '列 = 蓝点 12px / 勾选 auto / 标题可收缩 / 元信息按内容').toContain(
+    expect(rule, '列 = 今日点 12px / 勾选 auto / 标题可收缩 / 元信息按内容').toContain(
       'grid-template-columns:12px auto minmax(0, 1fr) auto',
     );
     expect(rule, '单行四区：dot / cb / text / meta').toContain(
@@ -489,7 +489,7 @@ describe('列表行布局（标签竖排在右侧，且不挤压标题）', () =
     expect(rule, '标签不再独占第二行').not.toContain('". . chips"');
   });
 
-  it('标签竖排在 meta 列，有 maxWidth 护住标题，不再回到 flexShrink: 0 挤标题的老路', async () => {
+  it('标签单列竖排右对齐在 meta 列，有 maxWidth 护住标题，不折叠、不回到 flexShrink: 0 挤标题的老路', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => json({ items: ITEMS })));
     render(
       <MemoryRouter useTransitions={false}>
@@ -506,16 +506,66 @@ describe('列表行布局（标签竖排在右侧，且不挤压标题）', () =
     expect(rule, '标签落在右侧元信息列').toContain('grid-area:meta');
     // MUI Stack 默认 flex-direction: column，这里正是要竖排；断言它没有被改回横排
     expect(rule, '标签竖着码，不是横着一长排').not.toContain('flex-direction:row');
+    expect(rule, '单列竖排右对齐').toContain('align-items:flex-end');
     expect(rule, 'maxWidth 是标题的护栏：标签再多也不许吃掉标题的宽度').toContain('max-width:8.5rem');
     expect(rule, '不许回到用 flexShrink: 0 抢宽度的老写法').not.toContain('flex-shrink:0');
-    // column 方向的 flexWrap 只有容器限高时才生效：光写 wrap 不写 maxHeight 是死配置，
-    // 四个标签会排成一列把行撑成一段楼梯
-    expect(rule, '超过两个标签要折成第二列').toContain('flex-wrap:wrap');
-    expect(rule, 'wrap 靠限高触发，不写 maxHeight 那条 wrap 不生效').toContain('max-height:43px');
-    // Stack 默认把 spacing 编译成相邻兄弟的 margin-top：换列时第二列的头一个标签
-    // 仍是相邻兄弟，会多出一截与第一列错位。useFlexGap 让它走 gap。
+    // 折成第二列（column + wrap + maxHeight）的写法已删：column 方向的 wrap 一旦换列，
+    // 视觉阅读顺序与 DOM 顺序对不上，第一列剩下的标签孤零零挂在左下；且两列宽度合计
+    // 会超过 maxWidth 顶出卡片（htmlFontSize=14 下 maxWidth 只有 119px，column-wrap
+    // 横向没有收缩机制兜底）。这两条把折叠列判了死刑，不许回去。
+    expect(rule, '不许再折成第二列：视觉顺序 ≠ DOM 顺序').not.toContain('flex-wrap');
+    expect(rule, '不许再写死限高触发折叠').not.toContain('max-height');
+    // 间距断言按 gap 的实现写：useFlexGap 把 spacing 编译成容器上的 gap；不开它的
+    // 话 MUI 会用后代选择器隔空改写子元素 margin（相邻兄弟逐个加、其余重置成 0）
     expect(rule, '间距必须走 gap，不能是 margin').toContain('gap:3px');
     expect(rule, '不许回到 margin 实现的 spacing').not.toContain('margin-top:3px');
+  });
+
+  it('行左侧今日点、勾选框与标题首行共用同一条中线', async () => {
+    // email_sent_at 必须是今天：否则 isNewToday 为假、今日点不渲染（参照上方
+    // 「今日新邮件标记点」describe 的夹具写法）
+    const items: Item[] = [
+      makeItem({ id: 11, title: '今日到达的条目', email_sent_at: new Date().toISOString() }),
+    ];
+    vi.stubGlobal('fetch', vi.fn(async () => json({ items })));
+    render(
+      <MemoryRouter useTransitions={false}>
+        <TasksPage />
+      </MemoryRouter>,
+    );
+    await screen.findByText('今日到达的条目');
+
+    const row = screen.getByText('今日到达的条目').closest('li') as HTMLElement;
+    expect(row).not.toBeNull();
+
+    // 中线基准：TITLE_LINE_H 由 TYPE_SCALE['copy-14'] 推出（14 × 1.57 四舍五入 → 22），
+    // 与 theme 的 body1（typeStyle('copy-14')）同源
+    const dotBox = within(row).getByLabelText('今日新邮件').parentElement as HTMLElement;
+    expect(dotBox).not.toBeNull();
+    const dotRule = ownRules(allStyleText(), dotBox);
+    expect(dotRule, '今日点的包裹盒与标题首行等高').toContain('height:22px');
+    expect(dotRule, '今日点竖向居中于包裹盒').toContain('align-items:center');
+
+    const cbBox = within(row)
+      .getByRole('checkbox')
+      .closest('.MuiCheckbox-root')!.parentElement as HTMLElement;
+    expect(cbBox).not.toBeNull();
+    const cbRule = ownRules(allStyleText(), cbBox);
+    expect(cbRule, '勾选框的包裹盒与标题首行等高').toContain('height:22px');
+    expect(cbRule, '勾选框竖向居中于包裹盒').toContain('align-items:center');
+
+    // 勾选框自身不带 marginTop：那个 -4px 魔数只把中心从 21 挪到 17，离标题首行的
+    // 11 还差 6px——三个元素三条中线的老毛病，不许有人偷偷加回来
+    const cbRoot = within(row).getByRole('checkbox').closest('.MuiCheckbox-root') as HTMLElement;
+    const cbRootRule = ownRules(allStyleText(), cbRoot);
+    // ownRules 在元素上没有 css-* 类时返回空串，空串对下面那条 not.toContain 恒真——
+    // 先证明确实读到了勾选框自己的规则，守卫才不会静默空转（不能拿 MUI 内部具体声明
+    // 判非空，那是拿版本细节当契约）
+    expect(
+      cbRootRule,
+      '守卫不能空转：必须真的读到勾选框自己的规则（空串会让下面那条 not.toContain 恒真）',
+    ).not.toBe('');
+    expect(cbRootRule, '勾选框自身不许带 marginTop 魔数').not.toContain('margin-top');
   });
 
   it('标签比 MUI 的 small 再小一档：竖排时不把行撑成一段楼梯', async () => {
