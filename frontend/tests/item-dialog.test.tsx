@@ -382,3 +382,23 @@ describe('ItemDialog 与内容列重合的样式', () => {
     expect(cssText).toContain('max-width:840px');
   });
 });
+
+describe('ItemDialog 截止日与列表同一口径', () => {
+  it('详情里的截止日也按逾期标主色：此前详情页无论逾期与否都是中性，两处不一致', () => {
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const pad = (x: number) => String(x).padStart(2, '0');
+    const due = `${yesterday.getFullYear()}-${pad(yesterday.getMonth() + 1)}-${pad(yesterday.getDate())}`;
+
+    render(
+      <ItemDialog
+        item={makeItem({ id: 1, email_id: null, title: '逾期条目', due_date: due })}
+        onClose={vi.fn()}
+      />,
+    );
+
+    const chip = screen.getByLabelText(/^截止 .+，已逾期$/).closest('.MuiChip-root') as HTMLElement;
+    expect(chip).not.toBeNull();
+    expect(chip.className).toMatch(/MuiChip-colorPrimary/);
+  });
+});

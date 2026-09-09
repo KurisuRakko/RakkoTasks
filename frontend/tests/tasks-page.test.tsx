@@ -512,6 +512,10 @@ describe('列表行布局（标签竖排在右侧，且不挤压标题）', () =
     // 四个标签会排成一列把行撑成一段楼梯
     expect(rule, '超过两个标签要折成第二列').toContain('flex-wrap:wrap');
     expect(rule, 'wrap 靠限高触发，不写 maxHeight 那条 wrap 不生效').toContain('max-height:43px');
+    // Stack 默认把 spacing 编译成相邻兄弟的 margin-top：换列时第二列的头一个标签
+    // 仍是相邻兄弟，会多出一截与第一列错位。useFlexGap 让它走 gap。
+    expect(rule, '间距必须走 gap，不能是 margin').toContain('gap:3px');
+    expect(rule, '不许回到 margin 实现的 spacing').not.toContain('margin-top:3px');
   });
 
   it('标签比 MUI 的 small 再小一档：竖排时不把行撑成一段楼梯', async () => {

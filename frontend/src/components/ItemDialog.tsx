@@ -45,7 +45,7 @@ import {
   patchItem,
 } from '../lib/api';
 import { copyText } from '../lib/clipboard';
-import { formatDueDate } from '../lib/grouping';
+import DueChip from './DueChip';
 import { columnDialogSx } from '../lib/layout';
 import { formatReminder } from '../lib/time';
 import type { AccountInfo, Email, Item, ItemFields, RelatedEmail } from '../types';
@@ -216,7 +216,8 @@ export default function ItemDialog({ item, onClose, onChanged, onDeleted }: Prop
         </Typography>
         <Stack direction="row" spacing={1} sx={{ mb: 1.5 }}>
           <Chip label={current.category} size="small" variant="outlined" />
-          {current.due_date && <Chip label={formatDueDate(current.due_date)} size="small" />}
+          {/* 与列表行同一个 DueChip：逾期/临期的配色口径只有一处，不会两边分叉 */}
+          <DueChip item={current} today={new Date()} />
         </Stack>
         {/* 提醒列表：只读展示。任何条目点右上角「编辑」都能改字段与提醒——ItemEditor
             经 initial.reminders 拿到现有提醒，保存时整体替换——这里的列表本身只是

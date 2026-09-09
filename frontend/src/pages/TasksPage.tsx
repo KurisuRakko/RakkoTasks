@@ -33,7 +33,7 @@ import Stack from '@mui/material/Stack';
 import Typography from '@mui/material/Typography';
 import AddIcon from '@mui/icons-material/Add';
 import { createItem, fetchItems, fetchStatus, parseTask, patchItem, quickAddTask } from '../lib/api';
-import { formatDueDate, groupItems, isDueSoon, isNewToday, isOverdue } from '../lib/grouping';
+import { groupItems, isNewToday } from '../lib/grouping';
 import { moveItem, openKey, removeItem, upsertOpenItem, useCachedList } from '../lib/list-cache';
 import {
   LEAVE_DURATION,
@@ -50,6 +50,7 @@ import { GLASS, MOTION } from '../rakko-tokens';
 import type { Category, Item, ItemFields, Reminder } from '../types';
 import AiAddDialog from '../components/AiAddDialog';
 import CategoryChips from '../components/CategoryChips';
+import DueChip from '../components/DueChip';
 import ItemDialog from '../components/ItemDialog';
 import RowContextMenu from '../components/RowContextMenu';
 
@@ -223,6 +224,10 @@ function TaskRow({
             四个标签会排成一列把行撑成一段楼梯。META_ROWS_MAX_H = 2 行标签 + 行距。
             maxWidth 是标题的护栏：绝不让标签把标题挤成碎字。 */}
         <Stack
+          // useFlexGap：Stack 默认把 spacing 编译成相邻兄弟的 margin-top，换列时
+          // 第二列的头一个标签仍是 DOM 里的相邻兄弟，会白白多出一截、与第一列对不齐。
+          // 走 gap 才是 wrap 场景下正确的间距实现。
+          useFlexGap
           spacing={META_CHIP_GAP}
           alignItems="flex-end"
           sx={{
@@ -236,21 +241,8 @@ function TaskRow({
             <Chip label="重要" color="warning" size="small" variant="outlined" sx={META_CHIP_SX} />
           )}
           <Chip label={item.category} size="small" variant="outlined" sx={META_CHIP_SX} />
-          {item.due_date && (
-            // 截止日的三档：已逾期实心主色（梅），今天起 DUE_SOON_DAYS 天内到期
-            // 描边主色，更远的走中性——两档都是主色，快到期与已过期一眼能挑出来，
-            // 又不至于让所有带截止日的条目糊成一片红。
-            <Chip
-              label={formatDueDate(item.due_date)}
-              size="small"
-              sx={META_CHIP_SX}
-              {...(isOverdue(item, today)
-                ? { color: 'primary' as const }
-                : isDueSoon(item, today)
-                  ? { color: 'primary' as const, variant: 'outlined' as const }
-                  : {})}
-            />
-          )}
+          {/* 截止日的三档配色与读屏文案收在 DueChip，详情对话框用的是同一个组件 */}
+          <DueChip item={item} today={today} sx={META_CHIP_SX} />
           {reminder && (
             <Chip
               label={reminder.label}
