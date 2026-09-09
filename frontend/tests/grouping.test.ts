@@ -1,7 +1,15 @@
 // grouping 纯函数测试：日期边界全部基于传入的 today 动态构造，不依赖真实“现在”。
 
 import { describe, expect, it } from 'vitest';
-import { formatDueDate, groupItems, isNewToday, isOverdue, parseDueDate } from '../src/lib/grouping';
+import {
+  DUE_SOON_DAYS,
+  formatDueDate,
+  groupItems,
+  isDueSoon,
+  isNewToday,
+  isOverdue,
+  parseDueDate,
+} from '../src/lib/grouping';
 import { effectiveDate } from '../src/lib/grouping';
 import { fromDatetimeLocalValue } from '../src/lib/time';
 import type { Item } from '../src/types';
@@ -382,5 +390,39 @@ describe('effectiveDate', () => {
     expect(d?.getFullYear()).toBe(2026);
     expect(d?.getMonth()).toBe(7);
     expect(d?.getDate()).toBe(5);
+  });
+});
+
+describe('isDueSoon（临期：今天起 DUE_SOON_DAYS 天内到期）', () => {
+  /** today + n 天的 YYYY-MM-DD */
+  function inDays(n: number): string {
+    return dateStr(new Date(today.getFullYear(), today.getMonth(), today.getDate() + n));
+  }
+
+  it('今天到期 → 临期（窗口含今天）', () => {
+    expect(isDueSoon(makeItem({ due_date: inDays(0) }), today)).toBe(true);
+  });
+
+  it('窗口最后一天到期 → 临期；再晚一天 → 不临期', () => {
+    expect(isDueSoon(makeItem({ due_date: inDays(DUE_SOON_DAYS) }), today)).toBe(true);
+    expect(isDueSoon(makeItem({ due_date: inDays(DUE_SOON_DAYS + 1) }), today)).toBe(false);
+  });
+
+  it('已逾期 → 不算临期：那是 isOverdue 的事，两者互斥', () => {
+    const overdue = makeItem({ due_date: inDays(-1) });
+    expect(isOverdue(overdue, today)).toBe(true);
+    expect(isDueSoon(overdue, today)).toBe(false);
+  });
+
+  it('无截止日期 / 日期串非法 → 不临期', () => {
+    expect(isDueSoon(makeItem({ due_date: null }), today)).toBe(false);
+    expect(isDueSoon(makeItem({ due_date: '不是日期' }), today)).toBe(false);
+  });
+
+  it('跨月边界照常：窗口按日历天数推，不是按 30 天取模', () => {
+    // today = 2026-08-05，+15 天落到 2026-08-20；月末样例另取一个 today 验跨月
+    const lateAug = new Date(2026, 7, 25);
+    expect(isDueSoon(makeItem({ due_date: '2026-09-09' }), lateAug)).toBe(true);
+    expect(isDueSoon(makeItem({ due_date: '2026-09-10' }), lateAug)).toBe(false);
   });
 });

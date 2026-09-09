@@ -487,10 +487,20 @@ CalDAV 例外：`/caldav/*` 与 `/.well-known/caldav` 不走上述 Bearer 中间
   编辑中不重排行（光标会乱跳），排序去重只发生在出参上。
 - `ItemEditor` 保存时**总是显式带上 `reminders`（哪怕是空数组）**：契约里省略 = 不改，
   省略会让「用户把最后一个提醒删掉再保存」变成静默无操作。
-- 列表行：提醒 chip 显示最早一条 `🔔 明天 10:00`，多于一条追加 `+N`；截止 chip 原样
-  保留，两者可同时出现。分组键改成 `min(最早提醒, 截止)`（`grouping.effectiveDate`），
-  否则「明天 10:00 提醒、无截止」的条目会掉进「无期限」组沉底。`isOverdue` **仍只看
-  `due_date`**：「逾期」说的是过了截止日，提醒迟了不该给红色高亮。
+- 列表行的标签（重要 / 分类 / 截止 / 提醒）**竖着码在行右侧的 meta 列**，不独占整行：
+  一条任务通常只有一两个标签，给它们空出一整行等于九成宽度都是留白。行是单行四列
+  grid `"dot cb text meta"`，标题列写 `minmax(0, 1fr)`（grid 项默认 `min-width: auto`，
+  写 `1fr` 会让长标题撑出自己的列反过来挤扁 meta），meta 列 `maxWidth: 8.5rem` 是标题
+  不被挤碎的护栏——**不许**回到「整组标签 `flexShrink: 0` 放标题右侧」的老写法，那会把
+  窄屏标题挤成竖排碎字。标签尺寸比 MUI `size="small"` 再小一档（高 20px / 0.6875rem），
+  竖排才不会把行撑成一段楼梯。
+- 提醒 chip 显示最早一条 `🔔 明天 10:00`，多于一条追加 `+N`；截止 chip 原样保留，
+  两者可同时出现。截止 chip 分三档：**已逾期实心主色（梅）**、**今天起
+  `DUE_SOON_DAYS`=15 天内到期描边主色**、更远保持中性——两档同色系，快到期与已过期
+  一眼挑得出来，又不至于让所有带截止日的条目糊成一片红。逾期不再用语义 error 色。
+  分组键是 `min(最早提醒, 截止)`（`grouping.effectiveDate`），否则「明天 10:00 提醒、
+  无截止」的条目会掉进「无期限」组沉底。`isOverdue` / `isDueSoon` **仍只看 `due_date`**
+  且互斥：「逾期」说的是过了截止日，提醒迟了不该给红色高亮。
 - 提醒时刻的换算集中在 `lib/time.ts`（`formatReminder` / `toDatetimeLocalValue` /
   `fromDatetimeLocalValue` / `localTimeZone`）。**不许用 `toISOString().slice(...)`**
   ——那是 UTC 墙上时刻，本地时区一偏就差几小时甚至跨天。

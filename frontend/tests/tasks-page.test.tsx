@@ -20,6 +20,7 @@ import { LEAVE_DURATION } from '../src/lib/motion';
 import { cardRowSx } from '../src/lib/surface';
 import { MOTION, NEUTRAL_LIGHT, RADIUS } from '../src/rakko-tokens';
 import { VT_SHELL_ATTR, VT_NAMES } from '../src/lib/view-transition';
+import { DUE_SOON_DAYS } from '../src/lib/grouping';
 import type { AccountInfo, Item } from '../src/types';
 import { allStyleText, ownEmotionClass, renderWithAppTheme, ruleTextOf } from './glass-text-contrast.test-utils';
 
@@ -444,7 +445,7 @@ describe('列表行玻璃视觉（cardRowSx）', () => {
   });
 });
 
-describe('列表行两段布局（chips 不再挤压标题）', () => {
+describe('列表行布局（标签竖排在右侧，且不挤压标题）', () => {
   // jsdom 给不出 grid 布局的可靠 computed 值，布局断言走 emotion 规则文本：
   // sx 经 emotion 编译成 css-* 类规则插入 <style>，可逐字断言（utils 文件头说明）。
   // 行按钮的 sx 是数组（cardRowSx + 行布局对象），保险起见把元素上全部 css-* 类
@@ -463,7 +464,7 @@ describe('列表行两段布局（chips 不再挤压标题）', () => {
       .join(' ');
   }
 
-  it('行按钮是两段 grid：勾选/文本一行、chips 独占第二行（grid-template-areas）', async () => {
+  it('行按钮是单行四列 grid：标签不再独占一整行（grid-template-areas）', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => json({ items: ITEMS })));
     render(
       <MemoryRouter useTransitions={false}>
@@ -476,16 +477,19 @@ describe('列表行两段布局（chips 不再挤压标题）', () => {
       '.MuiListItemButton-root',
     ) as HTMLElement;
     const rule = ownRules(allStyleText(), rowBtn);
-    expect(rule, '行内改为 grid，不再是单行 flex').toContain('display:grid');
-    expect(rule, '列 = 蓝点 12px / 勾选 auto / 文本 1fr').toContain(
-      'grid-template-columns:12px auto 1fr',
+    expect(rule, '行内是 grid，不是单行 flex').toContain('display:grid');
+    // 标题列必须是 minmax(0, 1fr)：grid 项默认 min-width 是 auto，写 1fr 会让长标题
+    // 撑出自己的列、反过来挤扁元信息列
+    expect(rule, '列 = 蓝点 12px / 勾选 auto / 标题可收缩 / 元信息按内容').toContain(
+      'grid-template-columns:12px auto minmax(0, 1fr) auto',
     );
-    expect(rule, '两段行区：第一行 dot/cb/text，第二行 chips').toContain(
-      'grid-template-areas:"dot cb text" ". . chips"',
+    expect(rule, '单行四区：dot / cb / text / meta').toContain(
+      'grid-template-areas:"dot cb text meta"',
     );
+    expect(rule, '标签不再独占第二行').not.toContain('". . chips"');
   });
 
-  it('chips Stack 挂 gridArea: chips、可换行，且不再带 flexShrink: 0 与 ml', async () => {
+  it('标签竖排在 meta 列，有 maxWidth 护住标题，不再回到 flexShrink: 0 挤标题的老路', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => json({ items: ITEMS })));
     render(
       <MemoryRouter useTransitions={false}>
@@ -499,10 +503,30 @@ describe('列表行两段布局（chips 不再挤压标题）', () => {
     const stack = chip.closest('.MuiStack-root') as HTMLElement;
     expect(stack).not.toBeNull();
     const rule = ownRules(allStyleText(), stack);
-    expect(rule, 'chips 落在两段 grid 的第二行区域').toContain('grid-area:chips');
-    expect(rule, 'chips 行内放不下时可换行').toContain('flex-wrap:wrap');
-    expect(rule, '已挪到独立行，不再需要 flexShrink: 0 护宽').not.toContain('flex-shrink');
-    expect(rule, '独占一行从行首排，不再用 ml 贴文本列').not.toContain('margin-left');
+    expect(rule, '标签落在右侧元信息列').toContain('grid-area:meta');
+    // MUI Stack 默认 flex-direction: column，这里正是要竖排；断言它没有被改回横排
+    expect(rule, '标签竖着码，不是横着一长排').not.toContain('flex-direction:row');
+    expect(rule, 'maxWidth 是标题的护栏：标签再多也不许吃掉标题的宽度').toContain('max-width:8.5rem');
+    expect(rule, '不许回到用 flexShrink: 0 抢宽度的老写法').not.toContain('flex-shrink:0');
+  });
+
+  it('标签比 MUI 的 small 再小一档：竖排时不把行撑成一段楼梯', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => json({ items: ITEMS })));
+    render(
+      <MemoryRouter useTransitions={false}>
+        <TasksPage />
+      </MemoryRouter>,
+    );
+    await screen.findByText('重要任务');
+
+    const highRow = screen.getByText('重要任务').closest('li') as HTMLElement;
+    const chipRoot = within(highRow)
+      .getAllByText('重要')[0]
+      .closest('.MuiChip-root') as HTMLElement;
+    const rule = ownRules(allStyleText(), chipRoot);
+    // MUI size="small" 本身是 24px / 13px，这里再压一档
+    expect(rule, '高度压到 20px').toContain('height:20px');
+    expect(rule, '字号取 caption 档').toContain('font-size:0.6875rem');
   });
 });
 
@@ -853,5 +877,59 @@ describe('TasksPage 空态账户引导', () => {
 
     expect(await screen.findByText('没有待办任务')).toBeTruthy();
     expect(screen.queryByRole('button', { name: '前往设置接入' })).toBeNull();
+  });
+});
+
+describe('截止日标记的三档（逾期 / 临期 / 更远）', () => {
+  /** today + n 天的 YYYY-MM-DD（与列表页读的是同一个「今天」） */
+  function inDays(n: number): string {
+    const t = new Date();
+    const d = new Date(t.getFullYear(), t.getMonth(), t.getDate() + n);
+    const pad = (x: number) => String(x).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  }
+
+  /** 渲染三条任务：昨天到期 / 一周后到期 / 远期到期，返回各自的截止日 Chip 根元素 */
+  async function renderThree(): Promise<Record<'overdue' | 'soon' | 'far', HTMLElement>> {
+    const items: Item[] = [
+      makeItem({ id: 11, title: '逾期的', due_date: inDays(-1) }),
+      makeItem({ id: 12, title: '快到期的', due_date: inDays(7) }),
+      makeItem({ id: 13, title: '还早的', due_date: inDays(DUE_SOON_DAYS + 10) }),
+    ];
+    vi.stubGlobal('fetch', vi.fn(async () => json({ items })));
+    render(
+      <MemoryRouter useTransitions={false}>
+        <TasksPage />
+      </MemoryRouter>,
+    );
+    await screen.findByText('逾期的');
+
+    const chipOf = (title: string): HTMLElement => {
+      const row = screen.getByText(title).closest('li') as HTMLElement;
+      const chip = within(row)
+        .getAllByText(/月\d{1,2}日$/)[0]
+        .closest('.MuiChip-root');
+      expect(chip, `${title} 应有截止日标记`).not.toBeNull();
+      return chip as HTMLElement;
+    };
+    return { overdue: chipOf('逾期的'), soon: chipOf('快到期的'), far: chipOf('还早的') };
+  }
+
+  it('逾期用实心主色（梅），不再用语义 error 色', async () => {
+    const { overdue } = await renderThree();
+    expect(overdue.className).toMatch(/MuiChip-colorPrimary/);
+    expect(overdue.className).toMatch(/MuiChip-filled/);
+    expect(overdue.className).not.toMatch(/colorError/);
+  });
+
+  it('今天起 DUE_SOON_DAYS 天内到期用描边主色：与逾期同色系，但分得出轻重', async () => {
+    const { soon } = await renderThree();
+    expect(soon.className).toMatch(/MuiChip-colorPrimary/);
+    expect(soon.className).toMatch(/MuiChip-outlined/);
+  });
+
+  it('更远的截止日保持中性：不让所有带截止日的条目糊成一片红', async () => {
+    const { far } = await renderThree();
+    expect(far.className).not.toMatch(/MuiChip-colorPrimary/);
   });
 });

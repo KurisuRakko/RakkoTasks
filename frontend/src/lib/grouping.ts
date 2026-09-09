@@ -75,6 +75,24 @@ export function isNewToday(item: Item, today: Date): boolean {
   return sent >= start && sent < end;
 }
 
+/** 截止日「快到了」的天数窗口：今天起 DUE_SOON_DAYS 天内到期算临期。 */
+export const DUE_SOON_DAYS = 15;
+
+/**
+ * 条目是否临期（due_date 非空、尚未逾期、且在今天起 DUE_SOON_DAYS 天内到期）。
+ * 与 isOverdue 互斥：已过截止日的走 isOverdue，这里只管「还没到但快到了」，
+ * 两者在列表行里分别对应实心与描边的主色标记。
+ */
+export function isDueSoon(item: Item, today: Date): boolean {
+  if (!item.due_date) return false;
+  const due = parseDueDate(item.due_date);
+  if (Number.isNaN(due.getTime())) return false;
+  const t = startOfDay(today);
+  if (due.getTime() < t.getTime()) return false; // 已逾期，归 isOverdue
+  const limit = new Date(t.getFullYear(), t.getMonth(), t.getDate() + DUE_SOON_DAYS);
+  return due.getTime() <= limit.getTime();
+}
+
 function startOfDay(d: Date): Date {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate());
 }

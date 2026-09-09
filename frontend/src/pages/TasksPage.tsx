@@ -33,7 +33,7 @@ import Stack from '@mui/material/Stack';
 import Typography from '@mui/material/Typography';
 import AddIcon from '@mui/icons-material/Add';
 import { createItem, fetchItems, fetchStatus, parseTask, patchItem, quickAddTask } from '../lib/api';
-import { formatDueDate, groupItems, isNewToday, isOverdue } from '../lib/grouping';
+import { formatDueDate, groupItems, isDueSoon, isNewToday, isOverdue } from '../lib/grouping';
 import { moveItem, openKey, removeItem, upsertOpenItem, useCachedList } from '../lib/list-cache';
 import {
   LEAVE_DURATION,
@@ -86,6 +86,15 @@ type Snack = { text: string; item: Item | null };
 /** 行右键 / 长按菜单的弹出位置（视口坐标） */
 type Point = { x: number; y: number };
 
+/** 行内元信息标签：比 MUI 的 size="small"（24px / 13px）再小一档。标签竖着排在行
+ *  右侧，尺寸不压下来会把一条任务撑成一小段楼梯；字号取 caption 档，label 左右
+ *  内边距收到 6px。 */
+const META_CHIP_SX = {
+  height: 20,
+  fontSize: '0.6875rem',
+  '& .MuiChip-label': { px: 0.75 },
+} as const;
+
 /** 单行任务（拆成独立组件：长按 hook 需要逐行一份实例，不能放在 map 的循环体里） */
 function TaskRow({
   item,
@@ -135,15 +144,18 @@ function TaskRow({
         sx={[
           cardRowSx(),
           {
-            // 行内是两段竖排 grid：第一行 蓝点列(12px) / 勾选列(auto) / 标题+摘要(1fr)，
-            // 第二行 chips 独占整行。chips 从标题右侧挪走后不再与标题抢宽度——窄屏下
-            // 标题此前被右侧整组标签（flexShrink: 0）挤成竖排碎行，现在标题与摘要
-            // 吃满整行，chips 放不下时在自己行内换行。
+            // 行内是四列单行 grid：蓝点(12px) / 勾选(auto) / 标题+摘要(可收缩 1fr) /
+            // 元信息列(按内容，有硬上限)。标签此前独占第二行，可绝大多数条目只有一两个
+            // 标签——整整一行高度里九成是空的。改成竖着码在行右侧后那段留白消失，行高
+            // 由标题决定。标题列写 minmax(0, 1fr) 而不是 1fr：grid 项默认 min-width
+            // 是 auto，不写 minmax(0,…) 的话长标题会把自己撑出去、反过来挤扁元信息列。
+            // 元信息列的 maxWidth 是标题不被挤碎的保证（此前那版把整组标签
+            // flexShrink: 0 放在标题右侧，窄屏上标题被挤成竖排碎字，不能退回去）。
             display: 'grid',
-            gridTemplateColumns: '12px auto 1fr',
-            gridTemplateAreas: '"dot cb text" ". . chips"',
+            gridTemplateColumns: '12px auto minmax(0, 1fr) auto',
+            gridTemplateAreas: '"dot cb text meta"',
             alignItems: 'start',
-            rowGap: '6px',
+            columnGap: '8px',
             // 长按行体时 iOS 会弹系统文本选择菜单（触摸保持 500ms 即触发），行内文字
             // 也不是可选中文本——userSelect 与 WebkitTouchCallout 一并关掉，长按只走
             // 我们自己的手势（合并进 cardRowSx 的 sx 数组，surface.ts 不动）
@@ -199,34 +211,39 @@ function TaskRow({
             },
           }}
         />
-        {/* 标签成组：chips 独占两段 grid 的第二行（gridArea: 'chips'），不再与标题
-            同排抢宽度；放不下时在行内自行换行（flexWrap + rowGap），不会挤回标题行 */}
+        {/* 元信息竖着码在行右侧（gridArea: 'meta'）：一条任务通常只有一两个标签，
+            让它们独占一整行等于为一个小标签空出整行高度。竖排后不占额外行高，
+            右侧那段留白也没了。maxWidth 是标题的护栏——超出就在列内换行，
+            绝不让标签把标题挤成碎字。 */}
         <Stack
-          direction="row"
-          spacing={0.5}
-          alignItems="center"
-          sx={{ gridArea: 'chips', flexWrap: 'wrap', rowGap: '4px' }}
+          spacing="3px"
+          alignItems="flex-end"
+          sx={{ gridArea: 'meta', maxWidth: '8.5rem', flexWrap: 'wrap' }}
         >
           {item.importance === 'high' && (
-            <Chip
-              label="重要"
-              color="warning"
-              size="small"
-              variant="outlined"
-            />
+            <Chip label="重要" color="warning" size="small" variant="outlined" sx={META_CHIP_SX} />
           )}
-          <Chip label={item.category} size="small" variant="outlined" />
+          <Chip label={item.category} size="small" variant="outlined" sx={META_CHIP_SX} />
           {item.due_date && (
+            // 截止日的三档：已逾期实心主色（梅），今天起 DUE_SOON_DAYS 天内到期
+            // 描边主色，更远的走中性——两档都是主色，快到期与已过期一眼能挑出来，
+            // 又不至于让所有带截止日的条目糊成一片红。
             <Chip
               label={formatDueDate(item.due_date)}
               size="small"
-              color={isOverdue(item, today) ? 'error' : 'default'}
+              sx={META_CHIP_SX}
+              {...(isOverdue(item, today)
+                ? { color: 'primary' as const }
+                : isDueSoon(item, today)
+                  ? { color: 'primary' as const, variant: 'outlined' as const }
+                  : {})}
             />
           )}
           {reminder && (
             <Chip
               label={reminder.label}
               size="small"
+              sx={META_CHIP_SX}
               aria-label={`提醒 ${reminder.text}`}
             />
           )}
