@@ -89,8 +89,13 @@ type Point = { x: number; y: number };
 /** 行内元信息标签：比 MUI 的 size="small"（24px / 13px）再小一档。标签竖着排在行
  *  右侧，尺寸不压下来会把一条任务撑成一小段楼梯；字号取 caption 档，label 左右
  *  内边距收到 6px。 */
+const META_CHIP_H = 20;
+const META_CHIP_GAP = '3px';
+/** 元信息列最多两行标签，超出折到第二列（column 方向的 flexWrap 靠限高触发） */
+const META_ROWS_MAX_H = `${META_CHIP_H * 2 + 3}px`;
+
 const META_CHIP_SX = {
-  height: 20,
+  height: META_CHIP_H,
   fontSize: '0.6875rem',
   '& .MuiChip-label': { px: 0.75 },
 } as const;
@@ -211,14 +216,21 @@ function TaskRow({
             },
           }}
         />
-        {/* 元信息竖着码在行右侧（gridArea: 'meta'）：一条任务通常只有一两个标签，
-            让它们独占一整行等于为一个小标签空出整行高度。竖排后不占额外行高，
-            右侧那段留白也没了。maxWidth 是标题的护栏——超出就在列内换行，
-            绝不让标签把标题挤成碎字。 */}
+        {/* 元信息码在行右侧（gridArea: 'meta'）：一条任务通常只有一两个标签，让它们
+            独占一整行等于为一个小标签空出整行高度，右边九成是留白。
+            竖着排，超过两个就折成第二列（column + wrap + maxHeight）——column 方向的
+            flexWrap 只有在容器限高时才生效，不写 maxHeight 那条 wrap 就是死配置，
+            四个标签会排成一列把行撑成一段楼梯。META_ROWS_MAX_H = 2 行标签 + 行距。
+            maxWidth 是标题的护栏：绝不让标签把标题挤成碎字。 */}
         <Stack
-          spacing="3px"
+          spacing={META_CHIP_GAP}
           alignItems="flex-end"
-          sx={{ gridArea: 'meta', maxWidth: '8.5rem', flexWrap: 'wrap' }}
+          sx={{
+            gridArea: 'meta',
+            flexWrap: 'wrap',
+            maxHeight: META_ROWS_MAX_H,
+            maxWidth: '8.5rem',
+          }}
         >
           {item.importance === 'high' && (
             <Chip label="重要" color="warning" size="small" variant="outlined" sx={META_CHIP_SX} />

@@ -508,6 +508,10 @@ describe('列表行布局（标签竖排在右侧，且不挤压标题）', () =
     expect(rule, '标签竖着码，不是横着一长排').not.toContain('flex-direction:row');
     expect(rule, 'maxWidth 是标题的护栏：标签再多也不许吃掉标题的宽度').toContain('max-width:8.5rem');
     expect(rule, '不许回到用 flexShrink: 0 抢宽度的老写法').not.toContain('flex-shrink:0');
+    // column 方向的 flexWrap 只有容器限高时才生效：光写 wrap 不写 maxHeight 是死配置，
+    // 四个标签会排成一列把行撑成一段楼梯
+    expect(rule, '超过两个标签要折成第二列').toContain('flex-wrap:wrap');
+    expect(rule, 'wrap 靠限高触发，不写 maxHeight 那条 wrap 不生效').toContain('max-height:43px');
   });
 
   it('标签比 MUI 的 small 再小一档：竖排时不把行撑成一段楼梯', async () => {
