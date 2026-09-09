@@ -73,9 +73,9 @@ type Snack = { text: string; item: Item | null };
 /** 行右键 / 长按菜单的弹出位置（视口坐标） */
 type Point = { x: number; y: number };
 
-/** 行内元信息标签：比 MUI 的 size="small"（24px / 13px）再小一档。标签竖着排在行
- *  右侧，尺寸不压下来会把一条任务撑成一小段楼梯；字号取 caption 档，label 左右
- *  内边距收到 6px。 */
+/** 行内元信息标签：比 MUI 的 size="small"（24px / 13px）再小一档。标签横排在标题
+ *  首行右侧，高度（20px）必须不超过 TITLE_LINE_H（22）才能与首行压在同一条中线上，
+ *  不把行撑高；字号取 caption 档，label 左右内边距收到 6px。 */
 const META_CHIP_H = 20;
 const META_CHIP_GAP = '3px';
 
@@ -139,12 +139,12 @@ function TaskRow({
           cardRowSx(),
           {
             // 行内是四列单行 grid：今日点(12px) / 勾选(auto) / 标题+摘要(可收缩 1fr) /
-            // 元信息列(按内容，有硬上限)。标签此前独占第二行，可绝大多数条目只有一两个
-            // 标签——整整一行高度里九成是空的。改成竖着码在行右侧后那段留白消失，行高
-            // 由标题决定。标题列写 minmax(0, 1fr) 而不是 1fr：grid 项默认 min-width
-            // 是 auto，不写 minmax(0,…) 的话长标题会把自己撑出去、反过来挤扁元信息列。
-            // 元信息列的 maxWidth 是标题不被挤碎的保证（此前那版把整组标签
-            // flexShrink: 0 放在标题右侧，窄屏上标题被挤成竖排碎字，不能退回去）。
+            // 元信息列(按内容)。标签此前独占第二行，可绝大多数条目只有一两枚
+            // chip——整整一行高度里九成是空的。改成横排在标题首行右侧后那段留白消失，
+            // 行高由标题决定。标题列写 minmax(0, 1fr) 而不是 1fr：grid 项默认
+            // min-width 是 auto，不写 minmax(0,…) 的话长标题会把自己撑出去、反过来
+            // 挤扁元信息列（此前那版把整组标签 flexShrink: 0 放在标题右侧，窄屏上
+            // 标题被挤成竖排碎字，不能退回去）。
             display: 'grid',
             gridTemplateColumns: '12px auto minmax(0, 1fr) auto',
             gridTemplateAreas: '"dot cb text meta"',
@@ -155,6 +155,9 @@ function TaskRow({
             // 我们自己的手势（合并进 cardRowSx 的 sx 数组，surface.ts 不动）
             WebkitTouchCallout: 'none',
             userSelect: 'none',
+            // ListItemButton 默认竖向内边距 8px 压到 6px（写字符串 px，MUI 数字会乘
+            // spacing 单位）：行内容自身已经定高，省下的 4px 直接转成每屏多几行。
+            py: '6px',
           },
         ]}
         onClick={() => onOpen(item)}
@@ -219,31 +222,27 @@ function TaskRow({
             },
           }}
         />
-        {/* 元信息码在行右侧（gridArea: 'meta'）：一条任务通常只有一两个标签，让它们
-            独占一整行等于为一个小标签空出整行高度，右边九成是留白。标签单列竖排，
-            右对齐（alignItems: flex-end）。
-            不许再折成第二列——column 方向的 flexWrap 只受容器限高触发，折叠后的
-            视觉阅读顺序（重要 → 分类 → 截止）会与 DOM 顺序对不上，第一列剩下的标签
-            孤零零挂在左下、各行右边缘参差；而且 column-wrap 下 flex-shrink 作用在
-            主轴（竖向），两列宽度合计一旦超过 maxWidth 就直接顶出卡片右缘，横向
-            没有任何收缩机制兜底。就是这两条把折叠列写法判了死刑。
-            maxWidth: 8.5rem 现在纯粹是标题的护栏：分类全是两个汉字（约 33px），
-            截止 chip 最宽的是 12月31日（约 47px），没有任何 chip 逼近 119px
-            （htmlFontSize: 14 下 8.5rem 的实际宽度）。也不许回到更老的「整组标签
-            flexShrink: 0 放标题右侧」，窄屏上标题会被挤成竖排碎字。 */}
+        {/* 元信息横排在标题首行右侧（gridArea: 'meta'）：一条任务最多两枚 chip——
+            「重要」约 40px、最宽的截止日 12月31日约 47px，加 3px 间隙 ≈ 90px，宽度由
+            内容自然封顶，不需要 maxWidth 护栏，列宽交给 grid 的 auto。盒高取
+            TITLE_LINE_H（22）：与今日点、勾选框共用「标题首行」这条中线，chip 以
+            20px 居中压在同一条线上。分类不在这里重复显示——顶部的 CategoryChips
+            过滤器已经承担分类切换，行内再放一枚只占高度、没有信息量。
+            不许回到更老的「整组标签 flexShrink: 0 放标题右侧」，窄屏上标题会被挤成
+            竖排碎字。 */}
         <Stack
           // useFlexGap：不开它的话，MUI 把 spacing 编译成后代选择器隔空改写子元素
           // ——相邻兄弟逐个加 marginTop、其余一律重置 margin: 0（防双重叠加），
           // 每个 chip 的 margin 都会被盖掉；写在容器上的 gap 才是直接机制。
           useFlexGap
           spacing={META_CHIP_GAP}
-          alignItems="flex-end"
-          sx={{ gridArea: 'meta', maxWidth: '8.5rem' }}
+          direction="row"
+          alignItems="center"
+          sx={{ gridArea: 'meta', height: TITLE_LINE_H }}
         >
           {item.importance === 'high' && (
             <Chip label="重要" color="warning" size="small" variant="outlined" sx={META_CHIP_SX} />
           )}
-          <Chip label={item.category} size="small" variant="outlined" sx={META_CHIP_SX} />
           {/* 截止日的三档配色与读屏文案收在 DueChip，详情对话框用的是同一个组件 */}
           <DueChip item={item} today={today} sx={META_CHIP_SX} />
         </Stack>
