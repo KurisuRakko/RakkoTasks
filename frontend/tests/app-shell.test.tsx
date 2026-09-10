@@ -15,7 +15,7 @@ import { MemoryRouter } from 'react-router-dom';
 import AppShell from '../src/components/AppShell';
 import { ThemeModeProvider } from '../src/lib/theme-mode';
 import { NAV_ITEMS } from '../src/lib/nav';
-import { ACCENT, NEUTRAL_LIGHT } from '../src/rakko-tokens';
+import { ACCENT, GLASS_NAV_RAIL_LIGHT, NEUTRAL_LIGHT } from '../src/rakko-tokens';
 import { VT_SHELL_ATTR, VT_NAMES } from '../src/lib/view-transition';
 import { setWallpaper } from '../src/lib/wallpaper';
 import { AppThemeProvider, allStyleText } from './glass-text-contrast.test-utils';
@@ -384,5 +384,93 @@ describe('底栏未选中标签文字色（chrome 玻璃上没有次级色的守
     expect(allStyleText()).toContain(
       `MuiBottomNavigationAction-root.Mui-selected{color:${ACCENT.light}`,
     );
+  });
+});
+
+// 桌面常驻侧栏的浅色削白改写：值是 rakko-tokens 的 GLASS_NAV_RAIL_LIGHT，落点是 AppShell
+// 的 navRailGlassSx（挂在那块 permanent Drawer 的 paper 上，不是 :root）。chrome 档同时是
+// 顶栏、侧栏、移动底栏三块表面，改 :root 会连带改掉手机端的两块；本组把「改写只落在侧栏
+// 且只在浅色下」钉死。观感是否「不再发白」要由真机判定，这里只锁作用范围与变量值。
+describe('桌面侧栏浅色削白（只动侧栏那一块 chrome）', () => {
+  // jsdom 给不出真实渲染，玻璃变量走 emotion 规则文本。Drawer paper 的样式分在多个
+  // css-* 类上（styled 一个、sx 一个），只取第一个类不够 —— 把元素身上全部 css-* 类
+  // 对应规则块拼起来再查（写法同 tasks-page.test.tsx 的 ownRules）。
+
+  /** 元素身上全部 css-* 局部类对应规则块的拼接 */
+  function ownRules(css: string, el: Element): string {
+    return Array.from(el.classList)
+      .filter((c) => c.startsWith('css-'))
+      .map((c) => {
+        const start = css.indexOf(`.${c}{`);
+        if (start < 0) return '';
+        const end = css.indexOf('}', start);
+        return end < 0 ? '' : css.slice(start, end);
+      })
+      .join(' ');
+  }
+
+  afterEach(() => {
+    // theme-mode 是 localStorage 持久化的三态：不清会让后续用例跟着停在深色
+    localStorage.clear();
+  });
+
+  it('浅色桌面：侧栏 paper 的规则文本里是削白后的三个白值', async () => {
+    installDesktopMedia();
+    renderRealThemeShell(SHELL_ITEMS);
+    await screen.findByText('任务一');
+
+    // 期望串从 token 拼出而不是手抄字面量：改了 token 这里跟着变，不会两边各说各话
+    const rule = ownRules(allStyleText(), drawerPaper());
+    for (const [key, value] of Object.entries(GLASS_NAV_RAIL_LIGHT)) {
+      expect(rule, `侧栏 paper 应重声明 ${key}`).toContain(`${key}:${value}`);
+    }
+  });
+
+  it('浅色桌面：侧栏 paper 不带暗端与纸色变量（改写范围只有三个白）', async () => {
+    installDesktopMedia();
+    renderRealThemeShell(SHELL_ITEMS);
+    await screen.findByText('任务一');
+
+    const rule = ownRules(allStyleText(), drawerPaper());
+    for (const forbidden of [
+      '--glass-sheen-3',
+      '--glass-rim-inner',
+      '--glass-panel-opacity',
+      '--glass-surface-opacity',
+    ]) {
+      expect(rule, `侧栏改写不许带 ${forbidden}`).not.toContain(forbidden);
+    }
+  });
+
+  it('深色桌面：侧栏 paper 不带任何 --glass- 重声明', async () => {
+    // 深底本身自带暗侧，那套 sheen（13%/5%）振幅已经够低，不需要再削
+    localStorage.setItem('rakkotasks.theme-mode', 'dark');
+    installDesktopMedia();
+    renderRealThemeShell(SHELL_ITEMS);
+    await screen.findByText('任务一');
+
+    expect(ownRules(allStyleText(), drawerPaper())).not.toContain('--glass-');
+  });
+
+  it('削白只落在桌面侧栏：顶栏与底栏的规则文本都不含 sheen-1', async () => {
+    installDesktopMedia();
+    renderRealThemeShell(SHELL_ITEMS);
+    await screen.findByText('任务一');
+
+    // 顶栏与侧栏同挂 data-glass="chrome"，但顶栏必须原样：它背后是内容、没有满屏高的
+    // 白纱问题，且 AppBar 与移动端顶栏是同一个组件。
+    expect(
+      ownRules(allStyleText(), appBar()),
+      '顶栏是同档 chrome，不许吃侧栏的改写',
+    ).not.toContain('--glass-sheen-1');
+
+    // 底栏 Paper 无条件在 DOM 里，断点只影响它的 display，所以同一次渲染就能取到；
+    // 顶栏与底栏同挂 chrome，必须都拿不到侧栏的改写
+    const bottomNav = document.querySelector('.MuiBottomNavigation-root');
+    expect(bottomNav).not.toBeNull();
+    expect(
+      ownRules(allStyleText(), bottomNav!.parentElement!),
+      '底栏不许吃侧栏的改写',
+    ).not.toContain('--glass-sheen-1');
   });
 });
