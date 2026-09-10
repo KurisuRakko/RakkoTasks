@@ -26,11 +26,14 @@ import SettingsIcon from '@mui/icons-material/Settings';
 import Toolbar from '@mui/material/Toolbar';
 import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
+import type { Theme } from '@mui/material/styles';
+import type { SystemStyleObject } from '@mui/system';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import { useTransitionNavigate } from '../lib/motion';
 import { CONTENT_MAX_WIDTH, DRAWER_WIDTH } from '../lib/layout';
 import { NAV_ITEMS, navIndexOf } from '../lib/nav';
 import { shellAttr, VT_NAMES } from '../lib/view-transition';
+import { GLASS_NAV_RAIL_LIGHT } from '../rakko-tokens';
 import RouteTransition from './RouteTransition';
 import TasksPage from '../pages/TasksPage';
 import SearchPage from '../pages/SearchPage';
@@ -57,13 +60,23 @@ function titleFor(pathname: string): string {
   return navIndex === -1 ? '设置' : TITLES[navIndex];
 }
 
+/** 侧栏 paper 的浅色削白改写（值与理由见 rakko-tokens 的 GLASS_NAV_RAIL_LIGHT）。
+ *  改写挂在这一块 paper 上而不是 :root——chrome 档同时是顶栏、侧栏与移动底栏三块表面，
+ *  改全局会一起改掉手机端的两块。自定义属性在元素上重声明即可覆盖 :root 的继承值，
+ *  这是本仓已有的做法（见 SearchPage / TasksPage 的 --glass-haze-bleed）。
+ *  深色主题返回空对象：深底自带暗侧，那套 sheen 振幅已经够低。 */
+const navRailGlassSx: (theme: Theme) => SystemStyleObject<Theme> = (theme) =>
+  theme.palette.mode === 'light' ? { ...GLASS_NAV_RAIL_LIGHT } : {};
+
 /** 桌面抽屉 paper 的壳层属性：转场持名标记（何时持名由样式层按转场种类决定）+
  *  常驻 chrome 玻璃（侧边栏是常驻 chrome，身后是壁纸，材质由 rakko-glass.css 的
  *  chrome 档提供；主题层已让位）。chrome 档的发丝线在下缘、方向对不上侧边栏——
- *  右边框仍由主题层的 MuiDrawer.paper 提供（那条已经在，不要动）。 */
+ *  右边框仍由主题层的 MuiDrawer.paper 提供（那条已经在，不要动）。
+ *  sx 是上面那块常驻侧栏专属的削白改写；把组合收在这里，render 里不再新建对象。 */
 const NAV_DRAWER_PAPER_PROPS = {
   ...shellAttr(VT_NAMES.navDrawer),
   'data-glass': 'chrome',
+  sx: navRailGlassSx,
 } as const;
 
 export default function AppShell() {

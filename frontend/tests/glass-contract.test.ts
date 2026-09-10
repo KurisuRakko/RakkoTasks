@@ -13,7 +13,7 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import themeTs from '../src/theme.ts?raw';
-import { GLASS, GLASS_AERO } from '../src/rakko-tokens';
+import { GLASS, GLASS_AERO, GLASS_NAV_RAIL_LIGHT } from '../src/rakko-tokens';
 
 interface DirentLike {
   name: string;
@@ -385,5 +385,84 @@ describe('玻璃可读性契约', () => {
   it('GLASS_AERO 的 light / dark 键集完全一致', () => {
     // 十二个键一个不少：防止将来加 token 只加一边，两套配方错位。
     expect(Object.keys(GLASS_AERO.dark)).toEqual(Object.keys(GLASS_AERO.light));
+  });
+});
+
+// 桌面常驻侧栏（permanent Drawer，data-glass="chrome"）的浅色削白改写：上游只为 ~64px
+// 高的顶栏定义了 chrome 档，光泽止点写成 45% 百分比；同一配方落在满屏高的侧栏上，那道
+// 分界横穿屏幕中线，上半屏成一层白纱。改写集中在 GLASS_NAV_RAIL_LIGHT（落点是 AppShell
+// 的 navRailGlassSx，作用范围由 app-shell.test.tsx 守卫）。本组钉的是「削了什么」与
+// 「什么没被顺手削掉」——观感要由真机判定，文本只能钉住这几条不变量。
+describe('桌面侧栏浅色削白契约', () => {
+  /** rgba(...) 尾部的 alpha：'rgba(255, 255, 255, 0.12)' → 0.12；非法写法直接判失败 */
+  function alphaOf(color: string): number {
+    const m = color.match(/[\d.]+(?=\)$)/);
+    expect(m, `${color} 应是以 alpha 收尾的 rgba()`).not.toBeNull();
+    return parseFloat(m![0]);
+  }
+
+  it('改写恰好是三个白（sheen-1 / sheen-2 / lip），值逐字写死', () => {
+    // 键集逐字相等而不是「包含」：多出一个键就说明动了本次范围外的层（暗端 / 纸色 / rim）。
+    expect(Object.keys(GLASS_NAV_RAIL_LIGHT).sort()).toEqual([
+      '--glass-lip',
+      '--glass-sheen-1',
+      '--glass-sheen-2',
+    ]);
+    expect(GLASS_NAV_RAIL_LIGHT['--glass-sheen-1']).toBe('rgba(255, 255, 255, 0.12)');
+    expect(GLASS_NAV_RAIL_LIGHT['--glass-sheen-2']).toBe('rgba(255, 255, 255, 0.05)');
+    expect(GLASS_NAV_RAIL_LIGHT['--glass-lip']).toBe('rgba(255, 255, 255, 0.22)');
+  });
+
+  it('改写不含暗端与纸色键：削白不许顺手改纸色地板或暗侧', () => {
+    // --glass-rim 不在此列是因为 chrome 配方根本不消费它（只有 panel 消费），动它等于
+    // 动每一行列表卡片；其余四个键都是「削白」这个动作的越界对象。
+    const keys = Object.keys(GLASS_NAV_RAIL_LIGHT);
+    for (const forbidden of [
+      '--glass-sheen-3',
+      '--glass-rim-inner',
+      '--glass-panel-opacity',
+      '--glass-surface-opacity',
+      '--glass-haze-opacity',
+    ]) {
+      expect(keys, `${forbidden} 不在本次削白范围内`).not.toContain(forbidden);
+    }
+  });
+
+  it('三个白值都严格小于浅色原值（防手滑写成更白）', () => {
+    // 用 alpha 数值比较而不是字符串不等：写成更大的白会让侧栏比现状更白，正是这次要修的
+    // 反方向；「严格小于」把方向也钉住。
+    const pairs = [
+      ['--glass-sheen-1', GLASS_AERO.light.sheen1],
+      ['--glass-sheen-2', GLASS_AERO.light.sheen2],
+      ['--glass-lip', GLASS_AERO.light.lip],
+    ] as const;
+    for (const [key, original] of pairs) {
+      expect(
+        alphaOf(GLASS_NAV_RAIL_LIGHT[key]),
+        `${key} 应比 GLASS_AERO.light 的同名原值更弱`,
+      ).toBeLessThan(alphaOf(original));
+    }
+  });
+
+  it('纸色 alpha 三档不变：削白不动可读性地板', () => {
+    // 58% / 52% / 55% 都是实测出来的 WCAG AA 地板（见上面几条 >= 用例的注释）；削白若
+    // 顺手把纸色一起降下来，整块玻璃的正文对比度跟着掉。这三条是本次改动的范围守卫。
+    expect(GLASS.panelOpacity).toBe('58%');
+    expect(GLASS.surfaceOpacity).toBe('52%');
+    expect(GLASS.hazeOpacity).toBe('55%');
+  });
+
+  it('暗端（sheen-3）与内暗边（rim-inner）不变', () => {
+    // 浅色玻璃的立体感来自显式的暗端：白纸底 + 白高光 + 白光泽三层全白时通篇没有暗的
+    // 一侧，会溶进亮壁纸。削白时把暗端一并削掉等于退回「浅色无暗侧」的老问题。
+    expect(GLASS_AERO.light.sheen3).toBe('rgba(0, 0, 0, 0.035)');
+    expect(GLASS_AERO.light.rimInner).toBe('rgba(0, 0, 0, 0.14)');
+  });
+
+  it('改写不落在 theme.ts：那会作用到将来任何 Drawer', () => {
+    // 落点必须是 AppShell 那一块常驻侧栏的 paper。写进 theme.ts 的 MuiDrawer.styleOverrides.paper
+    // 会连临时抽屉（以及将来任何 Drawer）一起改；这里只禁止把常量名带过去，不去扫
+    // --glass-sheen-1——theme.ts 本来就负责把那个变量下发到 :root。
+    expect(themeTs).not.toContain('GLASS_NAV_RAIL_LIGHT');
   });
 });
