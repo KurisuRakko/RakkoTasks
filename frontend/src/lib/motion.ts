@@ -7,7 +7,7 @@ import useMediaQuery from '@mui/material/useMediaQuery';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { MOTION } from '../rakko-tokens';
 import { routeDirection } from './nav';
-import { ROW_GAP_PX } from './surface';
+import { ROW_GAP_PX, ROW_MIN_HEIGHT_PX } from './surface';
 import { runViewTransition, VT_NAMES } from './view-transition';
 import type { SxProps } from '@mui/material';
 import type { Theme } from '@mui/material/styles';
@@ -76,7 +76,14 @@ export function rowSx(
     gridTemplateColumns: 'minmax(0, 1fr)',
     gridTemplateRows: leaving ? '0fr' : '1fr',
     opacity: leaving ? 0 : 1,
-    '& > *': { minHeight: 0, overflow: 'hidden' },
+    // 行的最小高度必须写在**这里**而不是行自己的 sx 上，原因和行间距做在
+    // padding-bottom 上是同一条：离场时 grid-template-rows 从 1fr 收到 0fr，子元素
+    // 只有 min-height: 0 才会真正被压扁；子元素若自带 min-height: 48px（ROW_MIN_HEIGHT_PX），
+    // 行会卡在 48px 收不干净。写成 leaving ? 0 : ROW_MIN_HEIGHT_PX 与同一函数里
+    // paddingBottom / gridTemplateRows 的写法完全一致，是既有模式的复用，不是新的特判。
+    // 另一个好处是只有一处声明，不存在「父的 & > * 与子自己的 sx 同特异性抢 min-height」
+    // 的层叠竞争。值本身见 surface.ROW_MIN_HEIGHT_PX。
+    '& > *': { minHeight: leaving ? 0 : `${ROW_MIN_HEIGHT_PX}px`, overflow: 'hidden' },
   };
   if (reduced) return box;
   // 入场动画只在「该列表首次拿到数据」且未离场时挂：两套动效同时作用于同一元素

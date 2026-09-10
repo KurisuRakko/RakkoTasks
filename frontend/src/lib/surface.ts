@@ -20,6 +20,12 @@ import { RADIUS } from '../rakko-tokens';
  *  间距做在 ListItem 的 padding 上（见 motion.rowSx），折叠收行高时一并收起。 */
 export const ROW_GAP_PX = 8;
 
+/** 列表行玻璃的最小高度（px）。8px 网格；无摘要的单行任务内容只有 22px，
+ *  6+22+6+2 的行看上去是一条扁带，且勾选框 42px 的触控盒会被行的 overflow: hidden
+ *  裁到与行等高（36px），够不到 44px。48px 让 42px 的勾选框完整落在行内，
+ *  行本身也成为 48px 的点击目标。带摘要的行自然高于它，此值对那些行无效。 */
+export const ROW_MIN_HEIGHT_PX = 48;
+
 /** 列表行玻璃的圆角：纸底 / 边框 / 高光 / 阴影归 data-glass="panel" 配方（见文件头），
  *  配方不管圆角，由这里补上 */
 export function cardRowSx(): SystemStyleObject<Theme> {

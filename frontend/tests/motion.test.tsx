@@ -7,7 +7,7 @@ import { createTheme, ThemeProvider } from '@mui/material/styles';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import { LEAVE_DURATION, rowSx, useMorphDialog, useTransitionNavigate } from '../src/lib/motion';
-import { ROW_GAP_PX } from '../src/lib/surface';
+import { ROW_GAP_PX, ROW_MIN_HEIGHT_PX } from '../src/lib/surface';
 import { MOTION } from '../src/rakko-tokens';
 import { VT_ATTR, VT_NAMES } from '../src/lib/view-transition';
 // ?raw：读源文件原文做「无 backdrop-filter」断言；tsconfig 无 @types/node，node:fs 不可用
@@ -203,6 +203,26 @@ describe('rowSx', () => {
   it('离场时 padding-bottom 与 grid-template-rows 同长同曲线：transition 含 padding-bottom', () => {
     const sx = rowSx(0, false, false, false) as Record<string, unknown>;
     expect(sx.transition).toContain('padding-bottom');
+  });
+
+  it('行最小高度做在 & > * 上并随离场归零：leaving=false 是 ROW_MIN_HEIGHT_PX，leaving=true 归零', () => {
+    const open = rowSx(0, false, false, false) as Record<string, Record<string, unknown>>;
+    expect(open['& > *'].minHeight).toBe(`${ROW_MIN_HEIGHT_PX}px`);
+    // 离场必须能收到 0：行高靠 grid-template-rows 从 1fr 收到 0fr 折叠，子元素若
+    // 自带 min-height: 48px，行会卡在 48px 收不干净，折叠后留一条 48px 空隙
+    const leaving = rowSx(0, true, false, false) as Record<string, Record<string, unknown>>;
+    expect(leaving['& > *'].minHeight).toBe(0);
+    // reduced 分支走的是同一个 box，离场同样要归零
+    const openReduced = rowSx(0, false, true, false) as Record<string, Record<string, unknown>>;
+    expect(openReduced['& > *'].minHeight).toBe(`${ROW_MIN_HEIGHT_PX}px`);
+    const leavingReduced = rowSx(0, true, true, true) as Record<string, Record<string, unknown>>;
+    expect(leavingReduced['& > *'].minHeight).toBe(0);
+    // 值本身：48 的来历是无摘要的单行任务内容只有 22px、行本身该是 48px 的点击目标，
+    // 且勾选框的盒高 24 + 9×2 = 42px 此前被行的 overflow: hidden 裁到与行等高
+    // （有效触控 36px），48px 让 42px 的勾选框完整落在行内。落在 8px 网格上是为了
+    // 与 ROW_GAP_PX（8）和 MUI 默认的 8px 竖向内边距对齐。
+    expect(ROW_MIN_HEIGHT_PX).toBe(48);
+    expect(ROW_MIN_HEIGHT_PX % 8).toBe(0);
   });
 
   it('reduced 分支同样带 paddingBottom：无动效时离场折叠也要收间距', () => {

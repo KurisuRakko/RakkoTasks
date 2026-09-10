@@ -488,21 +488,42 @@ CalDAV 例外：`/caldav/*` 与 `/.well-known/caldav` 不走上述 Bearer 中间
   编辑中不重排行（光标会乱跳），排序去重只发生在出参上。
 - `ItemEditor` 保存时**总是显式带上 `reminders`（哪怕是空数组）**：契约里省略 = 不改，
   省略会让「用户把最后一个提醒删掉再保存」变成静默无操作。
-- 列表行的标签（重要 / 分类 / 截止）**单列竖排右对齐**在行右侧的 meta 列，不独占整行：
-  一条任务通常只有一两个标签，给它们空出一整行等于九成宽度都是留白。行是单行四列
-  grid `"dot cb text meta"`，标题列写 `minmax(0, 1fr)`（grid 项默认 `min-width: auto`，
-  写 `1fr` 会让长标题撑出自己的列反过来挤扁 meta），meta 列 `maxWidth: 8.5rem` 是标题
-  不被挤碎的护栏——**不许**回到「整组标签 `flexShrink: 0` 放标题右侧」的老写法，那会把
-  窄屏标题挤成竖排碎字。标签尺寸比 MUI `size="small"` 再小一档（高 20px / 0.6875rem），
-  单列竖排才不会把行撑成一段楼梯。**不折成第二列、不设 `maxHeight`**——column 方向折列
-  的写法已删：折叠后视觉阅读顺序（重要 → 分类 → 截止）与 DOM 顺序对不上，第一列剩下的
-  标签孤零零挂在左下、各行右边缘参差；两列宽度合计还会超过 `maxWidth` 顶出卡片
-  （主题 `htmlFontSize`=14 时 8.5rem 实际只有 119px，column-wrap 的 flex-shrink 作用在
-  主轴竖向，横向没有任何收缩机制兜底）。`maxWidth` 如今是纯护栏：分类全是两个汉字
-  （约 33px），截止 chip 最宽「12月31日」（约 47px），没有 chip 逼近 119px。Stack 必须
-  开 `useFlexGap`：竖排间距直接写 `gap`；不开它的话 MUI 的 `spacing` 会退化成用
-  后代选择器隔空改子元素——相邻兄弟逐个加 `margin`，其余一律重置 `margin: 0`
-  防双重叠加。间距是容器上的直接属性，不该隔着容器改写每个 chip 的样式。
+- 列表行的标签（重要 / 截止）**横排**在行右侧的 meta 列，与标题首行共用同一条中线：行是
+  单行四列 grid `"dot cb text meta"`，meta 列的盒高取 `TITLE_LINE_H`（`TYPE_SCALE['copy-14']`
+  的行盒高，22px），今日点、勾选框、chip 三者都压在这条线上。标签此前独占一整行，可一条
+  任务通常只有一两枚 chip，给它们空出一整行等于九成宽度都是留白；改成横排后那段留白消失，
+  行高由标题决定。**行内不放分类 chip**——顶部的 `CategoryChips` 过滤器已承担分类切换，
+  行内再放一枚只占高度、没有信息量。标签尺寸比 MUI `size="small"` 再小一档（高 20px /
+  0.6875rem），才压得住这条 22px 的中线、不把行撑高。
+- 「谁让位」在行里是写死的：标题列 `minmax(0, 1fr)`，`ListItemText` 自身的收缩能力来自
+  MUI 根样式自带的 `min-width: 0`（本仓不重复声明，由 `tasks-page.test.tsx` 钉住）；
+  meta 列 `max-content`。两条合起来的语义是：**让位的永远是标题**——长标题自己换行、
+  让行长高（标题不设行数上限，待办标题是主信息，截断会让用户看不到自己写的东西；
+  `overflow-wrap: anywhere` 是给「一长串不含空格的西文 / URL 标题」补断点的）。
+- `max-content` 是「chip 不被压扁截断」的结构性保证：`auto` 轨道的最小尺寸是 min-content，
+  而 `.MuiChip-label` 带 `overflow: hidden`，它作为 flex 项的自动最小尺寸会解析成 0——窄宽度
+  下 chip 是可以被压成一个省略号的；`max-content` 轨道不可压缩，chip 拿到的永远是完整宽度，
+  被挤的只能是标题列。`maxWidth` 护栏已删（不再需要），按宽度分档的特判也不要有。不换行、
+  不纵向排列由 `flex-wrap: nowrap` 加 `direction="row"` 编译出的 `flex-direction: row` 写死
+  （两者都是默认值，但这一行的历史故障正出在 `flexWrap` 上，显式声明 + 守卫比依赖默认值可靠）。
+  历史上的两条死路仍然禁止：**不许折成两列**（column + wrap + `maxHeight`——视觉阅读顺序
+  与 DOM 顺序对不上，第一列剩下的标签挂在左下、各行右边缘参差，两列宽度合计还会顶出卡片），
+  **不许**把整组 chip 用 `flexShrink: 0` 摆在标题右侧（窄屏标题会被挤成一行碎字）。
+- 行有最小高度 `ROW_MIN_HEIGHT_PX`=48px（`lib/surface.ts`），写在 `motion.rowSx` 的 `& > *`
+  上、随离场归零：离场时 `grid-template-rows` 从 `1fr` 收到 `0fr`，子元素只有 `min-height: 0`
+  才会真正被压扁，子元素自带 48px 会让行卡在 48px 收不干净；写在一处也避开了「父的
+  `& > *` 与子自己的 sx 同特异性抢 min-height」的层叠竞争。账：无摘要的单行任务此前是
+  6(上内边距) + 22(标题) + 6(下内边距) + 2(上下边框) = 36px，现在内边距回到 MUI 默认 8px 是
+  8 + 22 + 8 + 2 = 40px、由最小高度抬到 48px；勾选框的盒高是 24px 图标 + 9px×2 padding = 42px，
+  此前被行的 `overflow: hidden` 裁到与行等高（有效触控只有 36px），现在完整落在行内，
+  有效触控 42px，行本身也是 48px 的点击目标。竖向内边距不再覆盖 6px：行高改由最小高度
+  决定后，那个值只对带摘要的多行行生效，而那恰恰是最需要留白的行。配 `alignContent: center`：
+  行只有一条隐式轨道时，富余高度让整条轨道居中，无摘要的单行任务因此不贴行顶；多行行的
+  轨道自然填满，这条声明对它无效。
+- chip 间距 `gap: 4px`（Rakko Design `CHEATSHEET.md` §Spacing & radius 的 `gap-1`
+  「inline icon ↔ text」一档；3px 不在任何间距梯度上）。Stack 必须开 `useFlexGap`：不开它的
+  话 MUI 的 `spacing` 会退化成用后代选择器隔空改子元素——相邻兄弟逐个加 `margin`，其余一律
+  重置 `margin: 0` 防双重叠加。间距是容器上的直接属性，不该隔着容器改写每个 chip 的样式。
 - 提醒 chip 已从列表行移除：提醒信息只在 `ItemDialog` 详情里的只读提醒列表完整展示，
   列表行只留截止信息。截止 chip 原样保留并收敛成 `components/DueChip`（列表行与详情
   对话框**共用同一个组件**，配色口径只有一处，不会两边分叉），分三档：**已逾期实心

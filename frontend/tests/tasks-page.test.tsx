@@ -445,7 +445,7 @@ describe('列表行玻璃视觉（cardRowSx）', () => {
   });
 });
 
-describe('列表行布局（标签竖排在右侧，且不挤压标题）', () => {
+describe('列表行布局（chip 恒横排在标题首行右侧，且不挤压标题）', () => {
   // jsdom 给不出 grid 布局的可靠 computed 值，布局断言走 emotion 规则文本：
   // sx 经 emotion 编译成 css-* 类规则插入 <style>，可逐字断言（utils 文件头说明）。
   // 行按钮的 sx 是数组（cardRowSx + 行布局对象），保险起见把元素上全部 css-* 类
@@ -479,9 +479,10 @@ describe('列表行布局（标签竖排在右侧，且不挤压标题）', () =
     const rule = ownRules(allStyleText(), rowBtn);
     expect(rule, '行内是 grid，不是单行 flex').toContain('display:grid');
     // 标题列必须是 minmax(0, 1fr)：grid 项默认 min-width 是 auto，写 1fr 会让长标题
-    // 撑出自己的列、反过来挤扁元信息列
-    expect(rule, '列 = 今日点 12px / 勾选 auto / 标题可收缩 / 元信息按内容').toContain(
-      'grid-template-columns:12px auto minmax(0, 1fr) auto',
+    // 撑出自己的列、反过来挤扁元信息列。meta 列必须是 max-content（不可压缩），
+    // 见下面「chip 不被压缩」那条用例
+    expect(rule, '列 = 今日点 12px / 勾选 auto / 标题可收缩 / 元信息按内容封顶').toContain(
+      'grid-template-columns:12px auto minmax(0, 1fr) max-content',
     );
     expect(rule, '单行四区：dot / cb / text / meta').toContain(
       'grid-template-areas:"dot cb text meta"',
@@ -489,7 +490,7 @@ describe('列表行布局（标签竖排在右侧，且不挤压标题）', () =
     expect(rule, '标签不再独占第二行').not.toContain('". . chips"');
   });
 
-  it('标签单列竖排右对齐在 meta 列，有 maxWidth 护住标题，不折叠、不回到 flexShrink: 0 挤标题的老路', async () => {
+  it('chip 恒横排在 meta 列并与标题首行同中线：任何宽度下不换行、不竖排、不被压缩', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => json({ items: ITEMS })));
     render(
       <MemoryRouter useTransitions={false}>
@@ -504,21 +505,129 @@ describe('列表行布局（标签竖排在右侧，且不挤压标题）', () =
     expect(stack).not.toBeNull();
     const rule = ownRules(allStyleText(), stack);
     expect(rule, '标签落在右侧元信息列').toContain('grid-area:meta');
-    // MUI Stack 默认 flex-direction: column，这里正是要竖排；断言它没有被改回横排
-    expect(rule, '标签竖着码，不是横着一长排').not.toContain('flex-direction:row');
-    expect(rule, '单列竖排右对齐').toContain('align-items:flex-end');
-    expect(rule, 'maxWidth 是标题的护栏：标签再多也不许吃掉标题的宽度').toContain('max-width:8.5rem');
+    // 方向恒为 row：MUI Stack 默认 flex-direction: column，这里是横排，不许被改回纵向
+    expect(rule, '标签横着码，不是一列竖着码').toContain('flex-direction:row');
+    expect(rule, '与今日点、勾选框共用标题首行中线').toContain('align-items:center');
+    // maxWidth 护栏已删：meta 列改由 grid 的 max-content 轨道封顶（不可压缩），
+    // 再挂一条 maxWidth 只会重新引入一个会压扁 chip 的上限
+    expect(rule, 'meta 列宽由内容封顶，不要 maxWidth 护栏').not.toContain('max-width');
     expect(rule, '不许回到用 flexShrink: 0 抢宽度的老写法').not.toContain('flex-shrink:0');
-    // 折成第二列（column + wrap + maxHeight）的写法已删：column 方向的 wrap 一旦换列，
+    // 折成两列（column + wrap + maxHeight）的写法已删：column 方向的 wrap 一旦换列，
     // 视觉阅读顺序与 DOM 顺序对不上，第一列剩下的标签孤零零挂在左下；且两列宽度合计
-    // 会超过 maxWidth 顶出卡片（htmlFontSize=14 下 maxWidth 只有 119px，column-wrap
-    // 横向没有收缩机制兜底）。这两条把折叠列判了死刑，不许回去。
-    expect(rule, '不许再折成第二列：视觉顺序 ≠ DOM 顺序').not.toContain('flex-wrap');
+    // 会顶出卡片。nowrap 是 flex 默认值，这里要的是它被显式写死（历史故障正出在
+    // flexWrap 上），所以断言的是具体声明而不是「不含 flex-wrap」。
+    expect(rule, '换行必须显式写死为 nowrap：不许再折成两列').toContain('flex-wrap:nowrap');
     expect(rule, '不许再写死限高触发折叠').not.toContain('max-height');
     // 间距断言按 gap 的实现写：useFlexGap 把 spacing 编译成容器上的 gap；不开它的
     // 话 MUI 会用后代选择器隔空改写子元素 margin（相邻兄弟逐个加、其余重置成 0）
-    expect(rule, '间距必须走 gap，不能是 margin').toContain('gap:3px');
-    expect(rule, '不许回到 margin 实现的 spacing').not.toContain('margin-top:3px');
+    expect(rule, '间距必须走 gap，不能是 margin').toContain('gap:4px');
+    expect(rule, '不许回到 margin 实现的 spacing').not.toContain('margin-top:4px');
+  });
+
+  it('chip 在任何视口宽度下都不被压扁截断：让宽度失去影响力的三条 CSS 不变量', async () => {
+    // jsdom 没有排版引擎，窗口宽度不影响这些值，所以不做「窄屏」用例，改钉三条结构性声明：
+    // 它们才是决定结果的东西——只要三条都在，chip 被压缩或换行在结构上就不可能发生，
+    // 与容器多宽无关。
+    vi.stubGlobal('fetch', vi.fn(async () => json({ items: ITEMS })));
+    render(
+      <MemoryRouter useTransitions={false}>
+        <TasksPage />
+      </MemoryRouter>,
+    );
+    await screen.findByText('重要任务');
+
+    const title = screen.getByText('重要任务');
+    const css = allStyleText();
+
+    // ① meta 轨道 max-content：不可压缩，chip 永远拿得到完整宽度。
+    //    写 auto 的话轨道最小尺寸是 min-content，而 .MuiChip-label 带 overflow: hidden，
+    //    它作为 flex 项的自动最小尺寸会解析成 0——chip 就会被压成一个省略号。
+    const rowBtn = title.closest('.MuiListItemButton-root') as HTMLElement;
+    const rowRule = ownRules(css, rowBtn);
+    expect(rowRule, 'meta 轨道不可压缩才谈得上不截断').toContain(
+      'grid-template-columns:12px auto minmax(0, 1fr) max-content',
+    );
+
+    // ② meta 容器 row + nowrap：方向与换行都不是默认值兜底，而是写死的声明
+    const chip = within(title.closest('li') as HTMLElement).getAllByText('重要')[0];
+    const stackRule = ownRules(css, chip.closest('.MuiStack-root') as HTMLElement);
+    expect(stackRule, '横排是写死的').toContain('flex-direction:row');
+    expect(stackRule, '不换行是写死的').toContain('flex-wrap:nowrap');
+
+    // ③ 标题列才是让位的那一方：轨道 minmax(0, 1fr) 能收缩，ListItemText 自身也得能
+    //    收缩到轨道下限。这条 min-width: 0 不是本仓写的，来自 MUI ListItemText 的根样式；
+    //    本仓不重复声明它（同值重复就是冗余），但标题让位依赖它，所以在这里钉住——
+    //    上游哪天删了，这条会红，那时再由本仓补上。
+    const textRule = ownRules(css, title.closest('.MuiListItemText-root') as HTMLElement);
+    expect(textRule, 'ListItemText 自己也得能收缩，否则 minmax(0,1fr) 是空转的').toContain(
+      'min-width:0',
+    );
+  });
+
+  it('行高有富余时整行内容居中：align-content:center，而列内对齐仍是 start', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => json({ items: ITEMS })));
+    render(
+      <MemoryRouter useTransitions={false}>
+        <TasksPage />
+      </MemoryRouter>,
+    );
+    await screen.findByText('重要任务');
+
+    const rowBtn = screen.getByText('重要任务').closest(
+      '.MuiListItemButton-root',
+    ) as HTMLElement;
+    const rule = ownRules(allStyleText(), rowBtn);
+    // 两件事别混：align-items 决定四列内部以标题首行对齐（今日点/勾选框/chip 的中线），
+    // align-content 决定单行隐式轨道在有富余高度时整体居中——无摘要的单行任务不贴行顶
+    expect(rule, '整条轨道在有富余高度时居中').toContain('align-content:center');
+    expect(rule, '列内仍以标题首行对齐，别被居中改掉').toContain('align-items:start');
+  });
+
+  it('行高改由 ROW_MIN_HEIGHT_PX 决定后，6px 竖向内边距魔数已删', async () => {
+    // 行高现在由 lib/surface 的 ROW_MIN_HEIGHT_PX（写在 motion.rowSx 的 & > * 上）决定，
+    // 那 4px 魔数没有存在理由；且 6px 不在 8px 网格上、也不在任何间距梯度里。
+    // 竖向内边距回到 ListItemButton 的 MUI 默认 8px。
+    vi.stubGlobal('fetch', vi.fn(async () => json({ items: ITEMS })));
+    render(
+      <MemoryRouter useTransitions={false}>
+        <TasksPage />
+      </MemoryRouter>,
+    );
+    await screen.findByText('重要任务');
+
+    const rowBtn = screen.getByText('重要任务').closest(
+      '.MuiListItemButton-root',
+    ) as HTMLElement;
+    const rule = ownRules(allStyleText(), rowBtn);
+    // 为什么必须用「恰好一条」而不是 toContain('padding-top:8px')：ListItemButton 的根样式
+    // 与行内 sx 落在同一个 css-* 类里，根样式无条件输出 padding-top:8px；sx 若再写
+    // py: '7px'，规则文本里是两条并存（后者生效），toContain('padding-top:8px') 照样为真
+    // ——那种断言防不住任何回归。改断「竖向内边距只允许 MUI 默认的 8px 这一条声明」：
+    // 任何 py 覆盖都会多出第二条 padding-top，6px / 7px / 10px 一律被抓到。
+    expect(rule.match(/padding-top:[^;]+/g), '竖向内边距只允许 MUI 默认的 8px 这一条声明').toEqual(
+      ['padding-top:8px'],
+    );
+    expect(rule.match(/padding-bottom:[^;]+/g), '同上').toEqual(['padding-bottom:8px']);
+  });
+
+  it('长标题让位给 chip：标题可任意断行，不会溢出压到 chip 上', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => json({ items: ITEMS })));
+    render(
+      <MemoryRouter useTransitions={false}>
+        <TasksPage />
+      </MemoryRouter>,
+    );
+    await screen.findByText('重要任务');
+
+    // overflow-wrap: anywhere 是给「一长串不含空格的西文 / URL 标题」补断点的：
+    // 中文本来能逐字换行，西文长串不给断点会直接溢出压到 chip 上。标题不设行数上限
+    // ——待办的标题是主信息，截断会让用户看不到自己写的东西。
+    const primary = screen
+      .getByText('重要任务')
+      .closest('.MuiListItemText-primary') as HTMLElement;
+    expect(primary, '找到的是标题的 primary Typography 节点').not.toBeNull();
+    const rule = ownRules(allStyleText(), primary);
+    expect(rule, '长串西文/URL 标题必须能在任意位置断行').toContain('overflow-wrap:anywhere');
   });
 
   it('行左侧今日点、勾选框与标题首行共用同一条中线', async () => {
@@ -568,7 +677,7 @@ describe('列表行布局（标签竖排在右侧，且不挤压标题）', () =
     expect(cbRootRule, '勾选框自身不许带 marginTop 魔数').not.toContain('margin-top');
   });
 
-  it('标签比 MUI 的 small 再小一档：竖排时不把行撑成一段楼梯', async () => {
+  it('标签比 MUI 的 small 再小一档：横排时高度不超过标题首行', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => json({ items: ITEMS })));
     render(
       <MemoryRouter useTransitions={false}>

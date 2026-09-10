@@ -77,7 +77,9 @@ type Point = { x: number; y: number };
  *  首行右侧，高度（20px）必须不超过 TITLE_LINE_H（22）才能与首行压在同一条中线上，
  *  不把行撑高；字号取 caption 档，label 左右内边距收到 6px。 */
 const META_CHIP_H = 20;
-const META_CHIP_GAP = '3px';
+// 间距取 Rakko Design CHEATSHEET §Spacing & radius 的 gap-1（4px，inline icon ↔ text）：
+// 同一行内相邻小元素就该用这一档；3px 不在任何间距梯度上，是随手写下的数。
+const META_CHIP_GAP = '4px';
 
 const META_CHIP_SX = {
   height: META_CHIP_H,
@@ -141,23 +143,37 @@ function TaskRow({
             // 行内是四列单行 grid：今日点(12px) / 勾选(auto) / 标题+摘要(可收缩 1fr) /
             // 元信息列(按内容)。标签此前独占第二行，可绝大多数条目只有一两枚
             // chip——整整一行高度里九成是空的。改成横排在标题首行右侧后那段留白消失，
-            // 行高由标题决定。标题列写 minmax(0, 1fr) 而不是 1fr：grid 项默认
-            // min-width 是 auto，不写 minmax(0,…) 的话长标题会把自己撑出去、反过来
-            // 挤扁元信息列（此前那版把整组标签 flexShrink: 0 放在标题右侧，窄屏上
-            // 标题被挤成竖排碎字，不能退回去）。
+            // 行高由标题决定。
+            //
+            // 元信息列写 max-content 而不是 auto，是「chip 不许被压扁截断」的结构性保证：
+            // auto 轨道的最小尺寸是 min-content，而 .MuiChip-label 带 overflow: hidden，
+            // 它作为 flex 项的自动最小尺寸会解析成 0——于是窄宽度下 chip 是可以被压成
+            // 一个省略号的。max-content 轨道不可压缩，chip 拿到的永远是完整宽度；被挤的
+            // 只能是标题列。宽度分档的特判不需要，也不该有。
+            //
+            // 标题列写 minmax(0, 1fr) 而不是 1fr：grid 项默认 min-width 是 auto，不写
+            // minmax(0,…) 的话长标题会把自己撑出去、反过来挤扁 meta 列（此前那版把整组
+            // 标签 flexShrink: 0 放在标题右侧，窄屏上标题被挤成竖排碎字，不能退回去）。
+            // ListItemText 自身能收缩到轨道下限靠的是 MUI 根样式自带的 min-width: 0，
+            // tasks-page 测试钉着它，上游若删掉那里会红。
             display: 'grid',
-            gridTemplateColumns: '12px auto minmax(0, 1fr) auto',
+            gridTemplateColumns: '12px auto minmax(0, 1fr) max-content',
             gridTemplateAreas: '"dot cb text meta"',
             alignItems: 'start',
+            // align-items: start 让四列内部都以标题首行对齐；align-content: center 管的是
+            // 另一件事——这里是单行隐式轨道，row-min-height 撑出富余高度时整条轨道居中，
+            // 无摘要的单行任务因此不会贴在行顶。多行行的轨道自然填满，这条声明对它们无效。
+            alignContent: 'center',
             columnGap: '8px',
             // 长按行体时 iOS 会弹系统文本选择菜单（触摸保持 500ms 即触发），行内文字
             // 也不是可选中文本——userSelect 与 WebkitTouchCallout 一并关掉，长按只走
             // 我们自己的手势（合并进 cardRowSx 的 sx 数组，surface.ts 不动）
             WebkitTouchCallout: 'none',
             userSelect: 'none',
-            // ListItemButton 默认竖向内边距 8px 压到 6px（写字符串 px，MUI 数字会乘
-            // spacing 单位）：行内容自身已经定高，省下的 4px 直接转成每屏多几行。
-            py: '6px',
+            // 竖向内边距不再覆盖：ListItemButton 的 MUI 默认值就是 8px，正好落在 8px
+            // 网格上。此前压到 6px 是想把行压矮，可行高现在由 ROW_MIN_HEIGHT_PX 决定，
+            // 6px 只对**带摘要的多行行**有效——而那恰恰是最需要留白的行，删掉。
+            // （6px 本身也不在任何间距梯度上。）
           },
         ]}
         onClick={() => onOpen(item)}
@@ -207,28 +223,41 @@ function TaskRow({
           primary={item.title}
           secondary={item.summary}
           sx={{ gridArea: 'text', margin: 0 }}
+          // 标题不设行数上限：待办的标题是主信息，截断会让用户看不到自己写的东西，
+          // 让它换行、让行长高即可。中文本来就能逐字换行，overflow-wrap: anywhere 是给
+          // 「一长串不含空格的西文 / URL 标题」的——不给断点它就会直接溢出压到 chip 上。
           // 摘要直接压在行自己的 data-glass="panel" 玻璃上（纸色 58% 仍透壁纸）：
           // MUI 默认给 secondary 的 text.secondary（n7）实测对比度只有 2.4–2.6，
           // 远低于 AA 正文的 4.5。玻璃上没有次级色空间，层级靠字号字重（标题
           // 16/600 vs 摘要 13/400），颜色必须取 text.primary（n9）
-          secondaryTypographyProps={{
-            color: 'text.primary',
-            sx: {
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              display: '-webkit-box',
-              WebkitLineClamp: 2,
-              WebkitBoxOrient: 'vertical',
+          // 走 slotProps 而不是那两个已弃用的旧转发 prop：MUI 6.5 给它们标了
+          // @deprecated、v7 移除，slotProps 是同一件事的现行写法。
+          slotProps={{
+            primary: { sx: { overflowWrap: 'anywhere' } },
+            secondary: {
+              color: 'text.primary',
+              sx: {
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                display: '-webkit-box',
+                WebkitLineClamp: 2,
+                WebkitBoxOrient: 'vertical',
+              },
             },
           }}
         />
         {/* 元信息横排在标题首行右侧（gridArea: 'meta'）：一条任务最多两枚 chip——
-            「重要」约 40px、最宽的截止日 12月31日约 47px，加 3px 间隙 ≈ 90px，宽度由
-            内容自然封顶，不需要 maxWidth 护栏，列宽交给 grid 的 auto。盒高取
+            「重要」约 40px、最宽的截止日 12月31日约 47px，加 4px 间隙 ≈ 91px，宽度由
+            内容自然封顶，列宽交给 grid 的 max-content，不需要 maxWidth 护栏。盒高取
             TITLE_LINE_H（22）：与今日点、勾选框共用「标题首行」这条中线，chip 以
             20px 居中压在同一条线上。分类不在这里重复显示——顶部的 CategoryChips
             过滤器已经承担分类切换，行内再放一枚只占高度、没有信息量。
-            不许回到更老的「整组标签 flexShrink: 0 放标题右侧」，窄屏上标题会被挤成
+
+            现在这个方向有三条写死的保证，各防一件事，缺一条就退回旧故障：
+            · 列宽 max-content（行按钮 sx，机制见那里）：chip 不被压扁截断；
+            · flex-wrap: nowrap（下面 sx）：chip 不换行、不折列，f429504 的两列故障不再可能；
+            · 标题列 minmax(0, 1fr) + ListItemText 根样式的 min-width: 0：让位的永远是标题。
+            更老的「整组标签 flexShrink: 0 摆在标题右侧」同样禁止：窄屏上标题会被挤成
             竖排碎字。 */}
         <Stack
           // useFlexGap：不开它的话，MUI 把 spacing 编译成后代选择器隔空改写子元素
@@ -238,7 +267,11 @@ function TaskRow({
           spacing={META_CHIP_GAP}
           direction="row"
           alignItems="center"
-          sx={{ gridArea: 'meta', height: TITLE_LINE_H }}
+          // nowrap 是 flex 的默认值，本来可以不写——但这一行的历史故障正出在这个属性上
+          // （f429504 就是在这里开了 wrap 折列）。写死并加守卫比依赖默认值可靠；
+          // direction="row" 已由 prop 编译出同一条声明，不在这里重复写 flexDirection。
+          // 也不加 flexShrink: 0：meta Stack 是 grid 项，flex-shrink 对它无效，是死声明。
+          sx={{ gridArea: 'meta', height: TITLE_LINE_H, flexWrap: 'nowrap' }}
         >
           {item.importance === 'high' && (
             <Chip label="重要" color="warning" size="small" variant="outlined" sx={META_CHIP_SX} />
