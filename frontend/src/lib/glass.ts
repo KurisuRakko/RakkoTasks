@@ -24,3 +24,11 @@ export const WALLPAPER_VAR = '--rtk-wallpaper';
  *  import 带模块级副作用的 wallpaper.tsx（模块加载即读 localStorage 并写 <html>），
  *  这是不必要的依赖方向。 */
 export const WALLPAPER_ATTR = 'data-wallpaper';
+
+/** 壁纸承载层的元素 id：index.html 里的一个真实 DOM 节点（不是伪元素）。
+ *  样式由主题层按 `#rtk-wallpaper` 下发，换页时的持名规则在 motion-styles 段 (g)。
+ *  必须是真实元素：View Transitions 的捕获循环只遍历「已连接的元素」
+ *  （css-view-transitions-1 §7.6），伪元素永远拿不到分组，写在 body::before 上的
+ *  view-transition-name 不生效，壁纸就只能焊死在 root 快照里跟着淡出。
+ *  id 在 index.html 里是手抄的（那边在模块系统之外），tests/wallpaper.test.tsx 断言两处一致。 */
+export const WALLPAPER_LAYER_ID = 'rtk-wallpaper';
