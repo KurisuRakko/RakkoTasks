@@ -1,18 +1,29 @@
 # RakkoTasks 部署运维手册
 
-面向 **Debian 12 + Docker + Cloudflare Tunnel** 的单机生产部署。
-架构：`web`（FastAPI，:8000，同时托管前端 SPA）+ `worker`（定时同步）+ `cloudflared`（隧道），
-数据落在宿主机 `data/` 目录（SQLite, WAL）。所有命令在**仓库根**执行。
+面向 **Debian 13 (trixie) + Docker + Cloudflare Tunnel** 的单机生产部署。
+架构：`web`（FastAPI，:8000，同时托管前端 SPA）+ `worker`（定时同步），
+数据落在宿主机 `data/` 目录（SQLite, WAL）。公网入口由**宿主机的 cloudflared
+systemd 服务**统一提供，不在本项目的 compose 内（见第 3 节）。
+所有命令在部署目录 **`/srv/rakkotasks`** 下执行。
 
 ---
 
 ## 1. 前置条件
 
-- Debian 12 服务器，已安装 Docker 与 Compose 插件：
+- Debian 13 (trixie) 服务器，已安装 Docker 与 Compose 插件。用 Docker **官方仓库**
+  的 `docker-ce` 套件，不要用 Debian 自带的 `docker.io`——后者版本老，且 compose 是
+  已 EOL 的分离 Python 版：
 
   ```bash
-  apt-get update && apt-get install -y docker.io docker-compose-v2
-  systemctl enable --now docker
+  sudo apt-get install -y ca-certificates curl
+  sudo install -m 0755 -d /etc/apt/keyrings
+  sudo curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc
+  sudo chmod a+r /etc/apt/keyrings/docker.asc
+  echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian $(. /etc/os-release && echo \"$VERSION_CODENAME\") stable" \
+    | sudo tee /etc/apt/sources.list.d/docker.list
+  sudo apt-get update
+  sudo apt-get install -y docker-ce docker-ce-cli containerd.io \
+    docker-buildx-plugin docker-compose-plugin
   docker compose version   # 需输出 v2 版本号
   ```
 
@@ -33,16 +44,43 @@
    > 本站（新用户没有任何邮箱账户，看到的是空列表）。需要收紧时应在 Priestess
    > 侧控制账号发放，本站不做审批。
 
-## 3. Cloudflare Tunnel
+## 3. 公网入口（宿主机 cloudflared）
 
-1. Cloudflare 控制台 → Zero Trust → Networks → Tunnels → **Create a tunnel**
-   （类型选 Cloudflared）。
-2. 创建后复制隧道 `token`（形如 `eyJ...`），填入 `.env` 的 `TUNNEL_TOKEN`。
-3. 在该隧道下添加 **Public Hostname**：
-   - Subdomain / Domain：`tasks` / `rakko.cn`
-   - Service 类型：`HTTP`，URL：`http://web:8000`
-   （容器网络内服务名是 `web`，不要写成 `127.0.0.1`）
-4. DNS 记录由隧道自动创建（CNAME `tasks.rakko.cn → <tunnel-id>.cfargotunnel.com`），无需手动加。
+公网入口**不在本项目的 compose 内**，而是由宿主机上的 cloudflared systemd 服务统一
+提供。这台机器上所有对外服务共用同一条隧道（隧道名 `rakkoserver`），新增服务只需往
+ingress 列表里加一条规则，**不再为每个项目单独开隧道，也不在路由器上做端口转发**。
+
+隧道配置在 `/etc/cloudflared/config.yml`：
+
+```yaml
+tunnel: <隧道 UUID>
+credentials-file: /etc/cloudflared/<UUID>.json
+
+ingress:
+  - hostname: tasks.rakko.cn
+    service: http://127.0.0.1:8000
+  - service: http_status:404
+```
+
+`service` 必须指向 `http://127.0.0.1:8000`：cloudflared 跑在宿主机上而不是容器网络里，
+取的是 compose 把 `web` 发布到回环地址的那个端口。**不要写成 `http://web:8000`**——
+那是容器网络内的服务名，宿主机解析不了。
+
+DNS 记录用下面这条命令创建或改指向，不必手动在面板里加（`--overwrite-dns` 用于把已
+存在的记录改指到本隧道）：
+
+```bash
+cloudflared tunnel route dns --overwrite-dns rakkoserver tasks.rakko.cn
+```
+
+改完 ingress 后重启服务生效：
+
+```bash
+sudo systemctl restart cloudflared
+```
+
+`.env` 里的 `TUNNEL_TOKEN` 对本部署已不再需要（保留不影响运行），它只服务于把
+cloudflared 跑在 compose 内的旧部署形态。
 
 ## 4. 配置
 
@@ -56,7 +94,6 @@ vim .env
 | 变量 | 取值方法 |
 |---|---|
 | `LLM_API_KEY` | DeepSeek 开放平台创建 API Key |
-| `TUNNEL_TOKEN` | 见第 3 节 |
 
 其余项保留默认值即可（默认值与 `backend/app/config.py` 一致）。
 `FRONTEND_DIST` 已由镜像内置，**不要在 .env 里配置**。
@@ -70,20 +107,9 @@ docker compose -f deploy/docker-compose.yml up -d --build
 docker compose -f deploy/docker-compose.yml ps
 ```
 
-三个服务应全部 `running`。首次构建会拉 node:22-alpine / python:3.12-slim 基础镜像，需要几分钟。
-
-> **TUNNEL_TOKEN 读取方式**：compose 在解析 `${TUNNEL_TOKEN}` 时，从**当前 shell 环境变量**
-> 或 **deploy/.env** 读取，不会自动读仓库根的 `.env`。如果你只在仓库根 `.env` 填了 token，
-> 先导出再启动：
->
-> ```bash
-> export TUNNEL_TOKEN=$(grep '^TUNNEL_TOKEN=' .env | cut -d= -f2-)
-> docker compose -f deploy/docker-compose.yml up -d --build
-> ```
->
-> 或者始终用 `--env-file` 指定根目录 .env：
-> `docker compose --env-file .env -f deploy/docker-compose.yml up -d --build`
-> （两种情况任选其一；token 为空时 cloudflared 会启动失败并循环重启）。
+两个服务（`web`、`worker`）应全部 `running`。首次构建会拉 node:22-alpine /
+python:3.12-slim 基础镜像，需要几分钟。公网入口是宿主机的 cloudflared 服务，
+不在这里，用 `systemctl is-active cloudflared` 单独确认。
 
 ## 6. 邮箱接入
 
@@ -140,7 +166,7 @@ docker compose -f deploy/docker-compose.yml ps
 ### 6.2 命令行兜底（运维用）
 
 CLI 与网页共用同一服务层、语义一致；日常接入请走 6.1，CLI 供运维与脚本化场景
-使用。命令在服务器仓库根执行，账户一律用 `--user <sub|邮箱>` 指定归属：
+使用。命令在服务器的部署目录 `/srv/rakkotasks` 下执行，账户一律用 `--user <sub|邮箱>` 指定归属：
 
 > **先决条件**：使用者本人必须先登录一次网页（`https://tasks.rakko.cn` 完成
 > Phainon 登录），否则服务器上还没有他的用户记录，CLI 无从归属。交互式命令
@@ -248,7 +274,8 @@ curl http://127.0.0.1:8000/api/health
 # 日志（各服务单独看）
 docker compose -f deploy/docker-compose.yml logs -f --tail=100 web
 docker compose -f deploy/docker-compose.yml logs -f --tail=100 worker
-docker compose -f deploy/docker-compose.yml logs -f --tail=100 cloudflared
+# 公网入口的日志在宿主机 systemd 里，不在 compose 内
+sudo journalctl -u cloudflared -f
 
 # 升级：拉取新代码后重建（数据库在 volume 里，不受影响）
 git pull
@@ -277,9 +304,11 @@ docker compose -f deploy/docker-compose.yml run --rm web \
 
 - `web` 起不来：看 `docker compose logs web`；最常见是 `.env` 语法错误或端口被占。
 - 前端 404：确认 `.env` 里**没有** `FRONTEND_DIST=` 空值（镜像内置了构建产物路径）。
-- `cloudflared` 循环重启：`TUNNEL_TOKEN` 为空，按第 5 节导出后再启动。
-- 手机打不开：确认隧道 Public Hostname 的 Service URL 是 `http://web:8000`，
-  并在 Cloudflare 面板确认 DNS CNAME 已生成。
+- 公网 530 / 502：先 `systemctl is-active cloudflared`，再 `sudo journalctl -u cloudflared -n 50`。
+  最常见是 ingress 的 `service` 写错（必须是 `http://127.0.0.1:8000`，不是 `http://web:8000`），
+  或者 `web` 容器没起来导致回环端口无人监听。
+- 手机打不开：确认 `/etc/cloudflared/config.yml` 里有 `tasks.rakko.cn` 的 ingress 规则，
+  且 DNS CNAME 指向本隧道（`cloudflared tunnel route dns --overwrite-dns rakkoserver tasks.rakko.cn` 可重设）。
 
 ## 9. 容器以非 root 运行
 
@@ -291,3 +320,23 @@ docker compose -f deploy/docker-compose.yml run --rm web \
   `sudo chown -R 1000:1000 data/`
 - **macOS Docker Desktop（VirtioFS）**：文件权限映射宽松，通常无需处理；若
   启动后 web/worker 报权限错误，同样执行上面一条 chown 即可。
+
+## 10. 宿主机防火墙与端口暴露
+
+宿主机防火墙是 **nftables**，规则在 `/etc/nftables.conf` 的 `table inet filter`，
+input 链默认 `policy drop`，只放行内网网段与 Tailscale 接口。
+
+> **Docker 发布的端口不受 input 链保护。** 容器端口走 DNAT + FORWARD，**不经过 INPUT
+> 链**，nftables 的 input 规则对它完全无效。「ufw 挡不住 Docker」说的就是这件事，
+> 换成 nftables 一样挡不住。
+
+因此：
+
+- 本部署的 `web` 绑定在 `127.0.0.1:8000`，只有宿主机自己（含 cloudflared）连得上，
+  对外暴露面为零，**不需要任何防火墙规则**。
+- 将来若要把某个容器端口暴露到 `127.0.0.1` 以外，**必须**二选一：在 compose 里绑定
+  具体地址（如 `10.8.8.88:PORT:PORT`），或者往 `DOCKER-USER` 链加规则。
+  **绝不能依赖 input 链的 policy drop 去保护容器端口。**
+- 重载防火墙用 `sudo systemctl reload nftables`。配置文件用的是
+  `delete table inet filter` 惯用法而非 `flush ruleset`——后者会连 Docker 建的表一起
+  清空，导致容器网络静默中断。

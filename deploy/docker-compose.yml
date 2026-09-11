@@ -1,10 +1,12 @@
-# RakkoTasks 生产部署（单机，Debian 12 + Docker Compose 插件）。
-# 用法（仓库根）：docker compose -f deploy/docker-compose.yml up -d --build
-# 配置来源：仓库根 .env（cp deploy/.env.example .env）。
+# RakkoTasks 生产部署（单机，Debian 13 trixie + Docker Compose 插件）。
+# 用法（部署目录 /srv/rakkotasks）：docker compose -f deploy/docker-compose.yml up -d --build
+# 配置来源：部署目录下的 .env（cp deploy/.env.example .env）。
+# 公网入口由宿主机的 cloudflared systemd 服务统一提供，ingress 规则写在
+# /etc/cloudflared/config.yml；本文件只需把 web 发布到 127.0.0.1:8000 供其取数据。
 name: rakkotasks
 
 services:
-  # FastAPI：REST API + 托管前端 SPA；仅绑定本机回环，公网走 cloudflared 隧道
+  # FastAPI：REST API + 托管前端 SPA；仅绑定本机回环，公网走宿主机的 cloudflared 隧道
   web:
     build:
       context: ..
@@ -38,11 +40,3 @@ services:
       - DATABASE_PATH=/data/rakkotasks.db
     volumes:
       - ../data:/data
-
-  # Cloudflare Tunnel：凭 TUNNEL_TOKEN 建隧道，Public Hostname 指向 http://web:8000
-  cloudflared:
-    image: cloudflare/cloudflared:latest
-    restart: unless-stopped
-    command: tunnel --no-autoupdate run --token ${TUNNEL_TOKEN}
-    depends_on:
-      - web
