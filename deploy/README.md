@@ -11,6 +11,12 @@ Dockge 才能把整个仓库识别成一个栈（它只认栈目录根的 `compo
 `docker compose` 命令都不需要 `-f`。服务器上 `/opt/stacks/rakkotasks` 是指向
 `/srv/rakkotasks` 的软链接，Dockge 经它管理本栈。
 
+> ⚠️ **不要在 Dockge 里编辑本栈的 compose。** Dockge 的在线编辑会直接写
+> `/opt/stacks/rakkotasks/compose.yaml`，也就是本仓库的 `compose.yaml`，会让服务器上的
+> git 工作区变脏，下次 `git pull` 直接冲突。改配置一律走 git：本地改 → push →
+> 服务器 `git pull`。Dockge 对本栈只用来起停、看日志、看状态。
+> 这条限制只针对本栈；Dockge 里新建的栈没有 git 介入，随便在线编辑。
+
 ---
 
 ## 1. 前置条件
