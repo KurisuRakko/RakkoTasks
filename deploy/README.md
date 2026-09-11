@@ -6,6 +6,11 @@
 systemd 服务**统一提供，不在本项目的 compose 内（见第 3 节）。
 所有命令在部署目录 **`/srv/rakkotasks`** 下执行。
 
+compose 文件是**仓库根的 `compose.yaml`**，不在 `deploy/` 下——这样服务器上的
+Dockge 才能把整个仓库识别成一个栈（它只认栈目录根的 `compose.yaml`）。因此所有
+`docker compose` 命令都不需要 `-f`。服务器上 `/opt/stacks/rakkotasks` 是指向
+`/srv/rakkotasks` 的软链接，Dockge 经它管理本栈。
+
 ---
 
 ## 1. 前置条件
@@ -103,8 +108,8 @@ vim .env
 ## 5. 启动
 
 ```bash
-docker compose -f deploy/docker-compose.yml up -d --build
-docker compose -f deploy/docker-compose.yml ps
+docker compose up -d --build
+docker compose ps
 ```
 
 两个服务（`web`、`worker`）应全部 `running`。首次构建会拉 node:22-alpine /
@@ -176,14 +181,14 @@ CLI 与网页共用同一服务层、语义一致；日常接入请走 6.1，CLI
 1. 查该用户的 sub / 邮箱（新用户登录后即可看到）：
 
    ```bash
-   docker compose -f deploy/docker-compose.yml run --rm web \
+   docker compose run --rm web \
      python -m app.cli users list
    ```
 
 2. **Gmail（应用专用密码，交互式录入，不回显、不会进 shell history）**：
 
    ```bash
-   docker compose -f deploy/docker-compose.yml run --rm web \
+   docker compose run --rm web \
      python -m app.cli accounts add --user <sub或邮箱> --kind gmail \
        --name Gmail --email you@gmail.com
    ```
@@ -191,7 +196,7 @@ CLI 与网页共用同一服务层、语义一致；日常接入请走 6.1，CLI
    事后改密码用 `accounts set-password`（同样交互式录入）：
 
    ```bash
-   docker compose -f deploy/docker-compose.yml run --rm web \
+   docker compose run --rm web \
      python -m app.cli accounts set-password --user <sub或邮箱> you@gmail.com
    ```
 
@@ -201,10 +206,10 @@ CLI 与网页共用同一服务层、语义一致；日常接入请走 6.1，CLI
    在 `add` 时追加 `--client-id <你的client_id>`（Entra 配置要求见 6.1）：
 
    ```bash
-   docker compose -f deploy/docker-compose.yml run --rm web \
+   docker compose run --rm web \
      python -m app.cli accounts add --user <sub或邮箱> --kind microsoft \
        --name UNSW --email your@unsw.edu.au
-   docker compose -f deploy/docker-compose.yml run --rm web \
+   docker compose run --rm web \
      python -m app.cli accounts connect --user <sub或邮箱> your@unsw.edu.au
    ```
 
@@ -215,7 +220,7 @@ CLI 与网页共用同一服务层、语义一致；日常接入请走 6.1，CLI
    > 采用该值）：
 
    ```bash
-   docker compose -f deploy/docker-compose.yml run --rm web \
+   docker compose run --rm web \
      python -m app.cli accounts auth-url --user <sub或邮箱> your@unsw.edu.au
    ```
 
@@ -224,7 +229,7 @@ CLI 与网页共用同一服务层、语义一致；日常接入请走 6.1，CLI
    （URL 含 `&`，务必用单引号包住）：
 
    ```bash
-   docker compose -f deploy/docker-compose.yml run --rm web \
+   docker compose run --rm web \
      python -m app.cli accounts auth-code --user <sub或邮箱> your@unsw.edu.au \
      '<完整URL或授权码>'
    ```
@@ -234,14 +239,14 @@ CLI 与网页共用同一服务层、语义一致；日常接入请走 6.1，CLI
    对应命令：
 
    ```bash
-   docker compose -f deploy/docker-compose.yml run --rm web \
+   docker compose run --rm web \
      python -m app.cli accounts remove --user <sub或邮箱> <email>
    ```
 
 ### 核对
 
 ```bash
-docker compose -f deploy/docker-compose.yml run --rm web \
+docker compose run --rm web \
   python -m app.cli accounts list --user <sub或邮箱>
 ```
 
@@ -249,7 +254,7 @@ docker compose -f deploy/docker-compose.yml run --rm web \
 worker 让下一轮同步立即开始：
 
 ```bash
-docker compose -f deploy/docker-compose.yml restart worker
+docker compose restart worker
 ```
 
 首次回补默认 7 天（`INITIAL_BACKFILL_DAYS`，改大见 .env.example 注释），新账户
@@ -272,31 +277,31 @@ curl http://127.0.0.1:8000/api/health
 
 ```bash
 # 日志（各服务单独看）
-docker compose -f deploy/docker-compose.yml logs -f --tail=100 web
-docker compose -f deploy/docker-compose.yml logs -f --tail=100 worker
+docker compose logs -f --tail=100 web
+docker compose logs -f --tail=100 worker
 # 公网入口的日志在宿主机 systemd 里，不在 compose 内
 sudo journalctl -u cloudflared -f
 
 # 升级：拉取新代码后重建（数据库在 volume 里，不受影响）
 git pull
-docker compose -f deploy/docker-compose.yml up -d --build
+docker compose up -d --build
 # 升级时数据库由启动过程就地迁移，升级前建议先备份 data/。
 
 # 备份：整个 data/ 目录（含 SQLite WAL 文件）。最稳妥先停服务再拷：
-docker compose -f deploy/docker-compose.yml stop
+docker compose stop
 cp -a data/ /backup/rakkotasks-$(date +%F)/
-docker compose -f deploy/docker-compose.yml start
+docker compose start
 # 在线备份可用 sqlite3 data/rakkotasks.db ".backup '/backup/rakkotasks.db'"
 
 # 令牌掉线：设置页该账户显示 error 时，主路径是使用者在网页 设置 → 邮箱账户 →
 # 该账户 → 「重新授权」（Gmail 则在账户详情里更换应用专用密码）；CLI 的
 # accounts auth-url / auth-code（或 connect）只作运维兜底，示例（--user 可填 sub 或邮箱）：
-docker compose -f deploy/docker-compose.yml run --rm web \
+docker compose run --rm web \
   python -m app.cli accounts connect --user <sub或邮箱> <email>
 
 # 停用某个邮箱账户：accounts remove 是软删除——停用并清除凭据、不再同步，
 # 但保留已抓取的邮件与已生成的任务（设置页该账户显示「已停用」）
-docker compose -f deploy/docker-compose.yml run --rm web \
+docker compose run --rm web \
   python -m app.cli accounts remove --user <sub或邮箱> <email>
 ```
 
