@@ -7,9 +7,10 @@ import { cleanup, render, renderHook } from '@testing-library/react';
 import { createElement } from 'react';
 import type { ReactNode } from 'react';
 import AppBar from '@mui/material/AppBar';
+import CssBaseline from '@mui/material/CssBaseline';
 import { ThemeProvider } from '@mui/material/styles';
 import { ThemeModeProvider } from '../src/lib/theme-mode';
-import { WALLPAPER_ATTR } from '../src/lib/glass';
+import { WALLPAPER_ATTR, WALLPAPER_LAYER_ID } from '../src/lib/glass';
 import {
   ACCENT,
   GLASS,
@@ -22,6 +23,7 @@ import {
   WHISPER_SHADOW,
 } from '../src/rakko-tokens';
 import { useAppTheme } from '../src/theme';
+import { allStyleText, renderWithAppTheme } from './glass-text-contrast.test-utils';
 
 const MODE_KEY = 'rakkotasks.theme-mode';
 
@@ -110,7 +112,7 @@ describe('Rakko Design token 主题', () => {
     expect(typeof overrides).toBe('function');
     const styles = (overrides as (t: typeof theme) => Record<string, unknown>)(theme);
     expect(styles.html).toEqual({ fontSize: 14 });
-    // body 只留排版属性：壁纸背景在 body 的 '&::before' 壁纸层规则里
+    // body 只留排版属性：壁纸层是顶层键 '#rtk-wallpaper' 那一块规则
     // （断言见「玻璃材质变量下发与让位」的 5d/5j 用例），这里只验证 letterSpacing 保留
     expect(styles.body).toMatchObject({ letterSpacing: '0.01em' });
     expect(Object.keys(styles).some((k) => k.startsWith('::view-transition'))).toBe(true);
@@ -206,13 +208,12 @@ describe('玻璃材质变量下发与让位', () => {
     }
   });
 
-  it('5d. 壁纸原图单层背景位于 body 的 ::before（var(--rtk-wallpaper），驯化层已移除不含 color-mix）', () => {
+  it('5d. 壁纸原图单层背景位于顶层键 #rtk-wallpaper 承载层（var(--rtk-wallpaper)，驯化层已移除不含 color-mix）', () => {
     for (const mode of ['light', 'dark'] as const) {
       const styles = globalStyles(mode);
-      const body = styles.body as Record<string, unknown>;
-      const before = body['&::before'] as Record<string, unknown> | undefined;
-      expect(before, `${mode}: 壁纸层应位于 body 的 '&::before'`).toBeDefined();
-      const bg = before!.backgroundImage;
+      const layer = styles[`#${WALLPAPER_LAYER_ID}`] as Record<string, unknown> | undefined;
+      expect(layer, `${mode}: 壁纸层应是顶层键 '#${WALLPAPER_LAYER_ID}'`).toBeDefined();
+      const bg = layer!.backgroundImage;
       expect(typeof bg).toBe('string');
       expect(bg as string).toContain('var(--rtk-wallpaper');
       // 驯化层已移除：不再有纸色 color-mix 叠加层，壁纸显示用户原图
@@ -283,22 +284,51 @@ describe('玻璃材质变量下发与让位', () => {
     expect(rootStyles.backgroundColor).toBe('transparent');
   });
 
-  it('5j. 壁纸层由 ::before 固定承载：body 不再带背景，伪元素 fixed / inset 0 / z-index -1 / pointer-events none，且无 backgroundAttachment', () => {
+  it('5j. 壁纸层由 #rtk-wallpaper 真实 DOM 节点承载：body 不再带背景，承载层 fixed / inset 0 / z-index -1 / pointer-events none，且无 backgroundAttachment', () => {
     for (const mode of ['light', 'dark'] as const) {
       const styles = globalStyles(mode);
       const body = styles.body as Record<string, unknown>;
-      // 背景已挪进 ::before，body 只剩排版属性；backgroundAttachment: fixed 整条删除——
+      // 背景已挪进真实 DOM 承载层，body 只剩排版属性；backgroundAttachment: fixed 整条删除——
       // 固定由 position: fixed 提供，留着是死代码
+      expect(body['&::before']).toBeUndefined();
       expect(body.backgroundImage).toBeUndefined();
       expect(body.backgroundAttachment).toBeUndefined();
-      const before = body['&::before'] as Record<string, unknown> | undefined;
-      expect(before, `${mode}: 应存在 '&::before' 壁纸层规则`).toBeDefined();
-      expect(before!.position).toBe('fixed');
-      expect(before!.inset).toBe(0);
-      expect(before!.zIndex).toBe(-1);
-      expect(before!.pointerEvents).toBe('none');
-      expect(before!.backgroundAttachment).toBeUndefined();
+      const layer = styles[`#${WALLPAPER_LAYER_ID}`] as Record<string, unknown> | undefined;
+      expect(layer, `${mode}: 应存在 '#${WALLPAPER_LAYER_ID}' 承载层规则`).toBeDefined();
+      expect(layer!.position).toBe('fixed');
+      expect(layer!.inset).toBe(0);
+      expect(layer!.zIndex).toBe(-1);
+      expect(layer!.pointerEvents).toBe('none');
+      expect(layer!.backgroundAttachment).toBeUndefined();
     }
+  });
+
+  it('5k. 壁纸层自带不透明纸色地板：backgroundColor 等于该主题的 palette.background.default', () => {
+    for (const mode of ['light', 'dark'] as const) {
+      const theme = themeOf(mode);
+      const styles = globalStyles(mode);
+      const layer = styles[`#${WALLPAPER_LAYER_ID}`] as Record<string, unknown> | undefined;
+      expect(layer, `${mode}: 应存在 '#${WALLPAPER_LAYER_ID}' 承载层规则`).toBeDefined();
+      // 承载层被单独快照后与 canvas 背景分家，自己必须是一块不透明地板：
+      // 壁纸尚未解码、或壁纸带 alpha 时，透过去看到的就是 canvas
+      expect(layer!.backgroundColor).toBe(theme.palette.background.default);
+      expect(layer!.backgroundColor).not.toBe('transparent');
+    }
+  });
+
+  it('5l. 承载层规则真的落到样式表：规则块含 position:fixed / z-index:-1 / pointer-events:none', () => {
+    // 5d/5j/5k 只验证样式对象；这一条验证 emotion 真的把 '#rtk-wallpaper' 作为顶层选择器
+    // 写进了样式表（测试环境非 speedy，规则以文本节点注入 <style>，机制同 alert-glass）
+    renderWithAppTheme(createElement(CssBaseline));
+    const css = allStyleText().replace(/\s+/g, '');
+    const start = css.indexOf(`#${WALLPAPER_LAYER_ID}{`);
+    expect(start, `样式表里应出现 '#${WALLPAPER_LAYER_ID}{' 规则块`).toBeGreaterThanOrEqual(0);
+    const end = css.indexOf('}', start);
+    expect(end).toBeGreaterThan(start);
+    const rule = css.slice(start, end);
+    expect(rule).toContain('position:fixed');
+    expect(rule).toContain('z-index:-1');
+    expect(rule).toContain('pointer-events:none');
   });
 });
 

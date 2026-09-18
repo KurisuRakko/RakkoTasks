@@ -12,7 +12,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, renderHook } from '@testing-library/react';
-import { WALLPAPER_ATTR, WALLPAPER_VAR } from '../src/lib/glass';
+import { WALLPAPER_ATTR, WALLPAPER_LAYER_ID, WALLPAPER_VAR } from '../src/lib/glass';
 import {
   compressWallpaper,
   readWallpaper,
@@ -96,6 +96,19 @@ describe('index.html 首帧脚本与 lib 常量一致', () => {
     // 内联脚本在模块系统之外无法 import 常量；两处不一致时首帧上屏会失效
     expect(htmlSource).toContain(WALLPAPER_STORAGE_KEY);
     expect(htmlSource).toContain(WALLPAPER_VAR);
+  });
+
+  it('壁纸承载节点是 body 的第一个子节点（在 #root 之前），且全局只有一个', () => {
+    // 承载层的 id 在 HTML 里只能手抄（常量 WALLPAPER_LAYER_ID，本文件在模块系统之外）；
+    // 主题层按同一 id 下发地板样式，换页时的持名规则也按它命中
+    expect(htmlSource).toContain(`id="${WALLPAPER_LAYER_ID}"`);
+    const layerAt = htmlSource.indexOf(`id="${WALLPAPER_LAYER_ID}"`);
+    const rootAt = htmlSource.indexOf('id="root"');
+    expect(rootAt).toBeGreaterThan(-1);
+    // 地板先于应用根存在：React 挂载与路由 churn 都不影响它
+    expect(layerAt).toBeLessThan(rootAt);
+    // 同一时刻同名元素只能有一个：出现两个会让整个 View Transition 被浏览器跳过
+    expect(htmlSource.split(`id="${WALLPAPER_LAYER_ID}"`)).toHaveLength(2);
   });
 });
 

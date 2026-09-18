@@ -24,7 +24,7 @@ import {
   TYPE_SCALE,
   WHISPER_SHADOW,
 } from './rakko-tokens';
-import { WALLPAPER_ATTR, WALLPAPER_VAR } from './lib/glass';
+import { WALLPAPER_ATTR, WALLPAPER_LAYER_ID, WALLPAPER_VAR } from './lib/glass';
 
 type Mode = 'light' | 'dark';
 
@@ -169,30 +169,38 @@ function buildThemeOptions(mode: Mode): ThemeOptions {
           [`:root:not([${WALLPAPER_ATTR}])`]: {
             '--glass-highlight': 'transparent',
           },
-          // body 只留排版属性；壁纸背景整体挪进 ::before 伪元素承载：
+          // body 只留排版属性：地板整体在下面的壁纸承载层里。
+          body: {
+            letterSpacing: '0.01em',
+          },
+          // 壁纸承载层：整页地板（纸色 + 用户壁纸原图）都在这一层。它是 index.html 里的
+          // 真实 DOM 节点，不是 body::before——换页时这一层要单独持有 view-transition-name
+          // （见 motion-styles 段 (g)）才能不跟 root 快照一起淡化位移，而 View Transitions
+          // 的捕获循环只遍历「已连接的元素」，伪元素永远拿不到分组，名字写上去也不生效。
           // - 不用 background-attachment: fixed——iOS Safari 从未正确实现它，一律退化成
           //   跟着内容滚；position: fixed 在 iOS 上工作正常。用户是 PWA standalone，
           //   没有伸缩地址栏，视口高度恒定，inset: 0 即可，无需 100lvh 等动态视口单位；
-          // - 用伪元素而非新增 DOM 节点：不需要 React 节点参与，样式层自洽；
-          // - z-index: -1 是安全的：定位后代排在「根元素背景之后、块级非定位后代之前」，
-          //   既盖不住页面内容，又仍位于玻璃元素身后——backdrop-filter 照样读得到壁纸；
-          // - pointerEvents: none：纯背景层，不能吃掉任何点击。
-          // ::before 的背景只有一层壁纸原图，由 lib/wallpaper 写到 <html> 上，不再叠
-          // 纸色（驯化层已移除——壁纸显示用户原图，深色壁纸下顶栏标题对比度由用户
-          // 通过选图规避）；无壁纸时该变量为 none，退回纯纸色背景。
-          body: {
-            letterSpacing: '0.01em',
-            '&::before': {
-              content: '""',
-              position: 'fixed',
-              inset: 0,
-              zIndex: -1,
-              pointerEvents: 'none',
-              backgroundImage: `var(${WALLPAPER_VAR}, none)`,
-              backgroundSize: 'cover',
-              backgroundPosition: 'center',
-              backgroundRepeat: 'no-repeat',
-            },
+          // - z-index: -1：定位后代排在「根元素背景之后、块级非定位后代之前」，既盖不住
+          //   页面内容，又仍位于玻璃元素身后——backdrop-filter 照样读得到壁纸；
+          // - pointerEvents: none：纯背景层，不能吃掉任何点击；
+          // - backgroundColor 垫纸色：这一层被单独快照之后就与 canvas 背景分家了，自己
+          //   必须是一块不透明的地板——壁纸尚未解码、或壁纸带 alpha 时，透过去就是 canvas。
+          //   今天 canvas 的基色是 CssBaseline 给 body 设的 background.default 传播上去的，
+          //   与这里的 n1 同色，垫上去当前观感等价；它的价值是不依赖 body → canvas 这条
+          //   传播链，body 背景一旦改透明，这一层就是唯一的不透明地板。
+          //   无壁纸时这一层就是纯纸色，观感不变——有无壁纸同一条路径。
+          // 壁纸图源由 lib/wallpaper 写到 <html> 的 CSS 变量上，不叠驯化层纸色（驯化层已
+          // 移除，壁纸显示用户原图）；无壁纸时该变量为 none，只剩纸色地板。
+          [`#${WALLPAPER_LAYER_ID}`]: {
+            position: 'fixed',
+            inset: 0,
+            zIndex: -1,
+            pointerEvents: 'none',
+            backgroundColor: n1,
+            backgroundImage: `var(${WALLPAPER_VAR}, none)`,
+            backgroundSize: 'cover',
+            backgroundPosition: 'center',
+            backgroundRepeat: 'no-repeat',
           },
           ...viewTransitionStyles(themeParam),
         }),

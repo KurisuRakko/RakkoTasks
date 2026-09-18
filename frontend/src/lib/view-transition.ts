@@ -3,6 +3,8 @@
 
 import { flushSync } from 'react-dom';
 
+import { WALLPAPER_LAYER_ID } from './glass';
+
 /**
  * 转场种类：写到 <html data-vt> 上，供样式层的 ::view-transition-* 规则选择。
  *
@@ -24,6 +26,9 @@ export const VT_NAMES = {
   appBar: 'rtk-app-bar',
   bottomNav: 'rtk-bottom-nav',
   navDrawer: 'rtk-nav-drawer',
+  /** 壁纸承载层。它不是壳层、不走 VT_SHELL_ATTR：样式层按元素 id 命中它
+   *  （id 与转场名同源于 WALLPAPER_LAYER_ID，是同一个东西的两个身份）。 */
+  wallpaper: WALLPAPER_LAYER_ID,
 } as const;
 
 /**

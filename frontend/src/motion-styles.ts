@@ -1,5 +1,6 @@
 // View Transitions 全局样式层：换页共享轴（场景 A）、列表行 ↔ 详情的容器变换（场景 B），
-// 以及壳层与 FAB 的持名时机与交叉淡化节奏，外加 reduced-motion 总闸。
+// 以及壳层与 FAB 的持名时机与交叉淡化节奏，外加 reduced-motion 总闸；
+// 换页时壁纸层单独成组静止（段 (g)）。
 // 右下角 FAB ↔ 速记面板**不走这里**：那条链路已改成纯 CSS transform + MUI Slide 的
 // 对称编排（见 TasksPage 的 FAB sx 与 AiAddDialog 的 Dialog 过渡）。View Transitions
 // 在 iOS Safari / PWA 上一旦被跳过就两个方向同时落空，而那是全站点击最频繁的动效。
@@ -9,6 +10,7 @@
 
 import type { Theme } from '@mui/material/styles';
 import { MOTION, RADIUS, SHARED_AXIS_OFFSET_PX } from './rakko-tokens';
+import { WALLPAPER_LAYER_ID } from './lib/glass';
 import { VT_NAMES, VT_SHELL_ATTR } from './lib/view-transition';
 
 /** keyframes 名：只在此声明一次，动画引用处以同一常量拼接，避免两处手抄错位 */
@@ -44,6 +46,7 @@ export function viewTransitionStyles(theme: Theme): Record<string, unknown> {
   const appBar = VT_NAMES.appBar;
   const bottomNav = VT_NAMES.bottomNav;
   const navDrawer = VT_NAMES.navDrawer;
+  const wallpaper = VT_NAMES.wallpaper;
 
   // 容器变换（列表行 ↔ 详情）里 sheet 的旧/新快照基础样式（尺寸插值打底）。
   // 只有 sheet：FAB 不再形变，换页时它和其它壳层一样走 UA 默认交叉淡化。
@@ -236,7 +239,33 @@ export function viewTransitionStyles(theme: Theme): Record<string, unknown> {
       animation: `${KF.fabOut} ${MOTION.largeExit}ms ${ease} both`,
     },
 
-    // (g) reduced-motion 总闸：偏好减少动效时整个 View Transition 全部禁用动画
+    // (g) 壁纸层：换页期间单独成组、完全静止。root 快照会随轴移淡到全透明，壁纸留在里面
+    // 就跟着一起消失，中途露出的是浏览器 canvas 基色（浅色发白、深色发黑）而不是壁纸——
+    // 段 (d) 注释里承诺的「中途整屏只剩壁纸」此前并未兑现。让 index.html 里的壁纸承载层
+    // 在换页时持名，它就被排除在 root 快照之外（祖先快照跳过绘制已被捕获的后代），单独
+    // 成组静止铺在最底下，内容与壳层在它之上转过去。
+    // - 只在换页持名：expand / collapse 时 root 是等价交叉淡化，壁纸新旧两侧逐像素相同，
+    //   本来就不闪，多一层快照没有收益，也不必重新论证遮罩压暗的观感；
+    // - z-index: -1 决定层序，不能指望默认顺序：group 的文档顺序按捕获时的绘制顺序排，
+    //   root 永远在绘制栈最底、排第一个（最下层），壁纸作为 body 的后代反而会排到 root
+    //   之上、把内容整个盖住。::view-transition 自身是层叠上下文（视图转场层），各 group
+    //   是它 position: absolute 的子级，负 z-index 稳定地排在全部兄弟 group 之下；
+    // - 动画必须显式关死：group 默认会插值尺寸/位置，old/new 默认走 UA 交叉淡化且带
+    //   mix-blend-mode: plus-lighter（加色混合，与段 (d) 记录的壳层泛白同一个坑）。
+    //   两侧都不带动画时快照都停在 opacity 1、new 压在 old 上且逐像素相同，
+    //   合成结果就是一张静止壁纸。
+    [`:root[data-vt^="route-"] #${WALLPAPER_LAYER_ID}`]: { viewTransitionName: wallpaper },
+    [`:root[data-vt^="route-"]${vtPseudo('group', wallpaper)}`]: {
+      zIndex: -1,
+      animation: 'none',
+    },
+    [`:root[data-vt^="route-"]${vtPseudo('old', wallpaper)},
+      :root[data-vt^="route-"]${vtPseudo('new', wallpaper)}`]: {
+      animation: 'none',
+      mixBlendMode: 'normal',
+    },
+
+    // (h) reduced-motion 总闸：偏好减少动效时整个 View Transition 全部禁用动画
     '@media (prefers-reduced-motion: reduce)': {
       '::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*)': {
         animation: 'none !important',

@@ -245,6 +245,72 @@ describe('容器变换的表面色打底与快照形态', () => {
   });
 });
 
+describe('壁纸层换页时单独成组且完全静止', () => {
+  // root 快照随轴移淡到全透明，壁纸留在里面就跟着消失，中途露出 canvas 基色。让 index.html
+  // 的壁纸承载层在换页时持名，它被排除在 root 快照之外，单独成组静止铺在最底下。
+  const styles = viewTransitionStyles(createTheme()) as Styles;
+
+  it('持名时机：只有换页时 #rtk-wallpaper 持名，且名字是 VT_NAMES.wallpaper', () => {
+    const key = findKey(styles, 'data-vt^="route-"', `#${VT_NAMES.wallpaper}`);
+    expect(ruleValue(styles, key).viewTransitionName).toBe(VT_NAMES.wallpaper);
+  });
+
+  it('层序：group 带 z-index -1（默认顺序会把壁纸排到 root 之上盖住内容）', () => {
+    const rule = ruleValue(
+      styles,
+      findKey(styles, 'route-', '::view-transition-group(', VT_NAMES.wallpaper),
+    );
+    expect(rule.zIndex).toBe(-1);
+  });
+
+  it('group 动画关死：不插值尺寸与位置', () => {
+    const rule = ruleValue(
+      styles,
+      findKey(styles, 'route-', '::view-transition-group(', VT_NAMES.wallpaper),
+    );
+    expect(rule.animation).toBe('none');
+  });
+
+  it('old/new 快照动画与加色混合都关死：两张快照停在 opacity 1，合成结果是静止壁纸', () => {
+    const rule = ruleValue(
+      styles,
+      findKey(
+        styles,
+        'route-',
+        '::view-transition-old(',
+        '::view-transition-new(',
+        VT_NAMES.wallpaper,
+      ),
+    );
+    expect(rule.animation).toBe('none');
+    // plus-lighter 是加色混合，与段 (d) 记录的壳层泛白同一个坑
+    expect(rule.mixBlendMode).toBe('normal');
+  });
+
+  it('层序守卫：带 zIndex 的 group 规则有且仅有壁纸那一条，负值也只有它', () => {
+    const entries = Object.entries(styles) as Array<[string, Rule]>;
+    const groupWithZIndex = entries.filter(
+      ([key, rule]) => key.includes('::view-transition-group(') && 'zIndex' in rule,
+    );
+    expect(groupWithZIndex).toHaveLength(1);
+    expect(groupWithZIndex[0]![0]).toContain(VT_NAMES.wallpaper);
+
+    const negative = entries.filter(([, rule]) => rule.zIndex === -1);
+    expect(negative).toHaveLength(1);
+    expect(negative[0]![0]).toContain(VT_NAMES.wallpaper);
+  });
+
+  it('不侵入对话框链路：壁纸层的规则都只在 route-* 下生效，不碰 expand / collapse', () => {
+    const keys = Object.keys(styles).filter((k) => k.includes(VT_NAMES.wallpaper));
+    expect(keys.length).toBeGreaterThan(0);
+    for (const key of keys) {
+      expect(key).toContain('data-vt^="route-"');
+      expect(key).not.toContain('data-vt="expand"');
+      expect(key).not.toContain('data-vt="collapse"');
+    }
+  });
+});
+
 describe('源码静态检查', () => {
   it('motion-styles.ts 与 theme.ts 不使用 transition: all', () => {
     for (const source of [motionStylesSource, themeSource]) {
