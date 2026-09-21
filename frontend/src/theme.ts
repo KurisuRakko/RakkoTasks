@@ -370,6 +370,28 @@ function buildThemeOptions(mode: Mode): ThemeOptions {
           root: { backgroundColor: 'transparent' },
         },
       },
+      // 底栏项的度量按上游 BottomNav 契约（bottom-nav.css 的 .rk-bottom-nav__item）：
+      // gap 3px / padding 8px 4px 10px / 12px 500 行高 1.6，图标 20×20。
+      // 图标那一条是自有偏离的落点：上游显式给图与字定位，MUI 会按 showLabels 给
+      // icon 加 margin-bottom（默认 4px、选中态 1px）——它在 flex 列里与 gap 叠加成
+      // 两段间距，选中前后条目高度还会跳一下，所以清零、只留 gap。
+      // label 字号必须压平：MUI 默认给 .MuiBottomNavigationAction-label 自带字号，
+      // 且选中态再抬一档（契约里选中只换颜色、不换字号），不压平两态字号就不一致。
+      MuiBottomNavigationAction: {
+        styleOverrides: {
+          root: {
+            gap: 3,
+            padding: '8px 4px 10px',
+            fontSize: 12,
+            fontWeight: 500,
+            lineHeight: 1.6,
+            '& .MuiBottomNavigationAction-label': { fontSize: 12, lineHeight: 1.6 },
+            '&.Mui-selected .MuiBottomNavigationAction-label': { fontSize: 12 },
+            '& .MuiSvgIcon-root': { width: 20, height: 20, fontSize: 20, marginBottom: 0 },
+            '&.Mui-selected .MuiSvgIcon-root': { marginBottom: 0 },
+          },
+        },
+      },
       // Drawer 纸底由另一路给侧边栏挂 data-glass（chrome 配方）；这里的 borderRight
       // 保留——chrome 档的发丝线画在下缘（box-shadow: 0 1px 0），方向对不上侧边栏，
       // 右侧分割线仍由主题层给。

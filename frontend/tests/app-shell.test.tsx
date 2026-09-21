@@ -21,6 +21,71 @@ import { setWallpaper } from '../src/lib/wallpaper';
 import { AppThemeProvider, allStyleText } from './glass-text-contrast.test-utils';
 import type { Item } from '../src/types';
 
+/** 元素身上全部 css-* 局部类对应规则块的拼接（写法同下方桌面侧栏那组的 ownRules、
+ * 以及 tasks-page.test.tsx）：emotion 把 styled 基类与 sx 类分开成两个 css-* 类，
+ * 只取第一个会漏掉 sx 写的那半；同一个类的嵌套块（&::before 这类假元素规则）与
+ * @media 里的改写也是独立的顶层规则块，所以按「以 .类名 开头的每条规则」收集，
+ * 而不是只切第一个块。jsdom 解析不了 emotion 的级联，但规则文本可逐字读。 */
+function ownRules(css: string, el: Element): string {
+  const classes = Array.from(el.classList).filter((c) => c.startsWith('css-'));
+  const chunks: string[] = [];
+  for (const cls of classes) {
+    const head = `.${cls}`;
+    let from = 0;
+    for (;;) {
+      const start = css.indexOf(head, from);
+      if (start < 0) break;
+      // 类名必须正好结束：css-abc 不该匹配 css-abcd
+      const next = css[start + head.length];
+      if (next !== '{' && next !== ':' && next !== '.' && next !== '[' && next !== ' ') break;
+      const open = css.indexOf('{', start);
+      if (open < 0) break;
+      let depth = 0;
+      let end = -1;
+      for (let i = open; i < css.length; i += 1) {
+        if (css[i] === '{') depth += 1;
+        else if (css[i] === '}') {
+          depth -= 1;
+          if (depth === 0) {
+            end = i;
+            break;
+          }
+        }
+      }
+      if (end < 0) break;
+      chunks.push(css.slice(start, end + 1));
+      from = end + 1;
+    }
+  }
+  return chunks.join(' ');
+}
+
+/** 拼接规则块里某条声明的整段值（从 `prop:` 到该块结尾，声明之间用 ';' 分隔）。
+ *  用于「这条声明的值里必须同时有 A 和 B」这类断言——要求确有该声明，而不是靠
+ *  `toContain` 在整段 CSS 文本里碰运气。 */
+function declarationValue(rule: string, prop: string): string {
+  const at = rule.indexOf(`${prop}:`);
+  expect(at, `规则里应有 ${prop} 声明：${rule}`).toBeGreaterThanOrEqual(0);
+  return rule.slice(at);
+}
+
+/** 底栏那块 Paper（玻璃条）：外层 chrome + 内层 BottomNavigation。
+ *  scope 是查询根（用例里渲染两次时给局部 container）：document.querySelector 只返回
+ *  第一个匹配，同一用例里二次渲染会让旧那棵树的节点先被选中，断言就落在死节点上。 */
+function bottomNavPaper(scope: ParentNode = document): HTMLElement {
+  const nav = scope.querySelector('.MuiBottomNavigation-root');
+  expect(nav).not.toBeNull();
+  const paper = nav!.parentElement;
+  expect(paper).not.toBeNull();
+  return paper as HTMLElement;
+}
+
+function bottomNavList(scope: ParentNode = document): HTMLElement {
+  const nav = scope.querySelector('.MuiBottomNavigation-root');
+  expect(nav).not.toBeNull();
+  return nav as HTMLElement;
+}
+
 /** 已删除的内容玻璃底板的旧共享元素名。VT_NAMES 里对应项已随底板一并移除，
  * 这里保留字面量只为防回归：底板若被重新引入，下面两条断言会红。 */
 const REMOVED_CONTENT_GLASS_NAME = 'rtk-content-glass';
@@ -121,8 +186,9 @@ function renderShell(items: Item[] = [], initial = '/') {
   );
 }
 
-/** 与 renderShell 相同但挂应用真实主题（浅色）：底栏文字色守卫断言 token 原值用 */
-function renderRealThemeShell(items: Item[] = []) {
+/** 与 renderShell 相同但挂应用真实主题（浅色）：底栏文字色守卫断言 token 原值用。
+ *  initial 默认 '/'（各守卫用例的起点都是首页）；指示条那条要落在设置页（navIndex -1）时传路径。 */
+function renderRealThemeShell(items: Item[] = [], initial = '/') {
   vi.stubGlobal(
     'fetch',
     vi.fn(async (input: RequestInfo | URL) => {
@@ -134,15 +200,15 @@ function renderRealThemeShell(items: Item[] = []) {
   );
   return render(
     <AppThemeProvider>
-      <MemoryRouter initialEntries={['/']} useTransitions={false}>
+      <MemoryRouter initialEntries={[initial]} useTransitions={false}>
         <AppShell />
       </MemoryRouter>
     </AppThemeProvider>,
   );
 }
 
-function appBar(): HTMLElement {
-  const el = document.querySelector('.MuiAppBar-root');
+function appBar(scope: ParentNode = document): HTMLElement {
+  const el = scope.querySelector('.MuiAppBar-root');
   expect(el).not.toBeNull();
   return el as HTMLElement;
 }
@@ -387,27 +453,105 @@ describe('底栏未选中标签文字色（chrome 玻璃上没有次级色的守
   });
 });
 
+// 底栏对齐上游 BottomNav 契约（Rakko-Design commit b2deb8b：templates/snippets/bottom-nav.html、
+// react/src/bottom-nav/bottom-nav.css、references/components.md 的 BottomNav 一节、
+// docs/2026-09-20-bottom-nav.md）。本项目用 MUI 不用 @rakko/react（该包不在 npm，Docker
+// 构建装不到，与 rakko-glass.css / rakko-tokens.ts 同样只能移植），所以这里逐条钉契约的
+// 四项：导航语义（<nav> + aria-label）、发丝线画法（box-shadow 不占布局盒子）、里层列表
+// 限宽居中、顶边指示条（纯 CSS 定位 + navIndex 为 -1 时不显示）。
+describe('底栏对齐 BottomNav 契约（nav 语义 / 发丝线 / 限宽 / 指示条）', () => {
+  it('底栏外层是 nav 元素并带 aria-label="主导航"，内层项仍是按钮角色', async () => {
+    renderShell();
+    await screen.findByText('没有待办任务');
+
+    const paper = bottomNavPaper();
+    expect(paper.tagName).toBe('NAV');
+    expect(paper.getAttribute('aria-label')).toBe('主导航');
+    // 内层不许改成 tablist：本项目没有 Tabs primitive，没有 tabpanel 的假语义比现状更差
+    expect(paper).not.toHaveAttribute('role', 'tablist');
+    const list = bottomNavList();
+    expect(list.getAttribute('role')).not.toBe('tablist');
+    expect(within(list).getAllByRole('button')).toHaveLength(NAV_ITEMS.length);
+  });
+
+  it('发丝线：用 [data-glass="chrome"] 抬特异性赢过配方，且不抹掉配方的内唇高光', async () => {
+    renderShell();
+    await screen.findByText('没有待办任务');
+
+    const rule = ownRules(allStyleText(), bottomNavPaper());
+    // 打赢级联的能力就看这条：App.tsx 的 injectFirst 把 emotion 插在 <head> 最前，
+    // rakko-glass.css 的 [data-glass='chrome'] 在其后且同为 (0,1,0)，裸 .css-* 类
+    // 必输；带上属性选择器抬到 (0,2,0) 才赢。
+    expect(rule).toContain('[data-glass="chrome"]{');
+    // 只认带属性选择器的那一条：没有它，真机上这条规则进不了场（见上）
+    expect(rule).toContain('[data-glass="chrome"]{box-shadow:');
+    // box-shadow 是整条替换：既要有顶边发丝线，也要原样带上 Aero 配方那层内唇高光
+    const shadow = declarationValue(rule, 'box-shadow');
+    expect(shadow).toContain('inset 0 1px 0 var(--glass-lip)');
+    expect(shadow).toContain('0 -1px 0 var(--color-border)');
+    // border 会占布局盒子（底栏高度多 1px），契约只允许改 box-shadow
+    expect(rule).not.toContain('border-top');
+  });
+
+  it('内层列表限宽居中（max-width 取 --rk-bottom-nav-max-width，回落 640px）', async () => {
+    renderShell();
+    await screen.findByText('没有待办任务');
+
+    const rule = ownRules(allStyleText(), bottomNavList());
+    expect(rule).toContain('max-width:var(--rk-bottom-nav-max-width, 640px)');
+    expect(rule).toContain('margin-inline:auto');
+  });
+
+  it('指示条：首页（navIndex 0）可见，设置页（navIndex -1）不可见', async () => {
+    // 用应用真实主题渲染：指示条色是 theme.palette.primary.main，只有真实主题下才等于
+    // token 的 ACCENT.light（renderShell 用的裸 createTheme 是 MUI 默认蓝）
+    const home = renderRealThemeShell(SHELL_ITEMS);
+    await screen.findByText('任务一');
+
+    // 宽度与位移是纯 CSS 算的（项数固定、等宽平分），锁规则文本：jsdom 连
+    // getComputedStyle(el, '::before') 都没实现（直接抛 "Not implemented"），假元素
+    // 的生效值在这里读不到，能读到的只有 emotion 注入的规则文本。
+    const homeRules = ownRules(allStyleText(), bottomNavList(home.container));
+    expect(homeRules).toContain('::before{');
+    expect(homeRules).toContain(`width:calc(100% / ${NAV_ITEMS.length})`);
+    expect(homeRules).toContain('height:2px');
+    // 圆角必须带单位：sx 的数值 borderRadius 是乘数（乘 theme.shape.borderRadius = 6），
+    // 写 border-radius:1 会出来 6px，2px 高的指示条就成了个药丸
+    expect(homeRules).toContain('border-radius:1px');
+    expect(homeRules).not.toContain('border-radius:6px');
+    expect(homeRules).toContain(`background-color:${ACCENT.light}`);
+    expect(homeRules).toContain('opacity:1');
+    expect(homeRules).toContain('translate:0% 0');
+    // 过渡只动 translate，且时长/缓动来自 theme.transitions（不手写毫秒）
+    expect(homeRules).toMatch(/transition:translate \d+ms cubic-bezier\(/);
+
+    // 设置页：navIndex -1 时只靠 opacity 隐藏，位移钳在第一格。
+    // 先把首页那棵树卸掉：同一个用例里两次渲染会并存，document 上的查询会落到旧节点。
+    cleanup();
+    const settings = renderRealThemeShell([], '/settings');
+    // 与「点 AppBar 设置按钮进设置页」那条同款等待：标题跟随路由落到设置页
+    await within(appBar(settings.container)).findByText('设置');
+
+    const settingsRules = ownRules(allStyleText(), bottomNavList(settings.container));
+    expect(settingsRules).toContain('opacity:0');
+    // 位移不跟着 -1 走：transition 只列了 translate，opacity 是瞬变，若位移到 -100%
+    // 从设置页回首页时会看见指示条从左边缘扫进来——任务书明确禁止的甩出屏幕
+    expect(settingsRules).toContain('translate:0% 0');
+    expect(settingsRules).not.toContain('translate:-100% 0');
+    // 指示条元素本身照旧存在（不是靠不渲染来隐藏），首页那条断言已锁它的全部度量
+    expect(settingsRules).toContain('::before{');
+    expect(settingsRules).toContain(`width:calc(100% / ${NAV_ITEMS.length})`);
+  });
+});
+
 // 桌面常驻侧栏的浅色削白改写：值是 rakko-tokens 的 GLASS_NAV_RAIL_LIGHT，落点是 AppShell
 // 的 navRailGlassSx（挂在那块 permanent Drawer 的 paper 上，不是 :root）。chrome 档同时是
 // 顶栏、侧栏、移动底栏三块表面，改 :root 会连带改掉手机端的两块；本组把「改写只落在侧栏
 // 且只在浅色下」钉死。观感是否「不再发白」要由真机判定，这里只锁作用范围与变量值。
 describe('桌面侧栏浅色削白（只动侧栏那一块 chrome）', () => {
   // jsdom 给不出真实渲染，玻璃变量走 emotion 规则文本。Drawer paper 的样式分在多个
-  // css-* 类上（styled 一个、sx 一个），只取第一个类不够 —— 把元素身上全部 css-* 类
-  // 对应规则块拼起来再查（写法同 tasks-page.test.tsx 的 ownRules）。
-
-  /** 元素身上全部 css-* 局部类对应规则块的拼接 */
-  function ownRules(css: string, el: Element): string {
-    return Array.from(el.classList)
-      .filter((c) => c.startsWith('css-'))
-      .map((c) => {
-        const start = css.indexOf(`.${c}{`);
-        if (start < 0) return '';
-        const end = css.indexOf('}', start);
-        return end < 0 ? '' : css.slice(start, end);
-      })
-      .join(' ');
-  }
+  // css-* 类上（styled 一个、sx 一个），只取第一个类不够 —— 复用文件顶部的 ownRules，
+  // 它把元素身上全部 css-* 类对应的规则块拼起来（写法同 tasks-page.test.tsx）。
 
   afterEach(() => {
     // theme-mode 是 localStorage 持久化的三态：不清会让后续用例跟着停在深色

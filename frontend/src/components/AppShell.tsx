@@ -202,8 +202,16 @@ export default function AppShell() {
       {/* 移动端：底部导航（md 以下），固定定位，内容区已预留 padding。底栏自己就是
           一块 data-glass="chrome" 玻璃（与顶栏同档常驻 chrome），材质由 rakko-glass.css
           配方提供——主题层与局部 sx 都不能再下发 background，否则会盖掉配方（同
-          MuiAppBar 让位的道理）。borderTop 保留：chrome 档的发丝线在下缘、底栏需要顶边。 */}
+          MuiAppBar 让位的道理）。发丝线按上游 BottomNav 契约（docs/2026-09-20-bottom-nav.md
+          决定 3）从 chrome 档的下缘翻到顶边：翻法只允许改 box-shadow，不许写成 border
+          ——border 会占布局盒子，底栏高度会因此多 1px。
+          component="nav" + aria-label 取契约的「一条固定的 <nav> 承载一排项」；
+          内层保持 MUI BottomNavigationAction 的 role="button"（契约里的 tablist 语义来自
+          @rakko/react 复用 Tabs 的实现细节，本项目没有 Tabs primitive，强套 role="tablist"
+          会造出没有 tabpanel 的假语义）。 */}
       <Paper
+        component="nav"
+        aria-label="主导航"
         elevation={0}
         data-glass="chrome"
         {...shellAttr(VT_NAMES.bottomNav)}
@@ -215,23 +223,70 @@ export default function AppShell() {
           zIndex: 1100,
           pb: 'env(safe-area-inset-bottom)',
           display: { xs: 'block', md: 'none' },
-          borderTop: (theme) => `1px solid ${theme.palette.divider}`,
+          // 发丝线翻到顶边必须写成 &[data-glass="chrome"] 限定的嵌套选择器，裸
+          // boxShadow 声明在真实浏览器里打不过配方：App.tsx 用 injectFirst 把 emotion
+          // 插到 <head> 最前，rakko-glass.css 的 [data-glass='chrome'] 在其后，两者
+          // 特异性同为 (0,1,0)，同特异性下后插入的赢（同 theme.ts 的 MuiPaper 要写
+          // &:not([data-glass]) 的道理）。带上属性选择器抬到 (0,2,0) 才赢得下配方。
+          // 值里保留 inset 0 1px 0 var(--glass-lip)：box-shadow 是整条替换，只写
+          // 0 -1px 的话 Aero 配方那层内唇高光会被一起抹掉，底栏少一层厚度边。
+          '&[data-glass="chrome"]': {
+            boxShadow: 'inset 0 1px 0 var(--glass-lip), 0 -1px 0 var(--color-border)',
+          },
         }}
       >
+        {/* 明知偏离：契约（bottom-nav.css 的 .rk-bottom-nav__item）的未选中项是
+            color: var(--color-neutral-7)，本项目用 text.primary = n9。理由和落点是
+            实测事实，不是口味：底栏整块是 data-glass="chrome"（纸色 45%），n7 压在这块
+            玻璃亮壁纸浅色主题下实测对比度 1.67，远低于 AA 正文要求的 4.5；提到 n9 才有
+            数量级改善。覆盖用 :not(.Mui-selected) 精确排除选中项——选中态是 accent
+            （primary.main），与可读性无关，不能被一起盖掉。要改回契约值先改上游
+            tokens/实测结论，别只改这一行。
+
+            指示条（契约的 .rk-bottom-nav__indicator，静态落在当前项上）用内层
+            BottomNavigation 的 ::before 画：它不长出 DOM 节点，也就不占用
+            BottomNavigation 的子元素位（该组件只认子项与分页两个角色）。宽度与位移
+            全走纯 CSS —— 底栏项数固定且等宽平分，宽度 100% / NAV_ITEMS.length、
+            位移 Math.max(navIndex, 0) * 100%（translate 的百分比按自身宽度解，正好
+            是一格），不需要 JS 测量。设置组 navIndex 是 -1：位移钳到第一格、只靠
+            opacity: 0 隐藏。不能直接乘 -1 把它甩到 -100%——transition 只列了
+            translate，opacity 是瞬变，从设置页回首页时可见度先跳回 1、再从左边缘
+            扫进来，正是契约里没有「没有当前项」这个态该避免的脏做法。 */}
         <BottomNavigation
           value={navIndex}
           onChange={(_e, v) => go(NAV_ITEMS[v].path)}
           showLabels
-          // 未选中标签压在同一块 data-glass="chrome" 玻璃上（纸色 45%，比列表行的
-          // panel 更透）：MUI 默认的 text.secondary（n7）实测对比度低到 1.67（亮壁纸
-          // 浅色主题），远低于 AA 4.5，只有提到 text.primary（n9）才有数量级改善。
-          // 选中态是 accent（primary.main），与可读性无关——覆盖必须用精确选择器
-          // 排除选中项，不能把选中态一起盖掉
-          sx={{
+          // 玻璃条三边贴满，里层列表限宽居中（同 contract 的 .rk-bottom-nav__list：
+          // 桌面上三个项摊在整屏宽会散得看不出是一组）。position: relative 是指示条的
+          // 定位上下文。
+          sx={(theme) => ({
+            maxWidth: 'var(--rk-bottom-nav-max-width, 640px)',
+            marginInline: 'auto',
+            position: 'relative',
+            '&::before': {
+              content: '""',
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              height: 2,
+              width: `calc(100% / ${NAV_ITEMS.length})`,
+              // 必须带单位：sx 的数值 borderRadius 是乘数，会乘 theme.shape.borderRadius
+              // （RADIUS.base = 6），写 1 出来的是 6px 圆角，不是契约的 1px
+              borderRadius: '1px',
+              backgroundColor: theme.palette.primary.main,
+              opacity: navIndex === -1 ? 0 : 1,
+              // 时长与缓动取 theme.transitions（theme.ts 已把 rakko 的 MOTION 接进去：
+              // standard = MOTION.enter，easeInOut = MOTION.easeStandard），不手写毫秒
+              transition: `translate ${
+                theme.transitions.duration.standard
+              }ms ${theme.transitions.easing.easeInOut}`,
+              translate: `${Math.max(navIndex, 0) * 100}% 0`,
+              '@media (prefers-reduced-motion: reduce)': { transition: 'none' },
+            },
             '& .MuiBottomNavigationAction-root:not(.Mui-selected)': {
               color: 'text.primary',
             },
-          }}
+          })}
         >
           {NAV_ITEMS.map((item) => (
             <BottomNavigationAction key={item.path} label={item.label} icon={<item.icon />} />
