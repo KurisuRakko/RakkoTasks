@@ -27,7 +27,46 @@ export const ROW_GAP_PX = 8;
 export const ROW_MIN_HEIGHT_PX = 48;
 
 /** 列表行玻璃的圆角：纸底 / 边框 / 高光 / 阴影归 data-glass="panel" 配方（见文件头），
- *  配方不管圆角，由这里补上 */
+ *  配方不管圆角，由这里补上。写成 `${RADIUS.card}px` 字符串而不是裸数字：sx 里 borderRadius
+ *  的裸数字是 theme.shape.borderRadius 的**乘数**（本项目 = RADIUS.base = 6），裸写 6 会得到
+ *  36px，字符串才原样进 CSS。 */
 export function cardRowSx(): SystemStyleObject<Theme> {
   return { borderRadius: `${RADIUS.card}px` };
+}
+
+/** 触控命中区下限（px）：WCAG 2.5.5 目标尺寸（AAA）与 iOS HIG 的 44pt 同值 */
+const HIT_SLOP_MIN_PX = 44;
+
+/** 只扩命中区、不改视觉尺寸：给宿主盖一层居中的透明 ::after，把可点区域撑到 size×size。
+ *
+ *  为什么不直接放大按钮：MUI 的 IconButton size="small" 实测命中区只有 30×30、Checkbox
+ *  42×42，都够不到 44×44 的触控下限；但把它们自身放大到 44 会撑坏既有的紧凑排版
+ *  （列表行高、工具栏间距、对话框标题栏都是按小控件排的）。放宽的是「能点到哪」，
+ *  不是「长多大」，所以走伪元素而不是改尺寸。
+ *
+ *  伪元素为什么能接收点击：绝对定位的 ::after 是宿主渲染盒的一部分，停在宿主上方即可
+ *  命中宿主本身，点击事件照样冒泡到宿主上挂的 React handler 与 MUI 涟漪，不需要宿主
+ *  再监听任何事件。伪元素不给任何可见样式（无背景、无边框），也就不影响宿主的观感。
+ *
+ *  调用方的裁剪风险：宿主被本函数置为 position: 'relative'，伪元素的包含块就是宿主，
+ *  但它仍会被宿主的祖先裁掉——祖先若有 overflow: hidden 且可用高度小于 size（典型是列表行
+ *  玻璃，行高由 ROW_MIN_HEIGHT_PX 兜底），伪元素的上下两端会被裁平，命中区实际达不到标称的
+ *  size（已实测：36px 高的 overflow: hidden 行把 44px 命中区裁到约 36px）。相邻两个扩过命中区
+ *  的控件如果挨得比 size 近，两片伪元素会重叠，重叠处由渲染顺序靠后的那个元素收走点击。
+ *
+ *  width / height 上的裸数字是 px 直通，不走 theme.spacing 乘算（spacing 只作用于
+ *  padding / margin 家族）。 */
+export function hitSlopSx(size = HIT_SLOP_MIN_PX): SystemStyleObject<Theme> {
+  return {
+    position: 'relative',
+    '&::after': {
+      content: '""',
+      position: 'absolute',
+      top: '50%',
+      left: '50%',
+      transform: 'translate(-50%, -50%)',
+      width: size,
+      height: size,
+    },
+  };
 }
