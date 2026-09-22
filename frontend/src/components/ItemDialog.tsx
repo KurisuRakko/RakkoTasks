@@ -46,7 +46,7 @@ import {
 } from '../lib/api';
 import { copyText } from '../lib/clipboard';
 import DueChip from './DueChip';
-import { columnDialogSx } from '../lib/layout';
+import { columnDialogSx, DIALOG_BODY_SX } from '../lib/layout';
 import { formatReminder } from '../lib/time';
 import type { AccountInfo, Email, Item, ItemFields, RelatedEmail } from '../types';
 import EmailViewer from './EmailViewer';
@@ -210,7 +210,7 @@ export default function ItemDialog({ item, onClose, onChanged, onDeleted }: Prop
           )}
         </Toolbar>
       </AppBar>
-      <Box sx={{ px: 2, py: 2, pb: 'calc(16px + env(safe-area-inset-bottom))' }}>
+      <Box sx={DIALOG_BODY_SX}>
         <Typography variant="h6" gutterBottom>
           {current.title}
         </Typography>

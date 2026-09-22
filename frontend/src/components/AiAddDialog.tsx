@@ -46,7 +46,7 @@ import { MAX_TITLE_LENGTH, parseEditorText } from './ItemEditor';
 import ItemFieldsForm from './ItemFieldsForm';
 import ParsedTaskList from './ParsedTaskList';
 import { usePrefersReducedMotion } from '../lib/motion';
-import { mainAreaDialogSx } from '../lib/layout';
+import { mainAreaDialogSx, DIALOG_BODY_SX } from '../lib/layout';
 
 /** fields 阶段里一条待办的可编辑草案。text 的第一行是标题，其余是详情 */
 export interface Draft {
@@ -334,7 +334,7 @@ export default function AiAddDialog({
               ItemFieldsForm 这类不透传 ref 的组件时 nodeRef 悬空 */}
           <Box>
             {phase === 'input' ? (
-              <Box sx={{ px: 2, py: 2, pb: 'calc(16px + env(safe-area-inset-bottom))' }}>
+              <Box sx={DIALOG_BODY_SX}>
                 <TextField
                   label="待办内容"
                   placeholder="例如「明天 15:00 提醒我买奶茶，18:00 接斯卡蒂」"
@@ -368,7 +368,7 @@ export default function AiAddDialog({
               <Box
                 aria-busy
                 aria-label="正在识别"
-                sx={{ px: 2, py: 2, pb: 'calc(16px + env(safe-area-inset-bottom))' }}
+                sx={DIALOG_BODY_SX}
               >
                 <Stack spacing={2}>
                   <Skeleton variant="text" width="60%" height={32} />

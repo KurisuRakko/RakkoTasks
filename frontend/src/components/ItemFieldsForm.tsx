@@ -33,6 +33,8 @@ import ClearIcon from '@mui/icons-material/Clear';
 import type { Ref } from 'react';
 import { useState } from 'react';
 import { fromDatetimeLocalValue, toDatetimeLocalValue } from '../lib/time';
+import { DIALOG_BODY_SX } from '../lib/layout';
+import { hitSlopSx } from '../lib/surface';
 import { CATEGORIES, DEFAULT_REMIND_HOUR, REMINDERS_MAX } from '../types';
 import type { Category, Importance } from '../types';
 
@@ -144,7 +146,7 @@ export default function ItemFieldsForm({
   };
 
   return (
-    <Box sx={{ px: 2, py: 2, pb: 'calc(16px + env(safe-area-inset-bottom))' }}>
+    <Box sx={DIALOG_BODY_SX}>
       <TextField
         label="第一行是标题，从第二行开始是详情"
         multiline
@@ -215,7 +217,9 @@ export default function ItemFieldsForm({
             size="small"
             aria-label="清除日期"
             onClick={() => onDateChange('')}
-            sx={{ flexShrink: 0 }}
+            // 命中区铺到 44：size="small" 的 IconButton 自身只有 30，够不到触控下限。
+            // 伪元素每边外扩 7，小于 Stack spacing={1} 的 8，不会压到左侧输入框的可点边缘。
+            sx={{ ...hitSlopSx(), flexShrink: 0 }}
           >
             <ClearIcon fontSize="small" />
           </IconButton>
@@ -248,7 +252,9 @@ export default function ItemFieldsForm({
                 size="small"
                 aria-label={`删除提醒 ${index + 1}`}
                 onClick={() => handleRemoveReminder(index)}
-                sx={{ flexShrink: 0 }}
+                // 命中区铺到 44：size="small" 的 IconButton 自身只有 30，够不到触控下限。
+                // 伪元素每边外扩 7，小于 Stack spacing={1} 的 8，不会压到左侧输入框的可点边缘。
+                sx={{ ...hitSlopSx(), flexShrink: 0 }}
               >
                 <ClearIcon fontSize="small" />
               </IconButton>

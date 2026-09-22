@@ -13,6 +13,7 @@ import Stack from '@mui/material/Stack';
 import Switch from '@mui/material/Switch';
 import Typography from '@mui/material/Typography';
 import { fetchEmail } from '../lib/api';
+import { RADIUS } from '../rakko-tokens';
 import type { Email } from '../types';
 
 interface Props {
@@ -90,7 +91,9 @@ export default function EmailViewer({ emailId }: Props) {
               width: '100%',
               height: '70vh',
               border: 0,
-              borderRadius: 1,
+              // sx 里 borderRadius 的裸数字是 theme.shape.borderRadius 的**乘数**，不是 px：
+              // 这里以前写 1，靠 1×6 才凑出 6px。要的是 6px 原样直通，写成显式 px 串。
+              borderRadius: `${RADIUS.card}px`,
               bgcolor: 'background.paper',
             }}
           />
@@ -108,7 +111,8 @@ export default function EmailViewer({ emailId }: Props) {
             fontFamily: 'inherit',
             fontSize: '0.875rem',
             bgcolor: 'action.hover',
-            borderRadius: 1,
+            // 同上：同是 6px，走显式 px 串，不再靠裸数字乘出这个值。
+            borderRadius: `${RADIUS.card}px`,
           }}
         >
           {email.text_body ?? '（无正文）'}

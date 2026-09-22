@@ -21,7 +21,7 @@ import Typography from "@mui/material/Typography";
 import useMediaQuery from "@mui/material/useMediaQuery";
 import { useTheme } from "@mui/material/styles";
 import { fetchStatus } from "../../lib/api";
-import { mainAreaDialogSx } from "../../lib/layout";
+import { mainAreaDialogSx, EMPTY_STATE_BOX_SX } from "../../lib/layout";
 import {
   enterSx,
   usePrefersReducedMotion,
@@ -128,7 +128,7 @@ export default function AccountsSection() {
       </Stack>
 
       {loading && !data ? (
-        <Box sx={{ display: "flex", justifyContent: "center", py: 6 }}>
+        <Box sx={EMPTY_STATE_BOX_SX}>
           <CircularProgress />
         </Box>
       ) : error && !data ? (
