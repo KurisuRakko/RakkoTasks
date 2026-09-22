@@ -19,20 +19,9 @@ import AccountDetail from '../components/accounts/AccountDetail';
 import AccountRemoveChoice from '../components/accounts/RemoveAccountChoice';
 import AccountWizard from '../components/accounts/AccountWizard';
 import { fetchAccounts } from '../lib/api';
+import { EMPTY_STATE_BOX_SX, PAGE_SX, PANEL_SX } from '../lib/layout';
 import { useTransitionNavigate } from '../lib/motion';
-import { RADIUS } from '../rakko-tokens';
 import type { AccountInfo } from '../types';
-
-/** 页面外壳：与 SettingsPage 同一口径——不给横向内边距（玻璃面板贴着内容区左右边，
- *  横向留白由面板自己的 px 提供），底部 padding 给固定底栏（AppShell，高 50–58px +
- *  env(safe-area-inset-bottom)）让出空间，72 = 底栏高 + 呼吸空间，不写死具体底栏高度。
- *  不给的话页面最下面的动作按钮会被底栏压住。 */
-const PAGE_SX = { pt: 2, pb: 'calc(72px + env(safe-area-inset-bottom))' } as const;
-
-/** 分区玻璃面板：材质（纸底 / 边框 / 高光 / 阴影）由 rakko-glass.css 的 data-glass="panel"
- *  配方提供——挂了 data-glass 的元素不能再下发 background/backgroundColor，否则盖掉配方。
- *  这里只补配方不管的圆角（与列表行同一 RADIUS.card）与内边距，口径同 SettingsPage。 */
-const PANEL_SX = { px: 2, py: 2, borderRadius: `${RADIUS.card}px` } as const;
 
 type LoadState =
   | { state: 'loading' }
@@ -93,7 +82,7 @@ function useDesktopOnlyRedirect(): boolean {
 function LoadingPage() {
   return (
     <AccountPageShell>
-      <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}>
+      <Box sx={EMPTY_STATE_BOX_SX}>
         <CircularProgress />
       </Box>
     </AccountPageShell>

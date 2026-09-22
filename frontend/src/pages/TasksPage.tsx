@@ -34,6 +34,7 @@ import Typography from '@mui/material/Typography';
 import AddIcon from '@mui/icons-material/Add';
 import { createItem, fetchItems, fetchStatus, parseTask, patchItem, quickAddTask } from '../lib/api';
 import { groupItems, isNewToday } from '../lib/grouping';
+import { EMPTY_STATE_BOX_SX } from '../lib/layout';
 import { moveItem, openKey, removeItem, upsertOpenItem, useCachedList } from '../lib/list-cache';
 import {
   LEAVE_DURATION,
@@ -43,7 +44,7 @@ import {
   useTransitionNavigate,
 } from '../lib/motion';
 import { useLongPress } from '../lib/long-press';
-import { cardRowSx } from '../lib/surface';
+import { cardRowSx, hitSlopSx } from '../lib/surface';
 import { todayIso } from '../lib/time';
 import { shellAttr, VT_NAMES } from '../lib/view-transition';
 import { GLASS, MOTION, TYPE_SCALE } from '../rakko-tokens';
@@ -213,6 +214,11 @@ function TaskRow({
             checked={leaving}
             tabIndex={-1}
             disableRipple
+            // 命中区补齐到 44×44：勾选框自身 42×42，伪元素横向多出的 1px 落在 8px 列间距里，
+            // 不侵入右侧标题。纵向受行的 overflow: hidden 约束——无摘要的行高 48、勾选框在行内
+            // 居中，44 完整落地；带摘要的行里勾选框贴着标题首行（中心比行中线高 10px），伪元素
+            // 上端探出行上沿 3px 被裁，纵向实测约 41px（来源于上面那条中线对齐，非本次引入）。
+            sx={hitSlopSx()}
             onClick={(e) => {
               e.stopPropagation();
               onToggle(item);
@@ -530,7 +536,7 @@ export default function TasksPage() {
     <Box>
       <CategoryChips value={category} onChange={setCategory} />
       {loading ? (
-        <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}>
+        <Box sx={EMPTY_STATE_BOX_SX}>
           <CircularProgress />
         </Box>
       ) : error ? (

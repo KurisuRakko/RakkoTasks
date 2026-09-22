@@ -34,20 +34,15 @@ import {
 } from '../lib/api';
 import { copyText } from '../lib/clipboard';
 import { API_BASE_URL, PHAINON_API_BASE } from '../lib/env';
+import { PAGE_SX, PANEL_SX } from '../lib/layout';
 import { logout, startLogin } from '../lib/phainon';
 import { checkForUpdate } from '../lib/pwa-update';
 import { useSession } from '../lib/session';
-import { ROW_GAP_PX } from '../lib/surface';
+import { hitSlopSx, ROW_GAP_PX } from '../lib/surface';
 import { useThemeMode } from '../lib/theme-mode';
 import { compressWallpaper, setWallpaper, useWallpaper } from '../lib/wallpaper';
 import { RADIUS } from '../rakko-tokens';
 import type { CaldavInfo } from '../types';
-
-/** 分区玻璃面板：材质（纸底 / 边框 / 高光 / 阴影）由 rakko-glass.css 的
- *  data-glass="panel" 配方提供——挂了 data-glass 的元素，主题层与局部 sx 都不能再
- *  下发 background/backgroundColor，否则盖掉玻璃配方。这里只补配方不管的圆角
- *  （与列表行同一 RADIUS.card）与统一内边距。 */
-const PANEL_SX = { px: 2, py: 2, borderRadius: `${RADIUS.card}px` };
 
 export default function SettingsPage() {
   // 日历订阅：令牌 + 订阅链接，加载失败降级为 Alert
@@ -209,13 +204,11 @@ export default function SettingsPage() {
 
   return (
     // 页面外壳：各分区是 data-glass="panel" 玻璃卡片，卡间竖向间距与列表行一致
-    // （ROW_GAP_PX），不再用 Divider 硬切。底部 padding 给固定底栏（AppShell，
-    // 高 50–58px + env(safe-area-inset-bottom)）让出空间：72 = 底栏高 + 呼吸空间，
-    // 不写死具体底栏高度。
+    // （ROW_GAP_PX），不再用 Divider 硬切；顶部留白与底部给固定底栏的让位取自
+    // lib/layout 的 PAGE_SX。
     <Box
       sx={{
-        pt: 2,
-        pb: 'calc(72px + env(safe-area-inset-bottom))',
+        ...PAGE_SX,
         display: 'flex',
         flexDirection: 'column',
         gap: `${ROW_GAP_PX}px`,
@@ -346,7 +339,14 @@ export default function SettingsPage() {
                 InputProps={{ readOnly: true }}
                 inputProps={{ 'aria-label': '服务器' }}
               />
-              <IconButton size="small" aria-label="复制服务器" onClick={handleCopyServer}>
+              <IconButton
+                size="small"
+                aria-label="复制服务器"
+                onClick={handleCopyServer}
+                // 命中区补齐到 44×44：按钮自身 30×30，伪元素每边外扩 7px，小于
+                // Stack spacing={1} 的 8px 间隔，不侵入左侧 TextField。
+                sx={hitSlopSx()}
+              >
                 <ContentCopyIcon fontSize="small" />
               </IconButton>
             </Stack>
@@ -358,7 +358,12 @@ export default function SettingsPage() {
                 InputProps={{ readOnly: true }}
                 inputProps={{ 'aria-label': '用户名' }}
               />
-              <IconButton size="small" aria-label="复制用户名" onClick={handleCopyUsername}>
+              <IconButton
+                size="small"
+                aria-label="复制用户名"
+                onClick={handleCopyUsername}
+                sx={hitSlopSx()}
+              >
                 <ContentCopyIcon fontSize="small" />
               </IconButton>
             </Stack>
@@ -385,7 +390,12 @@ export default function SettingsPage() {
                     InputProps={{ readOnly: true }}
                     inputProps={{ 'aria-label': '同步密码' }}
                   />
-                  <IconButton size="small" aria-label="复制密码" onClick={handleCopyPassword}>
+                  <IconButton
+                    size="small"
+                    aria-label="复制密码"
+                    onClick={handleCopyPassword}
+                    sx={hitSlopSx()}
+                  >
                     <ContentCopyIcon fontSize="small" />
                   </IconButton>
                 </Stack>

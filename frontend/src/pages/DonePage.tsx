@@ -16,10 +16,11 @@ import ListItemText from '@mui/material/ListItemText';
 import Snackbar from '@mui/material/Snackbar';
 import Typography from '@mui/material/Typography';
 import { fetchItems, patchItem } from '../lib/api';
+import { EMPTY_STATE_BOX_SX } from '../lib/layout';
 import { DONE_KEY, moveItem, removeItem, replaceItem, useCachedList } from '../lib/list-cache';
 import { useLongPress } from '../lib/long-press';
 import { LEAVE_DURATION, rowSx, useMorphDialog, usePrefersReducedMotion } from '../lib/motion';
-import { cardRowSx } from '../lib/surface';
+import { cardRowSx, hitSlopSx } from '../lib/surface';
 import type { Item } from '../types';
 import ItemDialog from '../components/ItemDialog';
 import RowContextMenu from '../components/RowContextMenu';
@@ -83,6 +84,9 @@ function DoneRow({
           checked={!leaving}
           tabIndex={-1}
           disableRipple
+          // 命中区补齐到 44×44：勾选框自身 42×42，行高实测 58（带摘要 69.98），伪元素完整
+          // 落在行内不被裁。行内是 flex 且没有列间距，伪元素右端因此盖住标题盒子左侧 1px。
+          sx={hitSlopSx()}
           onClick={(e) => {
             e.stopPropagation();
             onUncheck(item);
@@ -155,7 +159,7 @@ export default function DonePage() {
   return (
     <Box>
       {loading ? (
-        <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}>
+        <Box sx={EMPTY_STATE_BOX_SX}>
           <CircularProgress />
         </Box>
       ) : error ? (
