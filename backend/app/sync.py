@@ -143,7 +143,6 @@ def _process_pending(
             _commit_email(session, email)
             failed += 1
         else:
-            was_ad = bool(result.get("filtered"))
             if result.get("filtered"):
                 email.filtered = True
                 email.filter_reason = result.get("filter_reason") or "被过滤"
@@ -179,9 +178,12 @@ def _process_pending(
             email.llm_state = "done"
             if not _commit_email(session, email):
                 failed += 1  # 提交失败转 error 的封计入失败
-            elif archive is not None and was_ad and email.filtered:
-                # 先提交再删：commit 失败会 rollback 并把该封改标 error，此时
-                # filtered 回到库里的 False，文件必须留着；只有落盘的广告才删。
+            elif archive is not None and email.filtered:
+                # 先提交再删，且提交成功后只看 email.filtered：队列里只有
+                # pending / error 两种状态，这两种在库里的 filtered 必定是 False
+                # （error 分支从不置 True，reclassify 会重置为 False），所以此时
+                # filtered 仍为 True 当且仅当本轮判为广告并且真的落库；commit 失败
+                # 会 rollback 并把该封改标 error，filtered 回到 False，文件必须留着。
                 # LLM 抛异常、判非广告的分支不走到这里，文件一律保留。
                 archive.discard(
                     email.account.email, email.message_id, email.subject, email.sent_at

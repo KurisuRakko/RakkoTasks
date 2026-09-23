@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-# 只写计数与异常类型名，绝不写异常字符串与邮件内容（见 _log_failure 说明）
+# 失败告警只写账户目录名与异常类名，绝不写异常字符串与邮件内容（见 _log_failure 说明）
 logger = logging.getLogger("rakkotasks.archive")
 
 # 文件名主题段的码点上限：中文 3 字节/字，50 字连同时间前缀与 .tmp 后缀
@@ -88,12 +88,15 @@ def archive_path(
         local = sent_at.replace(tzinfo=timezone.utc).astimezone(zone)
         path = root / account / local.strftime("%Y-%m-%d") / f"{local.strftime('%H%M%S')}_{slug}_{key}.eml"
     try:
-        # 防御纵深：slug 与账户名都已净化，正常规则下永远不该触发；
-        # 万一有人改坏了净化规则，这里要挡住路径逃逸而不是写出 root 之外
-        path.relative_to(root)
+        rel = path.relative_to(root)
     except ValueError as exc:
         # 异常文本里同样不带上文件名——文件名含主题
-        raise ValueError(f"归档路径逃出根目录（账户目录 {account}）") from exc
+        raise ValueError(f"归档路径不在根目录之下（账户目录 {account}）") from exc
+    # relative_to 只是字面比较，不会展开 ..（Path("/r/../x").relative_to("/r") 照样成功），
+    # 所以这里补一步：路径必须恰好三段且不含 ..。slug 与账户名都已净化，
+    # 正常规则下永远不该触发；万一有人改坏了净化规则，这里要挡住写出 root 之外
+    if ".." in rel.parts or len(rel.parts) != 3:
+        raise ValueError(f"归档路径形态非法（账户目录 {account}）")
     return path
 
 
@@ -110,7 +113,7 @@ class EmailArchive:
     @classmethod
     def from_settings(cls, settings) -> EmailArchive | None:
         """按配置构造；email_archive_dir 去空白后为空即关闭归档。"""
-        raw = (getattr(settings, "email_archive_dir", "") or "").strip()
+        raw = settings.email_archive_dir.strip()
         if not raw:
             return None
         return cls(Path(raw), local_zone(settings.local_timezone))
@@ -120,7 +123,7 @@ class EmailArchive:
     ) -> Path:
         return archive_path(self.root, account_email, message_id, subject, sent_at, self.zone)
 
-    def _log_failure(self, account_email: str, exc: OSError) -> None:
+    def _log_failure(self, account_email: str, exc: Exception) -> None:
         """只写账户目录名与异常类名。
 
         OSError 的字符串里带文件名，而文件名含主题——写进去就等于把邮件主题
@@ -136,35 +139,37 @@ class EmailArchive:
         sent_at: datetime | None,
         raw: bytes,
     ) -> None:
-        """把原始字节原子写入归档路径；失败只计数告警，不抛出。"""
-        path = self.path_for(account_email, message_id, subject, sent_at)
-        tmp = path.with_name(path.name + ".tmp")
+        """把原始字节原子写入归档路径；失败（含路径算不出）只计数告警，不抛出。"""
+        tmp: Path | None = None
         try:
-            # root 与两层子目录各自 mkdir：parents=True 建出的中间目录不套用 mode，
-            # 靠它建会把账户/日期目录留成 0o777 & ~umask，泄露邮件正文
-            if not self.root.exists():
-                self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
-            account_dir = path.parent.parent
-            date_dir = path.parent
-            if not account_dir.exists():
-                account_dir.mkdir(mode=0o700, exist_ok=True)
-            if not date_dir.exists():
-                date_dir.mkdir(mode=0o700, exist_ok=True)
+            path = self.path_for(account_email, message_id, subject, sent_at)
+            tmp = path.with_name(path.name + ".tmp")
+            # 三层各自 mkdir：parents=True 建出的中间目录不套用 mode，靠它建会把
+            # 账户/日期目录留成 0o777 & ~umask，目录列表（也就是文件名里的主题）就敞开了
+            self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
+            path.parent.parent.mkdir(mode=0o700, exist_ok=True)
+            path.parent.mkdir(mode=0o700, exist_ok=True)
             fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-            try:
-                os.write(fd, raw)
-            finally:
-                os.close(fd)
+            # fdopen 接管 fd 后由 with 负责关闭，不再手动 os.close
+            with os.fdopen(fd, "wb") as f:
+                f.write(raw)  # BufferedWriter 自己处理短写，不像 os.write 只写一次
+                f.flush()
+                # 不 fsync 的话断电时 rename 可能先于数据落盘，留下零字节文件；
+                # 归档的全部意义就是原件可靠，这一步不能省
+                os.fsync(f.fileno())
             # 目标已存在就直接覆盖：整批回滚后重拉同一封会算出同一路径，
             # 覆盖即自愈，不会留下重复副本或改名前被中断的孤儿文件
             os.replace(tmp, path)
-        except OSError as exc:
+        except (OSError, ValueError) as exc:
+            # ValueError 来自 archive_path 的路径校验：必须在归档内部吞掉，
+            # 冒泡到 _sync_account 会让整个账户批次回滚、last_uid 永不推进
             self.failed += 1
             self._log_failure(account_email, exc)
-            try:
-                os.unlink(tmp)  # 残留的 .tmp 不会被下轮复用，清掉；清不掉就算了
-            except OSError:
-                pass
+            if tmp is not None:
+                try:
+                    os.unlink(tmp)  # 残留的 .tmp 不会被下轮复用，清掉；清不掉就算了
+                except OSError:
+                    pass
             return
         self.written += 1
 
@@ -172,7 +177,15 @@ class EmailArchive:
         self, account_email: str, message_id: str, subject: str, sent_at: datetime | None
     ) -> None:
         """删除某封邮件的归档文件；文件本就不存在则静默跳过。"""
-        path = self.path_for(account_email, message_id, subject, sent_at)
+        try:
+            path = self.path_for(account_email, message_id, subject, sent_at)
+        except (OSError, ValueError) as exc:
+            # archive_path 的路径校验抛的 ValueError 必须在这里吞掉（冒泡到
+            # _sync_account 会让整批回滚、last_uid 永不推进），失败另计；也不能
+            # 让它落到下面的 FileNotFoundError 分支——那会被当成「文件不存在」放过
+            self.failed += 1
+            self._log_failure(account_email, exc)
+            return
         try:
             os.unlink(path)
         except FileNotFoundError:
