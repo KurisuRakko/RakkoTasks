@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.accounts import has_credentials
+from app.archive import EmailArchive
 from app.config import Settings, get_settings
 from app.detail import apply_detail, generate_item_detail
 from app.emailtext import email_plain_text
@@ -29,7 +30,9 @@ def _default_imap_factory(account: Account, settings: Settings):
     return imap_client.connect_account(account, settings)[0]
 
 
-def _sync_account(session: Session, account: Account, imap: Any, settings: Settings) -> None:
+def _sync_account(
+    session: Session, account: Account, imap: Any, settings: Settings, archive: EmailArchive | None = None
+) -> None:
     """拉取一个账户的增量邮件并入库存。"""
     uidvalidity = imap.select_inbox()
     if account.uidvalidity is not None and account.uidvalidity != uidvalidity:
@@ -56,6 +59,14 @@ def _sync_account(session: Session, account: Account, imap: Any, settings: Setti
         ).first()
         if exists:
             continue  # 去重 (account_id, message_id)
+        if archive is not None:
+            # 写在去重之后：已入库的邮件不重写文件（UIDVALIDITY 重置会整批重拉）。
+            # 用 message_id 而非 email.id 命名：此处 session.add 尚未 flush，
+            # email.id 要等本轮 commit 才有值。归档失败已在 store 内吞掉，
+            # 不影响入库与游标推进。
+            archive.store(
+                account.email, parsed["message_id"], parsed["subject"], parsed["sent_at"], raw
+            )
         session.add(
             Email(
                 account_id=account.id,
@@ -98,7 +109,12 @@ def _commit_email(session: Session, email: Email) -> bool:
 
 
 def _process_pending(
-    session: Session, llm: Any, rows: list[Email], logger: logging.Logger | None = None
+    session: Session,
+    llm: Any,
+    rows: list[Email],
+    logger: logging.Logger | None = None,
+    *,
+    archive: EmailArchive | None = None,
 ) -> None:
     """逐封分类待处理邮件（pending 首次 / error 下轮重试）：过滤则标记，否则建 item。
 
@@ -162,6 +178,16 @@ def _process_pending(
             email.llm_state = "done"
             if not _commit_email(session, email):
                 failed += 1  # 提交失败转 error 的封计入失败
+            elif archive is not None and email.filtered:
+                # 先提交再删，且提交成功后只看 email.filtered：队列里只有
+                # pending / error 两种状态，这两种在库里的 filtered 必定是 False
+                # （error 分支从不置 True，reclassify 会重置为 False），所以此时
+                # filtered 仍为 True 当且仅当本轮判为广告并且真的落库；commit 失败
+                # 会 rollback 并把该封改标 error，filtered 回到 False，文件必须留着。
+                # LLM 抛异常、判非广告的分支不走到这里，文件一律保留。
+                archive.discard(
+                    email.account.email, email.message_id, email.subject, email.sent_at
+                )
         if logger is not None and index % 10 == 0:
             logger.info(
                 "分类进度：%d/%d（过滤 %d / 建任务 %d / 失败 %d）",
@@ -218,6 +244,7 @@ def run_once(
     """
     settings = settings or get_settings()
     imap_factory = imap_factory or _default_imap_factory
+    archive = EmailArchive.from_settings(settings)
     if llm is None:
         try:
             from app.llm import get_llm
@@ -238,7 +265,7 @@ def run_once(
             imap = None
             try:
                 imap = imap_factory(account, settings)
-                _sync_account(session, account, imap, settings)
+                _sync_account(session, account, imap, settings, archive)
                 session.commit()
                 account.status = "ok"
                 account.last_sync_at = datetime.now()
@@ -259,7 +286,7 @@ def run_once(
         ).scalars().all()
         summary["pending_llm"] = len([e for e in queue if e.llm_state == "pending"])
         if llm is not None:
-            _process_pending(session, llm, queue, logger=logger)
+            _process_pending(session, llm, queue, logger=logger, archive=archive)
         else:
             for email in queue:
                 if email.llm_state == "pending":
@@ -280,4 +307,6 @@ def run_once(
                 .all()
             )
             summary["details"] = _prefill_details(session, llm, todo, settings, logger=logger)
+    if archive is not None:
+        summary["archive"] = archive.summary()
     return summary
