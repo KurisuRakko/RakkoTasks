@@ -1,11 +1,14 @@
 """单轮同步测试：FakeImap / FakeLLM 注入，不触网。"""
 import json
 import logging
+from datetime import datetime
 from email.message import EmailMessage
 
 import pytest
 from sqlalchemy import select
 
+from app.archive import archive_path, local_zone
+from app.config import Settings
 from app.models import Account, Email, Item, User
 from app.sync import run_once
 
@@ -114,8 +117,24 @@ class FakeLLM:
         }
 
 
-def _run(session_factory, imap: FakeImap, llm: FakeLLM):
-    return run_once(session_factory, imap_factory=lambda a, s: imap, llm=llm)
+def _run(session_factory, imap: FakeImap, llm: FakeLLM, settings: Settings | None = None):
+    return run_once(session_factory, imap_factory=lambda a, s: imap, llm=llm, settings=settings)
+
+
+def _archive_settings(tmp_path, zone: str = "Australia/Sydney") -> Settings:
+    """开启原件归档的配置：根目录指向 tmp_path，时区固定便于算路径。"""
+    return Settings(email_archive_dir=str(tmp_path), local_timezone=zone)
+
+
+# make_raw 固定 Date: Tue, 26 Aug 2026 10:00:00 +0800 → parser 转成 naive UTC
+_ARCHIVED_SENT_AT = datetime(2026, 8, 26, 2, 0, 0)
+
+
+def _archived_path(tmp_path, settings: Settings, message_id: str, subject: str):
+    """同步用的那封邮件应落到的归档路径（与实现同一套规则）。"""
+    return archive_path(
+        tmp_path, "t@example.com", message_id, subject, _ARCHIVED_SENT_AT, local_zone(settings.local_timezone)
+    )
 
 
 def _seed_account(sf) -> None:
@@ -508,3 +527,84 @@ def test_detail_per_item_commit_survives_crash(session_factory):
         items = {i.email.subject: i for i in s.execute(select(Item)).scalars().all()}
     assert items["先成功"].detail_md == "详情：先成功"  # id 较大，先处理并已落盘
     assert items["崩溃封"].detail_md is None
+
+
+def test_archive_stores_raw_message_bytes(session_factory, tmp_path):
+    """归档开启：新邮件在本地日期目录下写出 .eml，字节与 IMAP 给的 raw 完全一致。"""
+    _seed_account(session_factory)
+    imap = FakeImap()
+    raw = make_raw(message_id="<arch1>", subject="归档主题")
+    imap.mails = {1: raw}
+    settings = _archive_settings(tmp_path)
+
+    summary = run_once(session_factory, imap_factory=lambda a, s: imap, llm=FakeLLM(results=[_ok_result("任务")]), settings=settings)
+
+    path = _archived_path(tmp_path, settings, "<arch1>", "归档主题")
+    assert path.parent.name == "2026-08-26"  # UTC 02:00 → 悉尼 12:00，同日
+    assert path.name.startswith("120000_归档主题_")
+    assert path.read_bytes() == raw
+    assert summary["archive"] == {"written": 1, "failed": 0, "discarded": 0}
+
+
+def test_archive_discards_advertisement_but_keeps_other_mail(session_factory, tmp_path):
+    """判为广告的邮件原件被删；判非广告与 LLM 失败的都保留。"""
+    _seed_account(session_factory)
+    imap = FakeImap()
+    imap.mails = {
+        1: make_raw(message_id="<ad>", subject="促销邮件"),
+        2: make_raw(message_id="<real>", subject="交作业"),
+        3: make_raw(message_id="<broken>", subject="失败封"),
+    }
+    llm = FakeLLM(
+        results=[
+            {"filtered": True, "filter_reason": "广告营销", "title": "", "summary": "",
+             "category": "", "due_date": None, "actionable": False},
+            _ok_result("交作业"),
+        ],
+        fail_subjects={"失败封"},
+    )
+    settings = _archive_settings(tmp_path)
+
+    summary = run_once(session_factory, imap_factory=lambda a, s: imap, llm=llm, settings=settings)
+
+    assert not _archived_path(tmp_path, settings, "<ad>", "促销邮件").exists()
+    assert _archived_path(tmp_path, settings, "<real>", "交作业").exists()
+    assert _archived_path(tmp_path, settings, "<broken>", "失败封").exists()
+    assert summary["archive"] == {"written": 3, "failed": 0, "discarded": 1}
+
+    with session_factory() as s:
+        emails = {e.message_id: e for e in s.execute(select(Email)).scalars().all()}
+    assert emails["<ad>"].filtered is True  # 邮件记录仍在库中，删的只是原件文件
+    assert emails["<broken>"].llm_state == "error"
+
+
+def test_archive_disabled_by_default_writes_nothing(session_factory, tmp_path):
+    """归档关闭（配置留空）：磁盘不落任何文件，summary 里也不出现 archive 键。"""
+    _seed_account(session_factory)
+    imap = FakeImap()
+    imap.mails = {1: make_raw(message_id="<off1>", subject="不归档")}
+    settings = Settings(email_archive_dir="", local_timezone="Australia/Sydney")
+
+    summary = run_once(session_factory, imap_factory=lambda a, s: imap, llm=FakeLLM(results=[_ok_result("任务")]), settings=settings)
+
+    assert list(tmp_path.rglob("*")) == []
+    assert "archive" not in summary
+    assert len(_emails(session_factory)) == 1  # 关掉归档不影响入库
+
+
+def test_archive_write_failure_does_not_break_sync(session_factory, tmp_path):
+    """归档根目录不可用（普通文件）时：邮件照常入库、账户仍 ok、failed 计数 +1。"""
+    _seed_account(session_factory)
+    blocker = tmp_path / "blocker"
+    blocker.write_bytes(b"")
+    imap = FakeImap()
+    imap.mails = {1: make_raw(message_id="<fail1>", subject="归档失败")}
+    settings = Settings(email_archive_dir=str(blocker), local_timezone="Australia/Sydney")
+
+    summary = run_once(session_factory, imap_factory=lambda a, s: imap, llm=FakeLLM(results=[_ok_result("任务")]), settings=settings)
+
+    assert summary["accounts"]["t@example.com"] == {"status": "ok", "error": None}
+    assert summary["archive"] == {"written": 0, "failed": 1, "discarded": 0}
+    with session_factory() as s:
+        assert [e.message_id for e in s.execute(select(Email)).scalars().all()] == ["<fail1>"]
+    assert _account(session_factory).last_uid == 1  # 游标照常推进
