@@ -8,6 +8,8 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import pytest
+
 from app.archive import EmailArchive, archive_path, local_zone
 from app.config import Settings
 
@@ -199,10 +201,32 @@ def test_store_failure_cleans_tmp(tmp_path: Path, caplog) -> None:
     assert SUBJECT not in text
 
 
-def test_escaping_path_fails_without_fatal_error(tmp_path: Path, monkeypatch, caplog) -> None:
-    """净化规则被改坏时路径校验拦下逃逸路径，且只计 failed：异常必须留在归档内部。
+@pytest.mark.parametrize(
+    ("slug", "account_dir", "expected"),
+    [
+        ("/abs", None, "不在根目录之下"),  # 变成绝对路径 → relative_to 直接拒绝
+        ("a/b", None, "形态非法"),  # 相对但四段 → 长度分支
+        (SUBJECT, "..", "形态非法"),  # 恰好三段且首段是 .. → 只有 .. 检查能拦住
+    ],
+    ids=["absolute", "too-many-segments", "dotdot-segment"],
+)
+def test_escaped_path_is_rejected_with_value_error(
+    monkeypatch, slug: str, account_dir: str | None, expected: str
+) -> None:
+    """净化规则被改坏时路径校验必须抛 ValueError，三个分支各自钉住。"""
+    import app.archive as archive_mod
 
-    真被冒泡到 _sync_account 会让整个账户批次回滚、last_uid 永不推进。
+    monkeypatch.setattr(archive_mod, "_subject_slug", lambda _s: slug)
+    if account_dir is not None:
+        monkeypatch.setattr(archive_mod, "_account_dir", lambda _e: account_dir)
+    with pytest.raises(ValueError, match=expected):
+        archive_path(Path("/archive"), ACCOUNT, MESSAGE_ID, SUBJECT, None, SYDNEY)
+
+
+def test_store_swallows_path_validation_failure(tmp_path: Path, monkeypatch, caplog) -> None:
+    """store 遇到路径校验失败只计 failed、不落任何文件、不抛。
+
+    异常若冒泡到 _sync_account，整个账户批次会回滚、last_uid 永不推进。
     """
     import app.archive as archive_mod
 
@@ -214,14 +238,20 @@ def test_escaping_path_fails_without_fatal_error(tmp_path: Path, monkeypatch, ca
     assert not list(tmp_path.rglob("*"))
 
 
-def test_escaping_path_without_dotdot_segments_also_fails(tmp_path: Path, monkeypatch) -> None:
-    """相对路径只有一段（恰好三段之外的形态）同样被长度检查拦下。"""
+def test_discard_swallows_path_validation_failure(tmp_path: Path, monkeypatch, caplog) -> None:
+    """discard 遇到路径校验失败同样只计 failed、不抛、不删（也没东西可删）。
+
+    discard 的调用方是 _process_pending 的分类循环：异常冒泡会打断本轮剩余
+    邮件的分类，并让 run_once 抛出。
+    """
     import app.archive as archive_mod
 
     monkeypatch.setattr(archive_mod, "_subject_slug", lambda _s: "/abs")
     archive = make_archive(tmp_path)
-    archive.discard(ACCOUNT, MESSAGE_ID, SUBJECT, None)  # 不抛
+    with caplog.at_level(logging.WARNING, logger="rakkotasks.archive"):
+        archive.discard(ACCOUNT, MESSAGE_ID, SUBJECT, None)  # 不抛
     assert archive.summary() == {"written": 0, "failed": 1, "discarded": 0}
+    assert not list(tmp_path.rglob("*"))
 
 
 def test_from_settings_disabled_when_dir_blank(tmp_path: Path) -> None:

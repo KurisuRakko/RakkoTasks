@@ -179,10 +179,10 @@ class EmailArchive:
         """删除某封邮件的归档文件；文件本就不存在则静默跳过。"""
         try:
             path = self.path_for(account_email, message_id, subject, sent_at)
-        except (OSError, ValueError) as exc:
-            # archive_path 的路径校验抛的 ValueError 必须在这里吞掉（冒泡到
-            # _sync_account 会让整批回滚、last_uid 永不推进），失败另计；也不能
-            # 让它落到下面的 FileNotFoundError 分支——那会被当成「文件不存在」放过
+        except ValueError as exc:
+            # path_for 是纯函数，只可能抛路径校验的 ValueError（不碰文件系统，
+            # 不会抛 OSError）：在这里计失败并返回，不让它冒泡到 _process_pending
+            # 打断本轮剩余邮件的分类、把 run_once 顶出去
             self.failed += 1
             self._log_failure(account_email, exc)
             return
