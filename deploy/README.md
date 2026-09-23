@@ -321,6 +321,58 @@ docker compose run --rm web \
 - 手机打不开：确认 `/etc/cloudflared/config.yml` 里有 `tasks.rakko.cn` 的 ingress 规则，
   且 DNS CNAME 指向本隧道（`cloudflared tunnel route dns --overwrite-dns rakkoserver tasks.rakko.cn` 可重设）。
 
+### 原件归档（.eml）
+
+worker 把每轮从 IMAP 拉到的新邮件（去重之后）的**原始字节**原样写成 `.eml` 落盘，
+附件原始字节天然包含在内——即数据库之外另存一份不依赖邮箱服务器的原件副本。写入
+只发生在 `worker`；`web` 不挂载、不读写归档目录。
+
+**目录结构**（`<根>` = 容器内 `EMAIL_ARCHIVE_DIR`，compose 固定为 `/archive`，对应
+宿主机上的 `EMAIL_ARCHIVE_HOST_DIR`）：
+
+```text
+<根>/<账户邮箱>/<YYYY-MM-DD>/<HHMMSS>_<主题>_<12位哈希>.eml
+<根>/<账户邮箱>/undated/<主题>_<12位哈希>.eml      # 缺 Date 头或无法解析的邮件
+```
+
+- 日期与时分秒按**发信时间**（邮件 Date 头）换算到 `LOCAL_TIMEZONE` 的本地时间。
+- 账户邮箱转小写，非 `[a-z0-9@._+-]` 字符替换为 `_`；主题只保留字母数字（含中日韩
+  文字）、`_`、`-`，其余替换为 `_`，截到 50 字；12 位哈希取自 Message-ID，保证同一封
+  邮件重复写入时路径不变（覆盖而非重复）。
+- 权限：目录 `0700`、文件 `0600`（容器内 uid 1000 写）。
+
+**何时写、何时删**
+
+- 写：每轮同步拉到**新**邮件时写一份。
+- 删：LLM 判定为广告（`filtered=True`）并成功落库后删除对应文件；删完若当天目录为空
+  一并删除。广告邮件因此会在盘上短暂存在（从拉取到分类完成，通常同一轮内）。
+- 保留：非广告保留；LLM 分类失败（`llm_state="error"`）视为非广告保留——之后重试若
+  判定为广告，届时再删。
+- 失败处理：写盘失败只计数并告警（日志只含账户目录名与异常类名，不含主题、正文、
+  路径），不中断同步、不影响入库。每轮同步摘要里有
+  `archive: {written, failed, discarded}`。
+
+**已知限制**
+
+1. 只对功能上线后新拉到的邮件生效，存量邮件不会补归档（原文从未落库）。
+2. 通过 `reclassify` 把已判为广告的邮件改判为非广告，原件已删，不会恢复。
+3. 账户停用或彻底删除都**不会**删除归档文件；归档是独立的原件留存，需手动清理。
+4. 归档是全部非广告邮件（含附件）的明文副本，备份与访问控制要按敏感数据对待；
+   归档目录不在 `data/` 下时，上面备份小节里的 `cp -a data/` 不会捎带它，需单独备份。
+
+**启用步骤**
+
+```bash
+mkdir -p <宿主机归档目录>
+sudo chown 1000:1000 <宿主机归档目录>   # 宿主机用户 uid 恰为 1000 时可省
+chmod 700 <宿主机归档目录>
+# 在仓库根 .env 写入 EMAIL_ARCHIVE_HOST_DIR=<宿主机归档目录>
+docker compose up -d worker
+```
+
+若不预建目录，Docker 会以 root 身份自动创建挂载源，容器内 uid 1000 无权写入，日志会
+出现「原件归档失败（…）：PermissionError」，同步本身不受影响。
+
 ## 9. 容器以非 root 运行
 
 镜像内进程以 **uid 1000**（`app` 用户）运行，不以 root 跑业务进程，降低容器
@@ -329,6 +381,8 @@ docker compose run --rm web \
 - **Linux 宿主机已有旧部署的**：旧镜像以 root 写入过 `data/`，文件属主是 root，
   升级镜像后新进程（uid 1000）将无法读写，需在升级前执行一次：
   `sudo chown -R 1000:1000 data/`
+  ——若归档目录不在 `data/` 下（`EMAIL_ARCHIVE_HOST_DIR` 指向别处），也要对它单独
+  chown 一次，否则 worker 写归档会报 PermissionError（见第 8 节「原件归档」）。
 - **macOS Docker Desktop（VirtioFS）**：文件权限映射宽松，通常无需处理；若
   启动后 web/worker 报权限错误，同样执行上面一条 chown 即可。
 
