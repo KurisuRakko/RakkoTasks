@@ -1,10 +1,9 @@
-// View Transitions 全局样式层：列表行 ↔ 详情的容器变换（场景 B/C），
-// 外加 reduced-motion 总闸。
+// View Transitions 全局样式层：列表行 ↔ 详情的容器变换，外加 reduced-motion 总闸。
 // 换页不走 View Transitions（见 components/RouteTransition 的文件头注释），
 // 所以壳层（AppBar / 底栏 / 抽屉）与悬浮按钮在这里没有任何规则，也不持名。
 // 右下角 FAB ↔ 速记面板**不走这里**：那条链路是纯 CSS transform + MUI Slide 的
 // 对称编排（见 TasksPage 的 FAB sx 与 AiAddDialog 的 Dialog 过渡）。
-// 全部规则经 MuiCssBaseline 的 styleOverrides 注入全局；转场方向标记 data-vt
+// 全部规则经 MuiCssBaseline 的 styleOverrides 注入全局；转场种类标记 data-vt
 // 由 lib/view-transition 的 runViewTransition 在转场期间写到 <html> 上。
 // 时长、位移、元素名一律引用 token 与接线层常量，杜绝样式与运行时刻字面量分叉。
 
@@ -66,7 +65,7 @@ export function viewTransitionStyles(theme: Theme): Record<string, unknown> {
       to: { backgroundColor: 'transparent' },
     },
 
-    // (b) 场景 B/C：容器变换。快照以 object-fit: none 保持原尺寸、左上锚定——容器变换的
+    // (b) 列表行 ↔ 详情的容器变换。快照以 object-fit: none 保持原尺寸、左上锚定——容器变换的
     // 正确形态是「容器长大、内容不缩放」：若让快照填满容器，80px 高的行快照会被放大十余倍
     // 去铺满整个对话框，关闭时再看着它从巨大缩回原尺寸。快照超出容器部分由 image-pair 裁掉
     // （overflow: clip）；快照层改走 normal：image-pair 现在带不透明纸面色（surfaceIn），
@@ -99,7 +98,7 @@ export function viewTransitionStyles(theme: Theme): Record<string, unknown> {
     },
     // 打开/关闭详情时 root 的交叉淡化默认 250ms，与容器变换的 300 / 250ms 不同步；
     // 遮罩的明暗节奏由此与对话框收放错开——old/new(root) 的时长从 group(root) 继承，这里
-    // 按方向对齐到容器时长（遮罩压在 root 快照上，不持名的壳层与悬浮按钮也在其中）。
+    // 按 expand / collapse 各自对齐到容器时长（遮罩压在 root 快照上，不持名的壳层与悬浮按钮也在其中）。
     [`:root[data-vt="expand"]${vtPseudo('group', 'root')}`]: {
       animationDuration: `${MOTION.large}ms`,
     },

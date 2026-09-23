@@ -1,8 +1,8 @@
-// View Transitions 接线层：把「打方向标记 → 启动转场 → 清理标记」收敛成唯一入口。
+// View Transitions 接线层：把「打转场种类标记 → 启动转场 → 清理标记」收敛成唯一入口。
 // 浏览器不支持该 API、或用户偏好减少动效时退化为同步更新，调用方无需自己分支。
 //
-// 现在只有「列表行 / 引用项 ↔ 详情对话框」的容器变换走这里。换页不走：路线切换由
-// components/RouteTransition 的内容列入场动画承担（理由见该文件头注释）。
+// 本入口只服务「列表行 / 引用项 ↔ 详情对话框」的容器变换；换页由
+// components/RouteTransition 的内容列入场动画负责（理由见该文件头注释）。
 
 import { flushSync } from 'react-dom';
 
@@ -24,7 +24,7 @@ export const VT_NAMES = {
   sheet: 'rtk-sheet',
 } as const;
 
-/** <html> 上的方向标记属性名 */
+/** <html> 上的转场种类标记属性名 */
 export const VT_ATTR = 'data-vt';
 
 export function supportsViewTransitions(): boolean {
@@ -32,7 +32,7 @@ export function supportsViewTransitions(): boolean {
 }
 
 // 在途转场的序号：finished 回调只在自己仍是最新一次转场时才清理标记，
-// 否则快速连点时先结束的转场会抹掉后一次转场的方向。
+// 否则快速连点时先结束的转场会抹掉后一次转场的标记。
 let latestToken = 0;
 
 /**

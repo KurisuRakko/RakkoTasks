@@ -1,6 +1,5 @@
 // 导航单一数据源：底栏 / 抽屉 / AppBar 标题全部从这里取，禁止各写一份；
-// 换页的跳转入口（useNavigateTo）与转场方向（routeDirection）同处一文件，
-// 方向判定与「要不要跳」是同一件事的两面。
+// 换页的跳转入口（useNavigateTo）与转场方向（routeDirection）也同处这一文件。
 
 import { useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
