@@ -2,11 +2,8 @@
 // 导航项全部来自 lib/nav 单一数据源；AppBar 不限宽，内容区限宽居中。
 // 抽屉宽（DRAWER_WIDTH）与内容列宽（CONTENT_MAX_WIDTH）收在 lib/layout 单一来源，
 // 从列表行长出来的详情对话框与内容列共用同一宽度（columnDialogSx）。
-// 壳层三件套（AppBar / 底栏 / 抽屉）不直接挂 view-transition-name，只打
-// data-vt-shell 标记（见 lib/view-transition 的 shellAttr）；何时持名由样式层按
-// <html data-vt> 的转场种类决定——换页（route-*）时下发名字作共享元素交叉淡化、
-// 保持静止，开合详情（expand / collapse）时不下发，让壳层留在 root 快照里随
-// 遮罩一起压暗。
+// 壳层三件套（AppBar / 底栏 / 抽屉）不在任何转场里持名，也不打标记：换页只让内容列
+// 播入场动画（见 RouteTransition），开关详情只有来源行与对话框 paper 参与容器变换。
 
 import { useLocation, Navigate, Route, Routes } from 'react-router-dom';
 import AppBar from '@mui/material/AppBar';
@@ -29,10 +26,8 @@ import { useTheme } from '@mui/material/styles';
 import type { Theme } from '@mui/material/styles';
 import type { SystemStyleObject } from '@mui/system';
 import useMediaQuery from '@mui/material/useMediaQuery';
-import { useTransitionNavigate } from '../lib/motion';
 import { CONTENT_MAX_WIDTH, DRAWER_WIDTH } from '../lib/layout';
-import { NAV_ITEMS, navIndexOf } from '../lib/nav';
-import { shellAttr, VT_NAMES } from '../lib/view-transition';
+import { NAV_ITEMS, navIndexOf, useNavigateTo } from '../lib/nav';
 import { GLASS_NAV_RAIL_LIGHT } from '../rakko-tokens';
 import RouteTransition from './RouteTransition';
 import TasksPage from '../pages/TasksPage';
@@ -68,21 +63,19 @@ function titleFor(pathname: string): string {
 const navRailGlassSx: (theme: Theme) => SystemStyleObject<Theme> = (theme) =>
   theme.palette.mode === 'light' ? { ...GLASS_NAV_RAIL_LIGHT } : {};
 
-/** 桌面抽屉 paper 的壳层属性：转场持名标记（何时持名由样式层按转场种类决定）+
- *  常驻 chrome 玻璃（侧边栏是常驻 chrome，身后是壁纸，材质由 rakko-glass.css 的
- *  chrome 档提供；主题层已让位）。chrome 档的发丝线在下缘、方向对不上侧边栏——
- *  右边框仍由主题层的 MuiDrawer.paper 提供（那条已经在，不要动）。
+/** 桌面抽屉 paper 的壳层属性：常驻 chrome 玻璃（侧边栏是常驻 chrome，身后是壁纸，
+ *  材质由 rakko-glass.css 的 chrome 档提供；主题层已让位）。chrome 档的发丝线在下缘、
+ *  方向对不上侧边栏——右边框仍由主题层的 MuiDrawer.paper 提供（那条已经在，不要动）。
  *  sx 是上面那块常驻侧栏专属的削白改写；把组合收在这里，render 里不再新建对象。 */
 const NAV_DRAWER_PAPER_PROPS = {
-  ...shellAttr(VT_NAMES.navDrawer),
   'data-glass': 'chrome',
   sx: navRailGlassSx,
 } as const;
 
 export default function AppShell() {
   const location = useLocation();
-  // 带方向的路由跳转（View Transitions）；目标等于当前路径时它自己会跳过
-  const go = useTransitionNavigate();
+  // 换页跳转；目标等于当前路径时它自己会跳过（不重复压同址历史记录）
+  const go = useNavigateTo();
   const navIndex = navIndexOf(location.pathname);
   const theme = useTheme();
   // 与抽屉 display: { xs: 'none', md: 'block' } 同一断点（md = 900px）：桌面端常驻
@@ -97,7 +90,6 @@ export default function AppShell() {
         sx={{
           display: { xs: 'none', md: 'block' },
           width: DRAWER_WIDTH,
-          // 抽屉与移动端底栏靠断点 display 互斥，同一时刻只有一个元素挂同一个标记，不会撞名
           '& .MuiDrawer-paper': {
             width: DRAWER_WIDTH,
             boxSizing: 'border-box',
@@ -149,12 +141,11 @@ export default function AppShell() {
           pb: { xs: 'calc(64px + env(safe-area-inset-bottom))', md: 0 },
         }}
       >
-        {/* AppBar 是换页转场共享元素：只打 data-vt-shell 标记，名字由样式层按转场种类下发 */}
         {/* 常驻 chrome 玻璃：材质来自 rakko-glass.css 的 data-glass="chrome"，主题层已让位
             （不再下发 background）。不要加 data-reveal="scroll"——滚动渐显的起点是完全
             透明，标题会直接裸在用户壁纸上，深色壁纸下对比度过不了 AA；顶栏必须常显玻璃，
             始终给标题一个底衬。 */}
-        <AppBar position="sticky" elevation={0} data-glass="chrome" {...shellAttr(VT_NAMES.appBar)}>
+        <AppBar position="sticky" elevation={0} data-glass="chrome">
           <Toolbar>
             {/* 邮箱账户子页（仅移动端可达）：返回箭头回父路径；桌面端这些路径
                 由页面内 <Navigate> 重定向回 /settings，AppBar 只放标题 */}
@@ -214,7 +205,6 @@ export default function AppShell() {
         aria-label="主导航"
         elevation={0}
         data-glass="chrome"
-        {...shellAttr(VT_NAMES.bottomNav)}
         sx={{
           position: 'fixed',
           bottom: 0,

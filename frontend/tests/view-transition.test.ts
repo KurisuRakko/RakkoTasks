@@ -59,7 +59,7 @@ describe('runViewTransition', () => {
   it('浏览器不支持（jsdom 默认无 startViewTransition）：同步执行 update、Promise resolve、不写 data-vt', async () => {
     expect(typeof document.startViewTransition).toBe('undefined');
     const update = vi.fn();
-    const result = runViewTransition('route-forward', update);
+    const result = runViewTransition('expand', update);
     // update 在调用返回前就已同步执行
     expect(update).toHaveBeenCalledTimes(1);
     expect(document.documentElement.getAttribute(VT_ATTR)).toBeNull();
@@ -82,13 +82,13 @@ describe('runViewTransition', () => {
     const { created } = installStartViewTransition();
     const update = vi.fn(() => {
       // update 执行（flushSync 提交）时标记必须已在 <html> 上
-      expect(document.documentElement.getAttribute(VT_ATTR)).toBe('route-forward');
+      expect(document.documentElement.getAttribute(VT_ATTR)).toBe('expand');
     });
-    const result = runViewTransition('route-forward', update);
+    const result = runViewTransition('expand', update);
     expect(created).toHaveLength(1);
     expect(update).toHaveBeenCalledTimes(1);
     // 转场进行中（finished 未 resolve）：标记保持在 <html> 上
-    expect(document.documentElement.getAttribute(VT_ATTR)).toBe('route-forward');
+    expect(document.documentElement.getAttribute(VT_ATTR)).toBe('expand');
     created[0].resolve();
     await expect(result).resolves.toBeUndefined();
     expect(document.documentElement.getAttribute(VT_ATTR)).toBeNull();
@@ -99,14 +99,14 @@ describe('runViewTransition', () => {
     const update1 = vi.fn();
     const update2 = vi.fn();
     // 第一次转场进行中立即发起第二次
-    const first = runViewTransition('route-forward', update1);
-    const second = runViewTransition('route-back', update2);
+    const first = runViewTransition('expand', update1);
+    const second = runViewTransition('collapse', update2);
     expect(created).toHaveLength(2);
-    expect(document.documentElement.getAttribute(VT_ATTR)).toBe('route-back');
+    expect(document.documentElement.getAttribute(VT_ATTR)).toBe('collapse');
     // 第一次先结束：它的清理回调应认出自己已过期，不能删掉第二次写的标记
     created[0].resolve();
     await first;
-    expect(document.documentElement.getAttribute(VT_ATTR)).toBe('route-back');
+    expect(document.documentElement.getAttribute(VT_ATTR)).toBe('collapse');
     created[1].resolve();
     await second;
     expect(document.documentElement.getAttribute(VT_ATTR)).toBeNull();
@@ -117,8 +117,8 @@ describe('runViewTransition', () => {
   it('finished reject 时不抛出，Promise 照常 resolve 且标记被清除', async () => {
     const { created } = installStartViewTransition();
     const update = vi.fn();
-    const result = runViewTransition('route-back', update);
-    expect(document.documentElement.getAttribute(VT_ATTR)).toBe('route-back');
+    const result = runViewTransition('collapse', update);
+    expect(document.documentElement.getAttribute(VT_ATTR)).toBe('collapse');
     created[0].reject(new Error('transition aborted'));
     await expect(result).resolves.toBeUndefined();
     expect(document.documentElement.getAttribute(VT_ATTR)).toBeNull();

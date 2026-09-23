@@ -1,8 +1,8 @@
 // AppShell 壳层测试：
 // - 「设置」入口按断点互斥：桌面端（md = 900px 起）常驻抽屉左下角已有「设置」项，
 //   AppBar 按钮只在没有抽屉的移动端渲染，桌面端不重复放；
-// - 壳层三件套（AppBar / 抽屉 paper / 移动底栏 Paper）只打 data-vt-shell 标记、
-//   不直接持 view-transition-name，何时下发名字由样式层按转场种类决定；
+// - 壳层三件套（AppBar / 抽屉 paper / 移动底栏 Paper）不参与任何转场、不带持名标记：
+//   换页只让内容列播入场动画（见 RouteTransition）；
 // - AppBar 标题跟随路由：从任务页点「设置」进入设置页后标题变为「设置」，
 //   且导航索引 -1 使 AppBar 内不再有「设置」按钮。
 // 断点用 useMediaQuery(theme.breakpoints.up('md'))，即查询 '(min-width:900px)'；
@@ -16,7 +16,6 @@ import AppShell from '../src/components/AppShell';
 import { ThemeModeProvider } from '../src/lib/theme-mode';
 import { NAV_ITEMS } from '../src/lib/nav';
 import { ACCENT, GLASS_NAV_RAIL_LIGHT, NEUTRAL_LIGHT } from '../src/rakko-tokens';
-import { VT_SHELL_ATTR, VT_NAMES } from '../src/lib/view-transition';
 import { setWallpaper } from '../src/lib/wallpaper';
 import { AppThemeProvider, allStyleText } from './glass-text-contrast.test-utils';
 import type { Item } from '../src/types';
@@ -85,10 +84,6 @@ function bottomNavList(scope: ParentNode = document): HTMLElement {
   expect(nav).not.toBeNull();
   return nav as HTMLElement;
 }
-
-/** 已删除的内容玻璃底板的旧共享元素名。VT_NAMES 里对应项已随底板一并移除，
- * 这里保留字面量只为防回归：底板若被重新引入，下面两条断言会红。 */
-const REMOVED_CONTENT_GLASS_NAME = 'rtk-content-glass';
 
 /** setup.ts 装好的永不匹配 stub；桌面用例覆盖后由 afterEach 还原 */
 const neverMatch = window.matchMedia;
@@ -225,7 +220,7 @@ afterEach(() => {
   window.matchMedia = neverMatch;
 });
 
-describe('AppShell 设置入口与壳层标记', () => {
+describe('AppShell 设置入口与壳层', () => {
   it('移动端：AppBar 右上角有「设置」按钮（无抽屉时的唯一入口）', async () => {
     renderShell();
     // 等任务页加载完（fetch 的异步更新在 act 内落定）
@@ -248,15 +243,14 @@ describe('AppShell 设置入口与壳层标记', () => {
     expect(within(drawerPaper()).getByRole('button', { name: '设置' })).toBeTruthy();
   });
 
-  it('壳层三件套只打 data-vt-shell 标记，不直接持名', async () => {
+  it('F：壳层不带任何转场持名标记（换页不走 View Transitions）', async () => {
     renderShell();
     await screen.findByText('没有待办任务');
 
-    expect(appBar().getAttribute(VT_SHELL_ATTR)).toBe(VT_NAMES.appBar);
-    expect(drawerPaper().getAttribute(VT_SHELL_ATTR)).toBe(VT_NAMES.navDrawer);
-    // 底栏标记挂在包裹 BottomNavigation 的 Paper 上
-    const bottomNav = document.querySelector('.MuiBottomNavigation-root');
-    expect(bottomNav?.parentElement?.getAttribute(VT_SHELL_ATTR)).toBe(VT_NAMES.bottomNav);
+    // 属性名在这里拼出来、不写字面量：仓库里已不允许再出现这个名字（壳层持名整条链路随
+    // 换页改用内容列入场动画一并删除），这条守卫只管运行时的 DOM
+    const shellMark = ['data', 'vt', 'shell'].join('-');
+    expect(document.querySelector(`[${shellMark}]`)).toBeNull();
   });
 
   it('点 AppBar「设置」进设置页：标题变为「设置」且按钮消失（navIndex -1）', async () => {
@@ -322,27 +316,24 @@ describe('AppShell 壳层与列表行玻璃', () => {
     expect(bar.hasAttribute('data-reveal')).toBe(false);
   });
 
-  it('没有壁纸时没有内容玻璃底板（玻璃板旧共享名标记不存在）；壳层玻璃不依赖壁纸开关', async () => {
+  it('没有壁纸时没有内容行玻璃（panel 数为 0）；壳层玻璃不依赖壁纸开关', async () => {
     renderShell();
     await screen.findByText('没有待办任务');
 
-    // 玻璃板曾只在设壁纸时渲染：现在它整体消失，这个标记在任意壁纸状态下都不该出现
-    expect(document.querySelector(`[${VT_SHELL_ATTR}="${REMOVED_CONTENT_GLASS_NAME}"]`)).toBeNull();
+    // 玻璃板曾只在设壁纸时渲染：现在它整体消失，任意壁纸状态下都不该有 panel 行玻璃
+    expect(document.querySelectorAll('[data-glass="panel"]')).toHaveLength(0);
     // 壳层 chrome 与壁纸无关：空列表时 panel 行数为 0，chrome 仍是三件套
     expect(document.querySelectorAll('[data-glass="chrome"]')).toHaveLength(3);
-    expect(document.querySelectorAll('[data-glass="panel"]')).toHaveLength(0);
   });
 
-  it('设了壁纸也没有任何 data-glass 元素同时是 fixed 玻璃底板（玻璃板确实删干净）', async () => {
+  it('设了壁纸也没有任何 data-glass 元素同时是纯装饰层（玻璃板确实删干净）', async () => {
     setWallpaper('data:image/jpeg;base64,AAAA');
     renderShell();
     await screen.findByText('没有待办任务');
 
-    // 旧内容玻璃板的三样特征——共享元素名转场标记 / aria-hidden / fixed 底板——
-    // 一样都不能残留；fixed 定位的底栏 Paper 是壳层 chrome，不是内容底板
-    expect(document.querySelector(`[${VT_SHELL_ATTR}="${REMOVED_CONTENT_GLASS_NAME}"]`)).toBeNull();
+    // 旧内容玻璃板是纯装饰层，带 aria-hidden；留下的 data-glass 都是可交互的导航 /
+    // 内容表面（常驻 chrome 三件套或列表行），一个都不该带
     for (const el of Array.from(document.querySelectorAll('[data-glass]'))) {
-      expect(el.getAttribute(VT_SHELL_ATTR)).not.toBe(REMOVED_CONTENT_GLASS_NAME);
       expect(el.getAttribute('aria-hidden')).toBeNull();
     }
   });

@@ -21,11 +21,9 @@
     <title>RakkoTasks</title>
   </head>
   <body>
-    <!-- 壁纸承载层：整页地板（纸色 + 用户壁纸原图）。样式由 theme.ts 的 CssBaseline
-         按 #rtk-wallpaper 下发（常量 WALLPAPER_LAYER_ID；本文件在模块系统之外只能手抄，
-         tests/wallpaper.test.tsx 会断言两处一致）。必须是真实 DOM 节点而不是
-         body::before：换页时它要单独持有 view-transition-name 才能不跟 root 快照
-         一起淡出，而伪元素进不了 View Transitions 的捕获循环。 -->
+    <!-- 壁纸承载层：整页不透明地板（纸色 + 用户壁纸原图），一个真实 DOM 节点。
+         样式由 theme.ts 的 CssBaseline 按 #rtk-wallpaper 下发（常量 WALLPAPER_LAYER_ID；
+         本文件在模块系统之外只能手抄，tests/wallpaper.test.tsx 会断言两处一致）。 -->
     <div id="rtk-wallpaper"></div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>

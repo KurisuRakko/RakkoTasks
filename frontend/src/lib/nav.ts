@@ -1,5 +1,9 @@
-// 导航单一数据源：底栏 / 抽屉 / AppBar 标题全部从这里取，禁止各写一份。
+// 导航单一数据源：底栏 / 抽屉 / AppBar 标题全部从这里取，禁止各写一份；
+// 换页的跳转入口（useNavigateTo）与转场方向（routeDirection）同处一文件，
+// 方向判定与「要不要跳」是同一件事的两面。
 
+import { useCallback } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import ChecklistIcon from '@mui/icons-material/Checklist';
 import DoneAllIcon from '@mui/icons-material/DoneAll';
 import SearchIcon from '@mui/icons-material/Search';
@@ -22,7 +26,7 @@ export function navIndexOf(pathname: string): number {
 }
 
 /**
- * 路由转场方向（单一决策点，useTransitionNavigate 与 RouteTransition 回退路径共用）：
+ * 路由转场方向（单一决策点，RouteTransition 的内容列入场动画按它取方向）：
  * - 两边都不在设置组：按导航索引比大小，next > from → 前进；
  * - 进入设置组（to 索引 -1、from 不是）→ 前进；离开设置组 → 后退；
  * - 都在设置组（/settings 与 /settings/accounts/* 同属）：按路径段数比深度，
@@ -40,4 +44,21 @@ export function routeDirection(from: string, to: string): 'forward' | 'back' {
   const fromDepth = from.split('/').filter(Boolean).length;
   const toDepth = to.split('/').filter(Boolean).length;
   return toDepth >= fromDepth ? 'forward' : 'back';
+}
+
+/**
+ * 换页跳转：目标与当前路径相同时直接返回（不重复压一条同址历史记录，
+ * 手机端返回键也就不会卡在同址两条上），否则交给 navigate。
+ * 换页的视觉由 RouteTransition 的内容列入场动画承担，这里只负责导航本身。
+ */
+export function useNavigateTo(): (to: string) => void {
+  const navigate = useNavigate();
+  const { pathname } = useLocation();
+  return useCallback(
+    (to: string) => {
+      if (to === pathname) return;
+      navigate(to);
+    },
+    [navigate, pathname],
+  );
 }

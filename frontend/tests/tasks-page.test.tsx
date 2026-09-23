@@ -1,6 +1,6 @@
 // TasksPage 测试：high 条目渲染「重要」Chip，normal/low 条目不渲染；「重要」组标题出现。
 // 另覆盖容器变换与 portal 相关行为：悬浮按钮挂在 body 下（不被路由转场盒子的
-// transform 困住）、打 data-vt-shell 标记、勾选推进 LEAVE_DURATION 后发 PATCH done
+// transform 困住）、勾选推进 LEAVE_DURATION 后发 PATCH done
 // 且条目从列表消失；切回页面命中模块级缓存（list-cache）时不再闪加载圈。
 // haze 底衬覆盖：分组标题的雾挂 ListSubheader 内层（外层 sticky 不动、无 data-glass）、
 // chips 行的雾在滚动容器外层（滚动留在内层 Stack）、全页 haze 数 = 分组数 + 1。
@@ -19,7 +19,6 @@ import { resetLists } from '../src/lib/list-cache';
 import { LEAVE_DURATION } from '../src/lib/motion';
 import { cardRowSx } from '../src/lib/surface';
 import { MOTION, NEUTRAL_LIGHT, RADIUS } from '../src/rakko-tokens';
-import { VT_SHELL_ATTR, VT_NAMES } from '../src/lib/view-transition';
 import { DUE_SOON_DAYS } from '../src/lib/grouping';
 import type { AccountInfo, Item } from '../src/types';
 import { allStyleText, ownEmotionClass, renderWithAppTheme, ruleTextOf } from './glass-text-contrast.test-utils';
@@ -266,15 +265,6 @@ describe('TasksPage 容器变换与 portal', () => {
 
     const fab = await screen.findByRole('button', { name: '新建待办' });
     expect(fab.parentElement).toBe(document.body);
-  });
-
-  it('悬浮按钮打 data-vt-shell 标记（持名由样式层按转场种类下发）', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => json({ items: [] })));
-
-    renderPage();
-
-    const fab = await screen.findByRole('button', { name: '新建待办' });
-    expect(fab.getAttribute(VT_SHELL_ATTR)).toBe(VT_NAMES.fab);
   });
 
   // 加号 ↔ 速记面板的编排：加号只过渡 transform，打开下沉让位、关闭延后回位。

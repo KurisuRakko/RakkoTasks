@@ -1,52 +1,28 @@
 // View Transitions 接线层：把「打方向标记 → 启动转场 → 清理标记」收敛成唯一入口。
 // 浏览器不支持该 API、或用户偏好减少动效时退化为同步更新，调用方无需自己分支。
+//
+// 现在只有「列表行 / 引用项 ↔ 详情对话框」的容器变换走这里。换页不走：路线切换由
+// components/RouteTransition 的内容列入场动画承担（理由见该文件头注释）。
 
 import { flushSync } from 'react-dom';
-
-import { WALLPAPER_LAYER_ID } from './glass';
 
 /**
  * 转场种类：写到 <html data-vt> 上，供样式层的 ::view-transition-* 规则选择。
  *
- * 右下角悬浮按钮 ↔ 速记面板**不在这里**：那条链路已改成纯 CSS transform + MUI Slide
+ * 右下角悬浮按钮 ↔ 速记面板**不在这里**：那条链路是纯 CSS transform + MUI Slide
  * 的对称编排。View Transitions 一旦被浏览器跳过（iOS Safari / PWA 上常见）就两个方向
  * 同时落空，而那是全站点击最频繁的动效，不适合押在这套机制上。
  */
 export type VtKind =
-  | 'route-forward'
-  | 'route-back'
-  /** 列表行 / 引用项 ↔ 对话框 */
+  /** 列表行 / 引用项 → 对话框 */
   | 'expand'
+  /** 对话框 → 列表行 / 引用项 */
   | 'collapse';
 
 /** 共享元素名。同一时刻同名元素只能有一个，出现两个会让整个转场被浏览器跳过 */
 export const VT_NAMES = {
   sheet: 'rtk-sheet',
-  fab: 'rtk-fab',
-  appBar: 'rtk-app-bar',
-  bottomNav: 'rtk-bottom-nav',
-  navDrawer: 'rtk-nav-drawer',
-  /** 壁纸承载层。它不是壳层、不走 VT_SHELL_ATTR：样式层按元素 id 命中它
-   *  （id 与转场名同源于 WALLPAPER_LAYER_ID，是同一个东西的两个身份）。 */
-  wallpaper: WALLPAPER_LAYER_ID,
 } as const;
-
-/**
- * 壳层（AppBar / 底栏 / 抽屉）与悬浮按钮的持名标记属性：元素上只写
- * data-vt-shell="<VT_NAMES 里的名字>"，不直接写 view-transition-name。
- *
- * 何时真正持名由样式层（motion-styles）按 <html data-vt> 的种类决定：
- * - 换页（route-*）：壳层与悬浮按钮全部持名，各自交叉淡化、保持静止；
- * - 打开 / 关闭详情（expand / collapse）：一律不持名——它们必须留在 root 快照里，
- *   才能被 Dialog 遮罩一起压暗；若单独成组就会浮在遮罩之上，直到转场结束瞬间才被
- *   压暗，看起来就是遮罩「闪一下」。
- */
-export const VT_SHELL_ATTR = 'data-vt-shell';
-
-/** 给壳层元素打标记用的 JSX 属性对象：{...shellAttr(VT_NAMES.appBar)} */
-export function shellAttr(name: string): { [VT_SHELL_ATTR]: string } {
-  return { [VT_SHELL_ATTR]: name };
-}
 
 /** <html> 上的方向标记属性名 */
 export const VT_ATTR = 'data-vt';
