@@ -72,6 +72,11 @@ def test_main_loop_continues_after_run_once_exception(monkeypatch):
 
     monkeypatch.setattr(worker, "time", fake)
     monkeypatch.setattr(worker, "run_once", fake_run_once)
+    # 主循环新增了「认领手动请求 / 睡眠中查请求」两步，都要用真 session_factory；
+    # 本测试的 session_factory 是替身 object()，这里直接声明没有手动请求，
+    # 让主循环照原样走定时轮次（手动轮次的接线由 test_sync_state.py 覆盖）
+    monkeypatch.setattr(worker, "claim_request", lambda session_factory: None)
+    monkeypatch.setattr(worker, "has_request", lambda session_factory: False)
     monkeypatch.setattr(
         worker, "get_settings",
         lambda: SimpleNamespace(sync_interval_minutes=15, database_path=":memory:"),
