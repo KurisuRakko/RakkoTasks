@@ -36,6 +36,32 @@ export function resetLists(): void {
   lists.clear();
 }
 
+// —— 刷新代数（refreshLists / useListGeneration）——
+// 缓存本身只在「同一个键被重新挂载」时才去后台拉新，同步跑完后已挂载的列表不会自己
+// 更新。这里用一个模块级代数把「外部数据变了，请重新拉」这件事广播出去：useCachedList
+// 读这个代数并把它放进 effect 依赖，代数一变就重跑 fetcher。代数与列表快照分属两个
+// 通知集合——emit() 只代表某条列表的内容变了，混在一起会让每次 refreshLists 都触发
+// 一轮无意义的列表快照比对。
+let generation = 0;
+const generationListeners = new Set<() => void>();
+
+/** 通知所有已挂载的 useCachedList 重新拉取（同步完成后调用） */
+export function refreshLists(): void {
+  generation += 1;
+  generationListeners.forEach((listener) => listener());
+}
+
+/** useSyncExternalStore 的订阅接口（与 subscribeLists 同款：模块级函数引用稳定） */
+function subscribeGeneration(listener: () => void): () => void {
+  generationListeners.add(listener);
+  return () => generationListeners.delete(listener);
+}
+
+/** 当前刷新代数；useCachedList 用它当 effect 依赖，不需要在组件里直接用 */
+export function useListGeneration(): number {
+  return useSyncExternalStore(subscribeGeneration, () => generation);
+}
+
 /** 对每个已存在键做变更（只写回有变化者），最后统一通知一次 */
 function updateKeys(change: (current: Item[], key: string) => void): void {
   for (const [key, current] of lists) change(current, key);
@@ -127,9 +153,11 @@ export interface CachedList {
 
 /** 订阅某键列表：命中缓存先同步展示旧数据、后台拉新替换（失败且有数据则静默保留），
  *  无缓存则先 loading 再显示。fetcher 必须是稳定引用（useCallback），否则每次
- *  渲染都会重新请求。 */
+ *  渲染都会重新请求。刷新代数（generation）进依赖：refreshLists() 后重跑一次，
+ *  已挂载的列表因此能拿到同步刚写进来的新数据。 */
 export function useCachedList(key: string, fetcher: () => Promise<Item[]>): CachedList {
   const items = useSyncExternalStore(subscribeLists, () => readList(key));
+  const generation = useListGeneration();
   // 首次渲染该 key 时记下缓存是否已有数据，作为本次挂载的入场判定基准
   const seen = useRef(new Map<string, boolean>());
   if (!seen.current.has(key)) seen.current.set(key, readList(key) !== undefined);
@@ -145,6 +173,6 @@ export function useCachedList(key: string, fetcher: () => Promise<Item[]>): Cach
     return () => {
       alive = false;
     };
-  }, [key, fetcher]);
+  }, [key, fetcher, generation]);
   return { items, loading: items === undefined && !error, error, animateEnter };
 }

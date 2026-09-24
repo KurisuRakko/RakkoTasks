@@ -14,7 +14,9 @@ import DialogTitle from '@mui/material/DialogTitle';
 import IconButton from '@mui/material/IconButton';
 import List from '@mui/material/List';
 import ListItem from '@mui/material/ListItem';
+import ListItemButton from '@mui/material/ListItemButton';
 import ListItemText from '@mui/material/ListItemText';
+import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import Skeleton from '@mui/material/Skeleton';
 import Snackbar from '@mui/material/Snackbar';
@@ -36,10 +38,12 @@ import {
 import { copyText } from '../lib/clipboard';
 import { API_BASE_URL, PHAINON_API_BASE } from '../lib/env';
 import { PAGE_SX, PANEL_SX } from '../lib/layout';
+import { useTransitionNavigate } from '../lib/motion';
 import { logout, startLogin } from '../lib/phainon';
 import { checkForUpdate } from '../lib/pwa-update';
 import { useSession } from '../lib/session';
 import { hitSlopSx, ROW_GAP_PX } from '../lib/surface';
+import { syncLastSummary, useSyncStatus } from '../lib/sync-status';
 import { useThemeMode } from '../lib/theme-mode';
 import { loadWallpaperSource, renderWallpaper, setWallpaper, useWallpaper } from '../lib/wallpaper';
 import type { WallpaperArea, WallpaperSource } from '../lib/wallpaper';
@@ -62,6 +66,9 @@ export default function SettingsPage() {
   const [davGenerating, setDavGenerating] = useState(false);
   const { mode, setMode } = useThemeMode();
   const me = useSession();
+  const go = useTransitionNavigate();
+  // 同步状态（顶栏刷新按钮与状态页共用同一份轮询结果）：这里只读上一轮的摘要
+  const { status } = useSyncStatus();
   // 壁纸：订阅模块级状态（同 useThemeMode 之外的 list-cache 模式），无壁纸为 null
   const wallpaper = useWallpaper();
   // 裁剪中的来源与比例。与 cropOpen 分开：退场期间还要靠 source 把上一张图显示完
@@ -447,6 +454,20 @@ export default function SettingsPage() {
         <Button variant="outlined" color="error" onClick={handleLogout}>
           退出登录
         </Button>
+      </Box>
+
+      {/* 同步状态：进 /sync 看这一轮同步的阶段与按邮箱进度；secondary 报上一轮的结果 */}
+      <Box data-glass="panel" sx={PANEL_SX}>
+        <Typography variant="overline">同步</Typography>
+        <List dense>
+          <ListItemButton onClick={() => go('/sync')}>
+            <ListItemText
+              primary="同步状态"
+              secondary={syncLastSummary(status === null ? null : status.last)}
+            />
+            <ChevronRightIcon />
+          </ListItemButton>
+        </List>
       </Box>
 
       {/* 关于：构建注入的版本号与后端地址 */}

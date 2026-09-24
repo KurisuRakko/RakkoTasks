@@ -240,3 +240,58 @@ describe('quickAddTask', () => {
     await expect(api.quickAddTask('x', '2026-08-05')).rejects.toThrow('HTTP 500');
   });
 });
+
+// 同步接口的路径 / 方法 / 期望状态码是前后端共同遵守的契约，这里逐条钉住：
+// 后端换路径或改掉 trigger 的成功码，这几条会先红。
+describe('fetchSyncStatus', () => {
+  it('GET /api/sync/status，带 Bearer，原样返回 current / last / pending_request', async () => {
+    const status = { current: null, last: null, pending_request: false };
+    const fetchMock = vi.fn(async (_url: string | URL, _init?: RequestInit) => json(status));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await api.fetchSyncStatus();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit | undefined];
+    expect(url).toBe('/api/sync/status');
+    expect(init?.method ?? 'GET').toBe('GET');
+    expect((init?.headers as Record<string, string>).Authorization).toBe('Bearer test-token');
+    expect(result).toEqual(status);
+  });
+
+  it('非 2xx → 抛错', async () => {
+    const fetchMock = vi.fn(async (_url: string | URL, _init?: RequestInit) =>
+      json({ error: 'boom' }, 500),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(api.fetchSyncStatus()).rejects.toThrow('HTTP 500');
+  });
+});
+
+describe('triggerSync', () => {
+  it('POST /api/sync/trigger，空请求体，202 时返回 {accepted, already_running}', async () => {
+    const fetchMock = vi.fn(async (_url: string | URL, _init?: RequestInit) =>
+      json({ accepted: true, already_running: true }, 202),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await api.triggerSync();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit | undefined];
+    expect(url).toBe('/api/sync/trigger');
+    expect(init?.method).toBe('POST');
+    expect((init?.headers as Record<string, string>).Authorization).toBe('Bearer test-token');
+    expect(result).toEqual({ accepted: true, already_running: true });
+  });
+
+  it('状态码不是 202 → 抛错', async () => {
+    const fetchMock = vi.fn(async (_url: string | URL, _init?: RequestInit) =>
+      json({ error: 'boom' }, 500),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(api.triggerSync()).rejects.toThrow('HTTP 500');
+  });
+});

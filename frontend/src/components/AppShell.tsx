@@ -35,10 +35,12 @@ import { NAV_ITEMS, navIndexOf } from '../lib/nav';
 import { shellAttr, VT_NAMES } from '../lib/view-transition';
 import { GLASS_NAV_RAIL_LIGHT } from '../rakko-tokens';
 import RouteTransition from './RouteTransition';
+import SyncTitleBar from './SyncTitleBar';
 import TasksPage from '../pages/TasksPage';
 import SearchPage from '../pages/SearchPage';
 import DonePage from '../pages/DonePage';
 import SettingsPage from '../pages/SettingsPage';
+import SyncStatusPage from '../pages/SyncStatusPage';
 import { AccountDetailPage, AccountNewPage, AccountRemovePage } from '../pages/AccountPages';
 
 /** AppBar 标题：顺序与 NAV_ITEMS 索引对齐；设置组（索引 -1）读末尾一位 */
@@ -54,8 +56,19 @@ function accountParent(pathname: string): string {
   return pathname.endsWith('/remove') ? pathname.slice(0, -'/remove'.length) : '/settings';
 }
 
+/** 需要返回箭头的子页（仅移动端）：账户子页或同步状态页 */
+function isSubPage(pathname: string): boolean {
+  return isAccountPath(pathname) || pathname.startsWith('/sync');
+}
+
+/** 子页的返回目标：同步状态页回待办页——它的主入口就是待办页顶栏的刷新按钮 */
+function subPageParent(pathname: string): string {
+  return isAccountPath(pathname) ? accountParent(pathname) : '/';
+}
+
 function titleFor(pathname: string): string {
   if (isAccountPath(pathname)) return '邮箱账户';
+  if (pathname.startsWith('/sync')) return '同步状态';
   const navIndex = navIndexOf(pathname);
   return navIndex === -1 ? '设置' : TITLES[navIndex];
 }
@@ -156,22 +169,28 @@ export default function AppShell() {
             始终给标题一个底衬。 */}
         <AppBar position="sticky" elevation={0} data-glass="chrome" {...shellAttr(VT_NAMES.appBar)}>
           <Toolbar>
-            {/* 邮箱账户子页（仅移动端可达）：返回箭头回父路径；桌面端这些路径
-                由页面内 <Navigate> 重定向回 /settings，AppBar 只放标题 */}
-            {isAccountPath(location.pathname) && !desktop && (
+            {/* 子页（邮箱账户 / 同步状态，仅移动端可达）：返回箭头回父路径；桌面端账户
+                子页由页面内 <Navigate> 重定向回 /settings，/sync 桌面端直接可达，
+                AppBar 只放标题 */}
+            {isSubPage(location.pathname) && !desktop && (
               <IconButton
                 edge="start"
                 color="inherit"
                 aria-label="返回"
-                onClick={() => go(accountParent(location.pathname))}
+                onClick={() => go(subPageParent(location.pathname))}
                 sx={{ mr: 1 }}
               >
                 <ArrowBackIcon />
               </IconButton>
             )}
-            <Typography variant="h6" noWrap sx={{ flexGrow: 1 }}>
-              {titleFor(location.pathname)}
-            </Typography>
+            {/* 待办页的标题位让给「刷新 → 同步进度」那条动效；其他页面仍是纯标题 */}
+            {location.pathname === '/' ? (
+              <SyncTitleBar />
+            ) : (
+              <Typography variant="h6" noWrap sx={{ flexGrow: 1 }}>
+                {titleFor(location.pathname)}
+              </Typography>
+            )}
             {/* 移动端入口：桌面端（md 起）抽屉左下角已有「设置」项，这里不重复放 */}
             {navIndex !== -1 && !desktop && (
               <IconButton color="inherit" aria-label="设置" onClick={() => go('/settings')}>
@@ -191,6 +210,9 @@ export default function AppShell() {
               <Route path="/settings/accounts/new" element={<AccountNewPage />} />
               <Route path="/settings/accounts/:id" element={<AccountDetailPage />} />
               <Route path="/settings/accounts/:id/remove" element={<AccountRemovePage />} />
+              {/* 同步状态页（/sync）：顶栏刷新按钮与设置页入口都指向它；放在 `*` 之前，
+                  否则会被兜底重定向吃掉 */}
+              <Route path="/sync" element={<SyncStatusPage />} />
               {/* 旧书签 /status 兼容：重定向到设置页 */}
               <Route path="/status" element={<Navigate to="/settings" replace />} />
               <Route path="*" element={<Navigate to="/" replace />} />
