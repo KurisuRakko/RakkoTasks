@@ -723,13 +723,16 @@ def test_sent_archive_failure_keeps_account_ok(session_factory, tmp_path, caplog
         summary = _run(session_factory, imap, FakeLLM(results=[_ok_result("任务")]), settings)
 
     assert summary["accounts"]["t@example.com"] == {"status": "ok", "error": None}
-    acc = _account(session_factory)
-    assert acc.status == "ok"
-    assert acc.last_error is None
-    assert acc.sent_last_uid == 0  # 发件箱游标没有推进
+    # 新开 session 从库里重读：证明状态确实落盘，而不是只看 summary 或内存里的对象
+    with session_factory() as fresh:
+        acc = fresh.execute(select(Account)).scalars().one()
+        assert acc.status == "ok"
+        assert acc.last_error is None
+        assert acc.sent_last_uid == 0  # 发件箱游标没有推进
+        account_id = acc.id
     assert _mbox_ids(tmp_path) == ["<in1>"]
     warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
-    assert warnings == [f"发件箱归档失败（account {acc.id}）：RuntimeError"]
+    assert warnings == [f"发件箱归档失败（account {account_id}）：RuntimeError"]
 
 
 class FlakyFetchImap(FakeImap):

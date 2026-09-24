@@ -102,14 +102,15 @@ class EmailArchive:
                 keys, offset = set(), 0
             if size > offset:
                 os.lseek(fd, offset, os.SEEK_SET)
-                chunk = b""
+                # 分段落收集后 join：首次加载大索引时逐段 += 会反复整块拷贝
+                parts: list[bytes] = []
                 while True:
                     part = os.read(fd, 1 << 16)
                     if not part:
                         break
-                    chunk += part
+                    parts.append(part)
                 # 最后一段可能是别的进程写了一半的行，只认完整行
-                lines = chunk.split(b"\n")[:-1]
+                lines = b"".join(parts).split(b"\n")[:-1]
                 for line in lines:
                     text = line.decode("utf-8", errors="replace").strip()
                     if text:
@@ -198,7 +199,7 @@ class EmailArchive:
                     _write_all(fd, self._render(sent_at, raw))
                     os.fsync(fd)
                     # 先让 mbox 落盘再记索引：崩在两步之间时最坏结果是下轮重复
-                    # 归档一封（被索引挡住），绝不会漏掉一封
+                    # 归档一封，绝不会漏掉一封
                     self._append_key(name, idx, key)
                 finally:
                     fcntl.flock(fd, fcntl.LOCK_UN)

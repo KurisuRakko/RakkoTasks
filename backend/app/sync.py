@@ -81,6 +81,14 @@ def _sync_account(
     account.last_uid = max(account.last_uid, max(uids))
 
 
+def _archive_uids(account: Account, imap: Any, archive: EmailArchive, uids: list[int]) -> None:
+    """逐封 PEEK 拉取（`BODY.PEEK[]`，不设置 \\Seen）→ 解析 → 追加进 mbox；不碰数据库。"""
+    for uid in uids:
+        raw = imap.fetch_uid_peek(uid)
+        parsed = parse_message(raw)
+        archive.store(account.email, parsed["message_id"], parsed["sent_at"], raw)
+
+
 def _archive_sent(account: Account, imap: Any, settings: Settings, archive: EmailArchive) -> None:
     """发件箱只归档：邮件进 mbox，不入库、不跑 LLM、不建待办。
 
@@ -98,10 +106,7 @@ def _archive_sent(account: Account, imap: Any, settings: Settings, archive: Emai
     criteria = imap_client.build_search_criteria(account.sent_last_uid, settings.initial_backfill_days)
     # UID 序列查询是闭区间：过滤掉等于 sent_last_uid 的最后一封
     uids = [u for u in imap.search_uids(criteria) if u > account.sent_last_uid]
-    for uid in uids:
-        raw = imap.fetch_uid_peek(uid)
-        parsed = parse_message(raw)
-        archive.store(account.email, parsed["message_id"], parsed["sent_at"], raw)
+    _archive_uids(account, imap, archive, uids)
     if uids:
         account.sent_last_uid = max(account.sent_last_uid, max(uids))
 
@@ -110,23 +115,17 @@ def backfill_archive(account: Account, imap: Any, archive: EmailArchive, days: i
     """按 SINCE 回补历史原件：收件箱 + 发件箱，只追加进 mbox。
 
     不碰 emails 表、不动任何游标（所以不收 session，也不收 settings）；
-    归档专用的拉取走 fetch_uid_peek，不改动邮箱的已读状态。
+    归档专用的拉取走 PEEK，不改动邮箱的已读状态。
     """
     criteria = f"SINCE {imap_client._since_date(days)}"
     imap.select_folder_readonly("INBOX")
-    for uid in imap.search_uids(criteria):
-        raw = imap.fetch_uid_peek(uid)
-        parsed = parse_message(raw)
-        archive.store(account.email, parsed["message_id"], parsed["sent_at"], raw)
+    _archive_uids(account, imap, archive, imap.search_uids(criteria))
 
     sent = imap.find_sent_folder()
     if sent is None:
         return
     imap.select_folder_readonly(sent)
-    for uid in imap.search_uids(criteria):
-        raw = imap.fetch_uid_peek(uid)
-        parsed = parse_message(raw)
-        archive.store(account.email, parsed["message_id"], parsed["sent_at"], raw)
+    _archive_uids(account, imap, archive, imap.search_uids(criteria))
 
 
 def _commit_email(session: Session, email: Email) -> bool:
@@ -305,20 +304,13 @@ def run_once(
                 account.last_error = None
                 summary["accounts"][account.email] = {"status": "ok", "error": None}
                 if archive is not None:
-                    # 发件箱必须排在收件箱提交之后：发件箱失败时回滚的只有发件箱
-                    # 游标，收件箱那一批（已提交）不受影响
-                    synced_at = account.last_sync_at
+                    # 先提交收件箱成果与账户状态，发件箱失败时回滚的只有发件箱游标
+                    session.commit()
                     try:
                         _archive_sent(account, imap, settings, archive)
                         session.commit()
                     except Exception as exc:
                         session.rollback()
-                        # rollback 会把上面刚写入的账户状态一并作废（对象被 expire
-                        # 后重载回旧值）；发件箱失败不该改变账户状态，这里补写回去，
-                        # 循环末尾的 commit 会把它落盘
-                        account.status = "ok"
-                        account.last_sync_at = synced_at
-                        account.last_error = None
                         logger.warning("发件箱归档失败（account %d）：%s", account.id, type(exc).__name__)
             except Exception as exc:
                 session.rollback()
