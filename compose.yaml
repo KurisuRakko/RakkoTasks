@@ -43,8 +43,5 @@ services:
         required: false
     environment:
       - DATABASE_PATH=/data/rakkotasks.db
-      - EMAIL_ARCHIVE_DIR=/archive
     volumes:
       - ./data:/data
-      # 宿主机归档目录，须预先创建并归 uid 1000 所有（见 deploy/README.md）
-      - ${EMAIL_ARCHIVE_HOST_DIR:-./data/archive}:/archive

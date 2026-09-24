@@ -41,8 +41,6 @@ class Settings(BaseSettings):
     # CalDAV（iPhone 提醒事项）
     # 只用于把客户端 UTC 形态的 DUE 反算成本地日期（读 CalDAV 载荷时）
     local_timezone: str = "Australia/Sydney"
-    # 邮件原件归档根目录（RFC822 .eml，含附件）；留空即关闭归档
-    email_archive_dir: str = ""
     # 已完成条目在 CalDAV 集合里的保留天数
     caldav_done_retention_days: int = 30
 
