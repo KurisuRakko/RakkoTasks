@@ -1,10 +1,12 @@
 // wallpaper 测试：
-// - setWallpaper 双向：写 localStorage + <html> 的 WALLPAPER_VAR（url("...") / none）；
+// - setWallpaper 双向：写 localStorage + <html> 的 WALLPAPER_VAR（url("用户图") / 默认图 url）；
 // - 失败路径：readWallpaper 在 getItem 抛异常时返回 null；setWallpaper 在 setItem 抛
 //   QuotaExceededError 时错误向外抛——壁纸写不进去等于功能没生效，必须让调用方能提示
 //   用户（与 theme-mode 的静默降级相反）；
 // - useWallpaper 在 setWallpaper 之后重渲染拿到新值（模块级订阅模式）；
-// - index.html 首帧内联脚本在模块系统之外只能手抄存储键与变量名，断言它与 lib 常量一致；
+// - 「没有壁纸」不是一种状态：null / 脏值都落到 DEFAULT_WALLPAPER_URL；
+// - index.html 首帧内联脚本在模块系统之外只能手抄存储键、变量名与默认图地址，断言它与
+//   lib 常量一致；
 // - loadWallpaperSource / renderWallpaper：jsdom 既没有 HTMLImageElement.prototype.decode，
 //   也没有 2d 画布实现，解码与绘制全靠 stub 驱动（stub object URL + mock decode + 假
 //   canvas 上下文），不给生产代码加测试专用分支。
@@ -13,7 +15,11 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, renderHook } from '@testing-library/react';
-import { WALLPAPER_ATTR, WALLPAPER_LAYER_ID, WALLPAPER_VAR } from '../src/lib/glass';
+import {
+  DEFAULT_WALLPAPER_URL,
+  WALLPAPER_LAYER_ID,
+  WALLPAPER_VAR,
+} from '../src/lib/glass';
 import {
   loadWallpaperSource,
   readWallpaper,
@@ -26,13 +32,16 @@ import htmlSource from '../index.html?raw';
 
 const FAKE = 'data:image/jpeg;base64,AAAA';
 
+/** 默认壁纸写在 <html> 变量里的形状；用户没设过壁纸时变量就是这个值 */
+const DEFAULT_URL_VALUE = `url("${DEFAULT_WALLPAPER_URL}")`;
+
 /** 值的实际来源是 localStorage，不受控（用户手改 / 同源脚本可写）；含 " 与 ) 的假值
- *  能逃出 url("...")。校验挡掉后按没有壁纸处理，不抛错。 */
+ *  能逃出 url("...")。校验挡掉后按「用户没设过壁纸」处理，回默认图，不抛错。 */
 const DIRTY = 'data:image/jpeg;base64,AA")AA';
 
 beforeEach(() => {
   localStorage.clear();
-  // 模块内存态与 DOM 变量同步回「无壁纸」，防用例之间串扰
+  // 模块内存态与 DOM 变量同步回「用户没设过壁纸」，防用例之间串扰
   setWallpaper(null);
 });
 
@@ -44,14 +53,14 @@ afterEach(() => {
 });
 
 describe('setWallpaper / readWallpaper 持久化', () => {
-  it('setWallpaper 写入 localStorage，并把 <html> 的 --rtk-wallpaper 设成 url("...")；传 null 时清掉 localStorage 且变量变成 none', () => {
+  it('setWallpaper 写入 localStorage，并把 <html> 的 --rtk-wallpaper 设成 url("...")；传 null 时清掉 localStorage 且变量回默认壁纸', () => {
     setWallpaper(FAKE);
     expect(localStorage.getItem(WALLPAPER_STORAGE_KEY)).toBe(FAKE);
     expect(document.documentElement.style.getPropertyValue(WALLPAPER_VAR)).toBe(`url("${FAKE}")`);
 
     setWallpaper(null);
     expect(localStorage.getItem(WALLPAPER_STORAGE_KEY)).toBeNull();
-    expect(document.documentElement.style.getPropertyValue(WALLPAPER_VAR)).toBe('none');
+    expect(document.documentElement.style.getPropertyValue(WALLPAPER_VAR)).toBe(DEFAULT_URL_VALUE);
   });
 
   it('readWallpaper 读回刚写入的 data URL', () => {
@@ -74,7 +83,7 @@ describe('setWallpaper / readWallpaper 持久化', () => {
     // 写失败不得半途改内存态 / DOM 变量：调用方看到的是「没生效」
     vi.restoreAllMocks();
     expect(readWallpaper()).toBeNull();
-    expect(document.documentElement.style.getPropertyValue(WALLPAPER_VAR)).toBe('none');
+    expect(document.documentElement.style.getPropertyValue(WALLPAPER_VAR)).toBe(DEFAULT_URL_VALUE);
   });
 });
 
@@ -91,6 +100,14 @@ describe('useWallpaper 订阅', () => {
     rerender();
     expect(result.current).toBeNull();
   });
+
+  it('未设壁纸时返回值是 null 而不是默认图地址：默认图不进用户壁纸状态', () => {
+    // 默认图由 applyToRoot 直接写到 <html>；若混进 useWallpaper，「恢复默认壁纸」
+    // 在状态层就没有可表达的空值，调用方也无法区分用户图与默认图
+    const { result } = renderHook(() => useWallpaper());
+    expect(result.current).toBeNull();
+    expect(document.documentElement.style.getPropertyValue(WALLPAPER_VAR)).toBe(DEFAULT_URL_VALUE);
+  });
 });
 
 describe('index.html 首帧脚本与 lib 常量一致', () => {
@@ -98,6 +115,11 @@ describe('index.html 首帧脚本与 lib 常量一致', () => {
     // 内联脚本在模块系统之外无法 import 常量；两处不一致时首帧上屏会失效
     expect(htmlSource).toContain(WALLPAPER_STORAGE_KEY);
     expect(htmlSource).toContain(WALLPAPER_VAR);
+  });
+
+  it('内联脚本手抄的默认壁纸地址与 DEFAULT_WALLPAPER_URL 一致', () => {
+    // 没有用户壁纸时首帧就写默认图；地址两边不一致会变成 404 背景
+    expect(htmlSource).toContain(DEFAULT_WALLPAPER_URL);
   });
 
   it('壁纸承载节点是 body 的第一个子节点（在 #root 之前），且全局只有一个', () => {
@@ -192,7 +214,7 @@ describe('renderWallpaper', () => {
 });
 
 describe('脏值形状校验（url() 逃逸防御）', () => {
-  it('脏值不当作壁纸：readWallpaper 返回 null；模块兜底与 applyToRoot 都置 none；正常值照常写出', async () => {
+  it('脏值不当作壁纸：readWallpaper 返回 null；模块兜底与 applyToRoot 都回默认壁纸；正常值照常写出', async () => {
     // 直接往 localStorage 塞脏值，模拟存储被外部写入
     localStorage.setItem(WALLPAPER_STORAGE_KEY, DIRTY);
     expect(readWallpaper()).toBeNull();
@@ -202,37 +224,15 @@ describe('脏值形状校验（url() 逃逸防御）', () => {
     vi.resetModules();
     const mod = await import('../src/lib/wallpaper');
     expect(mod.readWallpaper()).toBeNull();
-    expect(document.documentElement.style.getPropertyValue(WALLPAPER_VAR)).toBe('none');
+    expect(document.documentElement.style.getPropertyValue(WALLPAPER_VAR)).toBe(DEFAULT_URL_VALUE);
 
-    // setWallpaper 走同一 applyToRoot：脏值按没有壁纸处理（置 none），不抛错
+    // setWallpaper 走同一 applyToRoot：脏值按「用户没设过壁纸」处理（回默认图），不抛错
     setWallpaper(DIRTY);
-    expect(document.documentElement.style.getPropertyValue(WALLPAPER_VAR)).toBe('none');
+    expect(document.documentElement.style.getPropertyValue(WALLPAPER_VAR)).toBe(DEFAULT_URL_VALUE);
 
     // 正常的 data:image/jpeg;base64 仍然照常写出 url("...")
     setWallpaper(FAKE);
     expect(localStorage.getItem(WALLPAPER_STORAGE_KEY)).toBe(FAKE);
     expect(document.documentElement.style.getPropertyValue(WALLPAPER_VAR)).toBe(`url("${FAKE}")`);
-  });
-});
-
-describe('data-wallpaper 属性标记（无壁纸时主题层改写玻璃高光）', () => {
-  // theme.ts 靠 :root:not([data-wallpaper]) 在无壁纸时把 --glass-highlight 置 transparent。
-  // 属性由 applyToRoot 与图源变量同步维护，判定与 SAFE_DATA_URL 一致。
-  it('setWallpaper 有效 data URL 后，<html> 带 data-wallpaper 属性', () => {
-    setWallpaper(FAKE);
-    expect(document.documentElement.hasAttribute(WALLPAPER_ATTR)).toBe(true);
-  });
-
-  it('setWallpaper(null) 移除 data-wallpaper 属性', () => {
-    setWallpaper(FAKE);
-    expect(document.documentElement.hasAttribute(WALLPAPER_ATTR)).toBe(true);
-    setWallpaper(null);
-    expect(document.documentElement.hasAttribute(WALLPAPER_ATTR)).toBe(false);
-  });
-
-  it('脏值按没有壁纸处理：同样不挂 data-wallpaper 属性', () => {
-    setWallpaper(DIRTY);
-    expect(document.documentElement.style.getPropertyValue(WALLPAPER_VAR)).toBe('none');
-    expect(document.documentElement.hasAttribute(WALLPAPER_ATTR)).toBe(false);
   });
 });

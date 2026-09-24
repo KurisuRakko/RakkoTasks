@@ -1,5 +1,5 @@
 // 玻璃接线层：材质配方来自 rakko-glass.css（design-system/src/glass.css 的逐字镜像），
-// 本文件只剩壁纸接线——图源变量名（WALLPAPER_VAR）与壁纸布尔属性标记（WALLPAPER_ATTR）；
+// 本文件只剩壁纸接线——图源变量名（WALLPAPER_VAR）与默认图地址（DEFAULT_WALLPAPER_URL）；
 // 此外还放着 Dialog 遮罩与壁纸裁剪框外遮罩共用的颜色（SCRIM_COLOR），它与壁纸无关，
 // 是两处遮罩的同一个色值来源。
 // 驯化层纸色叠加已随产品决定移除：壁纸显示用户原图，不再垫纸色。
@@ -13,19 +13,15 @@
 // 8 个 panel 约 1.0ms/帧、全部表面玻璃化约 4.1ms/帧，对照全关约 1.0ms/帧。项目所有者
 // 在知晓该代价后为本产品决定破例；这不是契约默认允许的写法，不要把它当范例复制。
 
-/** 壁纸图源的 CSS 变量：由 lib/wallpaper 写到 <html> 上，主题层的 body 背景消费。
- *  无壁纸时该变量为 none，body 退回纯纸色背景。 */
-export const WALLPAPER_VAR = '--rtk-wallpaper';
+/** 默认壁纸：public/ 下的静态文件，vite 构建时原样拷到 dist 根，后端 SPA fallback 按
+ *  这个路径回同一份文件；因此它同时是浏览器地址（首帧内联脚本手抄同一字面量，见
+ *  tests/wallpaper.test.tsx 的一致性断言）。用户没设过壁纸时由 lib/wallpaper 写到
+ *  WALLPAPER_VAR，「没有壁纸」这个状态不存在。 */
+export const DEFAULT_WALLPAPER_URL = '/wallpaper-default.jpg';
 
-/** <html> 上「有没有壁纸」的布尔属性标记（有壁纸时存在、无壁纸时移除）。CSS 没法对
- *  自定义属性的值做条件判断——WALLPAPER_VAR 只分 url(...) 与 none 两种值，主题层选择器
- *  匹配不到——所以除了图源变量还要这个属性标记，供主题层用
- *  :root:not([data-wallpaper]) 在无壁纸时改写玻璃高光。
- *  它归位在本文件而非 lib/wallpaper：这里是玻璃接线层常量的单一来源，WALLPAPER_VAR
- *  已经在此；两个同类常量分居两文件会让维护者困惑，也迫使 theme.ts 为一个字符串常量去
- *  import 带模块级副作用的 wallpaper.tsx（模块加载即读 localStorage 并写 <html>），
- *  这是不必要的依赖方向。 */
-export const WALLPAPER_ATTR = 'data-wallpaper';
+/** 壁纸图源的 CSS 变量：由 lib/wallpaper 写到 <html> 上，主题层的壁纸承载层背景消费。
+ *  值恒为 url(...)——用户壁纸或 DEFAULT_WALLPAPER_URL，没有「空」态。 */
+export const WALLPAPER_VAR = '--rtk-wallpaper';
 
 /** 壁纸承载层的元素 id：index.html 里的一个真实 DOM 节点（不是伪元素）。
  *  样式由主题层按 `#rtk-wallpaper` 下发，换页时的持名规则在 motion-styles 段 (g)。
