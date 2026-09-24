@@ -512,7 +512,7 @@ describe('底栏对齐 BottomNav 契约（nav 语义 / 发丝线 / 限宽 / 指�
 describe('桌面侧栏浅色削白（只动侧栏那一块 chrome）', () => {
   // jsdom 给不出真实渲染，玻璃变量走 emotion 规则文本。Drawer paper 的样式分在多个
   // css-* 类上（styled 一个、sx 一个），只取第一个类不够 —— 用共享的 ownRules，
-  // 它把元素身上全部 css-* 类对应的规则块拼起来（写法同 tasks-page.test.tsx）。
+  // 它把元素身上全部 css-* 类对应的规则块拼起来。
 
   afterEach(() => {
     // theme-mode 是 localStorage 持久化的三态：不清会让后续用例跟着停在深色
