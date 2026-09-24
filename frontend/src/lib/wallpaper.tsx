@@ -1,5 +1,5 @@
-// 壁纸：用户上传的本地背景图，localStorage 持久化（本机独占，不传后端，也不引图像库——
-// 压缩用浏览器原生 createImageBitmap + canvas）。
+// 壁纸：用户上传的本地背景图，localStorage 持久化（本机独占，不传后端）。取景交互用
+// react-easy-crop，解码与压缩仍是浏览器原生 <img> + canvas。
 // 状态模型照 src/lib/list-cache.ts：模块级状态 + useSyncExternalStore 订阅。不做 React
 // Context Provider——App.tsx 归壳层另一路，这里不能被 Provider 包裹。
 //
@@ -14,7 +14,7 @@ import { WALLPAPER_ATTR, WALLPAPER_VAR } from './glass';
  *  （那边不能 import 常量），tests/wallpaper.test.tsx 会断言两处一致。 */
 export const WALLPAPER_STORAGE_KEY = 'rakkotasks.wallpaper';
 
-/** 压缩上限：最长边 1920px，等比缩放、比 1920 小的不放大；JPEG 质量 0.75。
+/** 压缩上限：裁剪区域的最长边 1920px，等比缩放、比 1920 小的不放大；JPEG 质量 0.75。
  *  可以压这么狠：壁纸身后还要被玻璃模糊一遍，清晰度不敏感；而 localStorage 只有
  *  5MB 上限，data URL 的 base64 还要再膨胀三分之一。 */
 const MAX_EDGE = 1920;
@@ -73,24 +73,51 @@ export function setWallpaper(dataUrl: string | null): void {
   emit();
 }
 
-/** 压缩壁纸为 JPEG data URL（上限见文件头的 MAX_EDGE / JPEG_QUALITY） */
-export async function compressWallpaper(file: File): Promise<string> {
-  const bitmap = await createImageBitmap(file);
+/** 裁剪区域，单位是原图像素（与 react-easy-crop 的 croppedAreaPixels 同形，但本模块不依赖它的类型） */
+export interface WallpaperArea {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** 选中的图片解码成功后的来源：url 是 object URL，调用方负责在不再需要时 revoke */
+export interface WallpaperSource {
+  url: string;
+  image: HTMLImageElement;
+}
+
+/** 选中图片 → 可裁剪的来源。解码失败时把 object URL 一并撤掉（调用方拿不到它，只能在这里
+ *  释放），错误照原样往外抛 */
+export async function loadWallpaperSource(file: Blob): Promise<WallpaperSource> {
+  const url = URL.createObjectURL(file);
+  const image = new Image();
+  image.src = url;
   try {
-    // 只缩不放：长边不超过 1920 的图保持原尺寸
-    const scale = Math.min(1, MAX_EDGE / Math.max(bitmap.width, bitmap.height));
-    const width = Math.max(1, Math.round(bitmap.width * scale));
-    const height = Math.max(1, Math.round(bitmap.height * scale));
-    const canvas = document.createElement('canvas');
-    canvas.width = width;
-    canvas.height = height;
-    const ctx = canvas.getContext('2d');
-    if (ctx === null) throw new Error('canvas 2d 上下文不可用');
-    ctx.drawImage(bitmap, 0, 0, width, height);
-    return canvas.toDataURL('image/jpeg', JPEG_QUALITY);
-  } finally {
-    bitmap.close();
+    await image.decode();
+  } catch (error) {
+    URL.revokeObjectURL(url);
+    throw error;
   }
+  return { url, image };
+}
+
+/** 裁剪区域 → JPEG data URL（上限见 MAX_EDGE / JPEG_QUALITY）。
+ *  画的是 HTMLImageElement 而不是 createImageBitmap 另解的位图：裁剪器用 <img> 显示，按
+ *  naturalWidth/naturalHeight 算出 area；绘制走同一个 <img> 的解码结果，两边坐标系天然一致。 */
+export function renderWallpaper(image: HTMLImageElement, area: WallpaperArea): string {
+  // 只缩不放：裁剪区域最长边不超过 1920 的保持原尺寸
+  const scale = Math.min(1, MAX_EDGE / Math.max(area.width, area.height));
+  const width = Math.max(1, Math.round(area.width * scale));
+  const height = Math.max(1, Math.round(area.height * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  if (ctx === null) throw new Error('canvas 2d 上下文不可用');
+  // 源矩形越界交给 drawImage 按规范裁剪，这里不夹取
+  ctx.drawImage(image, area.x, area.y, area.width, area.height, 0, 0, width, height);
+  return canvas.toDataURL('image/jpeg', JPEG_QUALITY);
 }
 
 /** 订阅当前壁纸 data URL（无壁纸为 null）；写后所有订阅者随 setWallpaper 的 emit 更新 */

@@ -16,6 +16,7 @@
     "@mui/material": "^6.4.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
+    "react-easy-crop": "^6.2.3",
     "react-markdown": "^10.1.0",
     "react-router-dom": "^7.5.0",
     "remark-breaks": "^4.0.0",

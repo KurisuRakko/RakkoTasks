@@ -24,7 +24,7 @@ import {
   TYPE_SCALE,
   WHISPER_SHADOW,
 } from './rakko-tokens';
-import { WALLPAPER_ATTR, WALLPAPER_LAYER_ID, WALLPAPER_VAR } from './lib/glass';
+import { SCRIM_COLOR, WALLPAPER_ATTR, WALLPAPER_LAYER_ID, WALLPAPER_VAR } from './lib/glass';
 
 type Mode = 'light' | 'dark';
 
@@ -261,7 +261,7 @@ function buildThemeOptions(mode: Mode): ThemeOptions {
         styleOverrides: {
           root: {
             '&:not(.MuiBackdrop-invisible)': {
-              backgroundColor: 'rgb(0 0 0 / var(--glass-scrim-opacity))',
+              backgroundColor: SCRIM_COLOR,
             },
           },
         },
