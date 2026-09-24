@@ -10,13 +10,22 @@ from email.message import Message
 from email.utils import getaddresses, parsedate_to_datetime
 
 _WS_RE = re.compile(r"\s+")
+# RFC 5322 折行头：CRLF/LF 加后续空白折出来，保留空白本身
+_FOLD_RE = re.compile(r"\r?\n(?=[ \t])")
+# 展开后仍残留的孤立换行（畸形邮件）
+_NEWLINE_RE = re.compile(r"[\r\n]+")
 
 
 def _decode_header(value: str | None) -> str:
     if not value:
         return ""
+    # compat32 不会展开未编码的折行（encoded-word 之间的折行 decode_header 自己能处理）；
+    # 头部含裸 8bit 字节时 compat32 给出 Header 对象，统一成 str 再处理
+    value = str(value)
+    value = _FOLD_RE.sub("", value)
     try:
-        return str(make_header(decode_header(value)))
+        # 展开后仍可能有孤立换行，保证返回值里绝不含换行
+        return _NEWLINE_RE.sub(" ", str(make_header(decode_header(value))))
     except Exception:
         # 极端畸形 header 兜底：原样返回
         return _WS_RE.sub(" ", value)
