@@ -18,6 +18,8 @@ import { RADIUS } from '../rakko-tokens';
 export const DRAWER_WIDTH = 240;
 /** 内容列最大宽度：AppShell 的路由出口与从列表行长出来的对话框共用 */
 export const CONTENT_MAX_WIDTH = 840;
+/** 移动端固定底栏的让位高度：主内容区留白与吸底元素的偏移都以它为准 */
+export const BOTTOM_NAV_HEIGHT_PX = 64;
 
 /** 页面外壳：不给横向内边距（玻璃面板贴着内容区左右边，横向留白由面板自己的 px 提供），
  *  底部 padding 给固定底栏（AppShell，高 50–58px + env(safe-area-inset-bottom)）让出空间，

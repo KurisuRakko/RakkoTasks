@@ -8,8 +8,12 @@ describe('navIndexOf', () => {
     expect(navIndexOf('/')).toBe(0);
   });
 
-  it('/search → 1', () => {
-    expect(navIndexOf('/search')).toBe(1);
+  it('/assistant → 1', () => {
+    expect(navIndexOf('/assistant')).toBe(1);
+  });
+
+  it('/search → -1（只是重定向到助理页，不算导航页）', () => {
+    expect(navIndexOf('/search')).toBe(-1);
   });
 
   it('/done → 2', () => {
@@ -26,16 +30,20 @@ describe('navIndexOf', () => {
 });
 
 describe('NAV_ITEMS', () => {
-  it('长度为 3，路径顺序为 /、/search、/done', () => {
+  it('长度为 3，路径顺序为 /、/assistant、/done', () => {
     expect(NAV_ITEMS).toHaveLength(3);
-    expect(NAV_ITEMS.map((i) => i.path)).toEqual(['/', '/search', '/done']);
+    expect(NAV_ITEMS.map((i) => i.path)).toEqual(['/', '/assistant', '/done']);
+  });
+
+  it('标签顺序为 任务、助理、已完成', () => {
+    expect(NAV_ITEMS.map((i) => i.label)).toEqual(['任务', '助理', '已完成']);
   });
 });
 
 describe('routeDirection', () => {
   it('设置组外：索引变大前进、变小后退', () => {
     expect(routeDirection('/', '/done')).toBe('forward');
-    expect(routeDirection('/search', '/')).toBe('back');
+    expect(routeDirection('/assistant', '/')).toBe('back');
   });
 
   it('进入设置组一律前进（哪怕目标索引 -1）', () => {
