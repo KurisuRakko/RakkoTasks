@@ -271,8 +271,8 @@ class LLMClient:
                         json_mode: bool = False) -> dict:
         """agentic 搜索对话：一次 create，把 SDK 的 message 对象规范化成纯 dict 返回。
 
-        契约与 search.py 一致；无工具调用时返回的 dict 不带 tool_calls 键
-        （search.py 用 msg.get("tool_calls") 判断）。
+        契约与 agent.run_tool_loop 一致（AI 助理与详情共用）；无工具调用时返回的 dict
+        不带 tool_calls 键（run_tool_loop 用 msg.get("tool_calls") 判断）。
         """
         kw = self._base_kwargs()
         kw["messages"] = messages
@@ -287,8 +287,8 @@ class LLMClient:
             result["tool_calls"] = [
                 {
                     "id": tc.id,
-                    # type 必须为 "function"：search.py 会把 tool_calls 原样回填进
-                    # 下一轮请求，缺了这个字段 DeepSeek API 直接 400
+                    # type 必须为 "function"：agent.run_tool_loop 会把 tool_calls 原样
+                    # 回填进下一轮请求，缺了这个字段 DeepSeek API 直接 400
                     # （deserialize 报 missing field 'type'）。
                     "type": "function",
                     "function": {"name": tc.function.name, "arguments": tc.function.arguments},

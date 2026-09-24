@@ -148,7 +148,7 @@ def test_chat_completion_normalizes_tool_calls():
     assert out["content"] == ""
     calls = out["tool_calls"]
     assert len(calls) == 2
-    # type 必须为 "function"：search.py 会把 tool_calls 原样回填进下一轮请求，
+    # type 必须为 "function"：agent.run_tool_loop 会把 tool_calls 原样回填进下一轮请求，
     # 缺了这个字段 DeepSeek API 直接 400（missing field 'type'）
     for tc in calls:
         assert tc["type"] == "function"

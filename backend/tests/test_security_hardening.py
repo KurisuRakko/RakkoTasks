@@ -3,17 +3,19 @@ import copy
 import json
 import ssl
 from types import SimpleNamespace
+from zoneinfo import ZoneInfo
 
 from fastapi.testclient import TestClient
 
 from sqlalchemy.exc import OperationalError
 
 from app.api import create_app
+from app.assistant import run_assistant
 from app.auth import CurrentUser, require_auth
 from app.config import Settings
 from app.imap.client import connect_account
 from app.models import Account, Email, Item, User
-from app.agent import _dispatch_tool, _tool_search_emails, fts_query, run_tool_loop
+from app.agent import TOOLS, _dispatch_tool, _tool_search_emails, email_tool_dispatch, fts_query, run_tool_loop
 from app.promptguard import (
     UNTRUSTED_BEGIN,
     UNTRUSTED_END,
@@ -21,7 +23,6 @@ from app.promptguard import (
     wrap_untrusted,
 )
 from app.ratelimit import RateLimiter
-from app.search import run_search
 
 
 def _settings() -> Settings:
@@ -131,9 +132,9 @@ def test_llm_error_details_not_leaked(session_factory, monkeypatch):
     monkeypatch.setattr("app.llm.get_llm", boom)
     client = _client(session_factory, monkeypatch)
 
-    resp = client.post("/api/search", json={"question": "发票在哪里"})
+    resp = client.post("/api/assistant/chat", json={"messages": [{"role": "user", "content": "x"}]})
     assert resp.status_code == 502
-    assert resp.json() == {"code": "search_error"}
+    assert resp.json() == {"code": "assistant_error"}
     assert "内部秘密细节-abc123" not in resp.text
 
     resp = client.post(f"/api/items/{item_id}/detail")
@@ -152,23 +153,23 @@ class OkSearchLLM:
         return {"role": "assistant", "content": json.dumps({"answer_md": "ok", "citations": []})}
 
 
-def test_search_rate_limit_per_user(session_factory, monkeypatch):
+def test_assistant_rate_limit_per_user(session_factory, monkeypatch):
     _seed(session_factory)
     monkeypatch.setattr("app.llm.get_llm", lambda settings=None: OkSearchLLM())
     client = _client(session_factory, monkeypatch)
 
     for _ in range(6):
-        resp = client.post("/api/search", json={"question": "q"})
+        resp = client.post("/api/assistant/chat", json={"messages": [{"role": "user", "content": "q"}]})
         assert resp.status_code == 200
 
-    resp = client.post("/api/search", json={"question": "q"})
+    resp = client.post("/api/assistant/chat", json={"messages": [{"role": "user", "content": "q"}]})
     assert resp.status_code == 429
     assert resp.json() == {"code": "rate_limited"}
 
     # 另一个用户（另一 sub）不受影响，仍是正常路径
     app = client.app
     app.dependency_overrides[require_auth] = lambda: CurrentUser(sub="user-2", email="user-2@example.com", name="乙")
-    resp = client.post("/api/search", json={"question": "q"})
+    resp = client.post("/api/assistant/chat", json={"messages": [{"role": "user", "content": "q"}]})
     assert resp.status_code == 200
 
 
@@ -246,7 +247,8 @@ class CaptureSearchLLM:
 
 
 def _user_message(snapshots: list[list[dict]]) -> str:
-    for m in snapshots[0]:
+    """首轮请求里最后一条 user 消息（助理把问题与邮件索引拼在这一条上）。"""
+    for m in reversed(snapshots[0]):
         if m["role"] == "user":
             return m["content"]
     raise AssertionError("无 user 消息")
@@ -267,7 +269,15 @@ def test_prompt_injection_sentinels_closed(session_factory):
     e1_id, _item_id = _seed(session_factory, subject=evil_subject)
     with session_factory() as s:
         llm = CaptureSearchLLM(target_id=e1_id)
-        result = run_search("惊喜在哪里", s, llm, "user-1")
+        result = run_assistant(
+            [{"role": "user", "content": "惊喜在哪里"}],
+            s,
+            llm,
+            _settings(),
+            "user-1",
+            today="2026-09-24",
+            zone=ZoneInfo("Australia/Sydney"),
+        )
 
     assert result["answer_md"] == "已找到"
 
@@ -386,8 +396,12 @@ def test_run_tool_loop_continues_after_tool_db_error(session_factory, monkeypatc
         owned = list(s.execute(select(Account.id)).scalars().all())
         llm = BoomThenFinalLLM()
         data = run_tool_loop(
-            llm, [{"role": "user", "content": "hi"}], s, _settings(), owned,
-            max_rounds=8, retry_hint="hint",
+            llm,
+            [{"role": "user", "content": "hi"}],
+            tools=TOOLS,
+            dispatch=email_tool_dispatch(s, _settings(), owned),
+            max_rounds=8,
+            retry_hint="hint",
         )
     assert data == {"answer_md": "ok", "citations": []}
     assert len(llm.calls) == 2
@@ -395,13 +409,13 @@ def test_run_tool_loop_continues_after_tool_db_error(session_factory, monkeypatc
     assert any('"ok": false' in c for c in llm.tool_contents)
 
 
-# ── 补充：SearchRequest.question 长度上限 ─────────────────────
+# ── 补充：ChatRequest 单条消息长度上限 ────────────────────────
 
 
-def test_search_question_too_long_rejected(session_factory, monkeypatch):
+def test_assistant_message_too_long_rejected(session_factory, monkeypatch):
     _seed(session_factory)
     monkeypatch.setattr("app.llm.get_llm", lambda settings=None: OkSearchLLM())
     client = _client(session_factory, monkeypatch)
 
-    resp = client.post("/api/search", json={"question": "长" * 2001})
+    resp = client.post("/api/assistant/chat", json={"messages": [{"role": "user", "content": "长" * 2001}]})
     assert resp.status_code == 422

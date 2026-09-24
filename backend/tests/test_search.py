@@ -1,48 +1,15 @@
-"""AI 搜索测试：FakeLLM 三轮工具循环 + FTS5 内存库真跑。"""
-import json
+"""邮件检索工具测试：FTS5 内存库真跑 + read_emails 正文提取。"""
 from datetime import datetime
 
 from sqlalchemy import select, text
 
-from app.agent import _fts_match_ids, fts_query
+from app.agent import _dispatch_tool, _fts_match_ids, fts_query
+from app.config import Settings
 from app.models import Account, Email, User
-from app.search import run_search
 
 
-class FakeSearchLLM:
-    """三轮对话：search_emails → read_emails → 最终 JSON。"""
-
-    def __init__(self, target_id: int):
-        self.target_id = target_id
-        self.calls: list[dict] = []
-        self.tool_results: list[dict] = []  # 记录 read_emails 工具结果（供断言正文提取）
-
-    def chat_completion(self, messages, tools=None, json_mode=False):
-        self.calls.append({"tools": bool(tools), "json_mode": json_mode})
-        if len(self.calls) == 1:
-            return {
-                "role": "assistant",
-                "content": "",
-                "tool_calls": [
-                    {"id": "call_1", "function": {"name": "search_emails", "arguments": json.dumps({"keywords": "发票"})}}
-                ],
-            }
-        if len(self.calls) == 2:
-            return {
-                "role": "assistant",
-                "content": "",
-                "tool_calls": [
-                    {"id": "call_2", "function": {"name": "read_emails", "arguments": json.dumps({"ids": [self.target_id]})}}
-                ],
-            }
-        # 第三轮：messages 里已带 read_emails 的工具结果，记录下来供断言
-        for m in messages:
-            if m.get("role") == "tool" and m.get("tool_call_id") == "call_2":
-                self.tool_results.append(json.loads(m["content"]))
-        return {
-            "role": "assistant",
-            "content": json.dumps({"answer_md": "**找到了**：发票已开具", "citations": [self.target_id, 9999]}),
-        }
+def _settings() -> Settings:
+    return Settings(database_path=":memory:", llm_base_url="http://x", llm_api_key="k")
 
 
 def _seed(session_factory) -> tuple[int, int]:
@@ -63,24 +30,6 @@ def _seed(session_factory) -> tuple[int, int]:
         s.add_all([e1, e2])
         s.commit()
         return e1.id, e2.id
-
-
-def test_agentic_loop_and_citations(session_factory):
-    e1_id, e2_id = _seed(session_factory)
-    with session_factory() as s:
-        llm = FakeSearchLLM(target_id=e1_id)
-        result = run_search("发票在哪里？", s, llm, "user-1")
-
-    assert result["answer_md"] == "**找到了**：发票已开具"
-    # 富化：join emails 补 subject/sent_at；9999 不存在被过滤
-    assert len(result["citations"]) == 1
-    cit = result["citations"][0]
-    assert cit["email_id"] == e1_id
-    assert cit["subject"] == "发票通知"
-    assert cit["sent_at"] is not None
-    # 三轮对话：都带 tools（第三轮最终回答）
-    assert len(llm.calls) == 3
-    assert all(c["tools"] for c in llm.calls)
 
 
 def test_fts_search_runs_in_memory(session_factory):
@@ -132,11 +81,10 @@ def test_read_emails_falls_back_to_html_text(session_factory):
     """无 text_body 的邮件用 html 剥标签返回（回归：read_emails 行为不变）。"""
     e1_id, e2_id = _seed(session_factory)
     with session_factory() as s:
-        llm = FakeSearchLLM(target_id=e2_id)
-        result = run_search("会议内容", s, llm, "user-1")
-    # FakeSearchLLM 第二轮 read_emails 读 e2（html 正文），断言没炸且能完成
-    assert result["citations"][0]["email_id"] == e2_id
+        owned = list(s.execute(select(Account.id)).scalars().all())
+        result = _dispatch_tool(s, "read_emails", {"ids": [e2_id]}, _settings(), owned)
     # 工具结果里的正文来自 html 提取：含关键词、不含标签
-    body = llm.tool_results[0]["emails"][0]["text"]
+    assert result["ok"] is True
+    body = result["emails"][0]["text"]
     assert "周五项目启动会" in body
     assert "<p>" not in body
