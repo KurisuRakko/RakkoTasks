@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import ItemDialog from '../src/components/ItemDialog';
 import { VT_NAMES } from '../src/lib/view-transition';
+import { allStyleText, ownRules } from './glass-text-contrast.test-utils';
 import type { Item } from '../src/types';
 
 function makeItem(partial: Partial<Item>): Item {
@@ -400,5 +401,33 @@ describe('ItemDialog 截止日与列表同一口径', () => {
     const chip = screen.getByLabelText(/^截止 .+，已逾期$/).closest('.MuiChip-root') as HTMLElement;
     expect(chip).not.toBeNull();
     expect(chip.className).toMatch(/MuiChip-colorPrimary/);
+  });
+});
+
+describe('ItemDialog 正文里的长串不把整张对话框撑出横向滚动', () => {
+  // 无空格长串：URL / 订单号 / 邮箱地址这类内容没有自然断点，缺了断点就会撑宽 paper。
+  // 用例走 email_id: null 的手动条目——不触发详情/邮件请求，无需 fetch mock。
+  const LONG = 'a'.repeat(200);
+
+  it('正文容器自带 overflow-wrap:anywhere：长串在正文宽度内折行', () => {
+    render(
+      <ItemDialog
+        item={makeItem({ email_id: null, title: LONG, summary: LONG })}
+        onClose={vi.fn()}
+      />,
+    );
+
+    // 正文容器是 paper 的直接 div 子元素（AppBar 渲染成 header，不在其内；
+    // 编辑/删除的对话框与 Snackbar 都挂在 portal 里，也不在 paper 下）
+    const paper = document.querySelector('.MuiDialog-paper') as HTMLElement;
+    expect(paper).not.toBeNull();
+    const body = paper.querySelector(':scope > div') as HTMLElement | null;
+    expect(body).not.toBeNull();
+
+    const rule = ownRules(allStyleText(), body!);
+    expect(rule, '正文容器没读到自身的 css-* 规则，下面的断言会空转').not.toBe('');
+    expect(rule, '长串必须能在任意位置断行，否则整张 paper 横向可滚').toContain(
+      'overflow-wrap:anywhere',
+    );
   });
 });

@@ -37,13 +37,22 @@ export const PANEL_SX = {
   borderRadius: `${RADIUS.card}px`,
 } as const;
 
-/** 对话框正文内边距：常规内边距之上再补一份底部安全区——对话框正文贴屏幕底边，
- *  底部控件坐在 home indicator 上会被遮住/误触。16px 是基准内边距，不随
- *  env(safe-area-inset-bottom) 变；用 calc 相加而不是覆盖，安全区为 0 的机型上也保持对齐。 */
+/** 对话框正文：内边距（常规内边距之上再补一份底部安全区）+ 长串折行的兜底。
+ *  内边距：对话框正文贴屏幕底边，底部控件坐在 home indicator 上会被遮住/误触。
+ *  16px 是基准内边距，不随 env(safe-area-inset-bottom) 变；用 calc 相加而不是覆盖，
+ *  安全区为 0 的机型上也保持对齐。
+ *  overflowWrap：Dialog 的 paper 是 overflow-y: auto 的滚动容器，而一个轴不是
+ *  visible 时另一轴的 visible 会按 CSS 规则计算成 auto——正文里任何比 paper 宽、
+ *  又没有断点的长串（URL / 订单号 / 邮箱）都会让整张 paper 横向可滚，用户看到的
+ *  就是整个弹窗左右晃。这里给正文补上断点，长串在正文宽度内折行。
+ *  取 anywhere 而不是 break-word：两者都会在溢出时断开长串，但只有 anywhere 把
+ *  这些断点计入 min-content——flex 行里的文字项按 min-content 收缩，才让得开宽度；
+ *  break-word 下 flex 项的 min-width: auto 仍按整串宽度撑开，等于没修。 */
 export const DIALOG_BODY_SX = {
   px: 2,
   py: 2,
   pb: 'calc(16px + env(safe-area-inset-bottom))',
+  overflowWrap: 'anywhere',
 } as const;
 
 /** 空态 / 加载态居中块：一块只放 CircularProgress 或一句空态文案的横向居中容器。

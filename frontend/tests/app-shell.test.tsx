@@ -18,47 +18,8 @@ import { NAV_ITEMS } from '../src/lib/nav';
 import { ACCENT, GLASS_NAV_RAIL_LIGHT, NEUTRAL_LIGHT } from '../src/rakko-tokens';
 import { VT_SHELL_ATTR, VT_NAMES } from '../src/lib/view-transition';
 import { setWallpaper } from '../src/lib/wallpaper';
-import { AppThemeProvider, allStyleText } from './glass-text-contrast.test-utils';
+import { AppThemeProvider, allStyleText, ownRules } from './glass-text-contrast.test-utils';
 import type { Item } from '../src/types';
-
-/** 元素身上全部 css-* 局部类对应规则块的拼接（写法同下方桌面侧栏那组的 ownRules、
- * 以及 tasks-page.test.tsx）：emotion 把 styled 基类与 sx 类分开成两个 css-* 类，
- * 只取第一个会漏掉 sx 写的那半；同一个类的嵌套块（&::before 这类假元素规则）与
- * @media 里的改写也是独立的顶层规则块，所以按「以 .类名 开头的每条规则」收集，
- * 而不是只切第一个块。jsdom 解析不了 emotion 的级联，但规则文本可逐字读。 */
-function ownRules(css: string, el: Element): string {
-  const classes = Array.from(el.classList).filter((c) => c.startsWith('css-'));
-  const chunks: string[] = [];
-  for (const cls of classes) {
-    const head = `.${cls}`;
-    let from = 0;
-    for (;;) {
-      const start = css.indexOf(head, from);
-      if (start < 0) break;
-      // 类名必须正好结束：css-abc 不该匹配 css-abcd
-      const next = css[start + head.length];
-      if (next !== '{' && next !== ':' && next !== '.' && next !== '[' && next !== ' ') break;
-      const open = css.indexOf('{', start);
-      if (open < 0) break;
-      let depth = 0;
-      let end = -1;
-      for (let i = open; i < css.length; i += 1) {
-        if (css[i] === '{') depth += 1;
-        else if (css[i] === '}') {
-          depth -= 1;
-          if (depth === 0) {
-            end = i;
-            break;
-          }
-        }
-      }
-      if (end < 0) break;
-      chunks.push(css.slice(start, end + 1));
-      from = end + 1;
-    }
-  }
-  return chunks.join(' ');
-}
 
 /** 拼接规则块里某条声明的整段值（从 `prop:` 到该块结尾，声明之间用 ';' 分隔）。
  *  用于「这条声明的值里必须同时有 A 和 B」这类断言——要求确有该声明，而不是靠
@@ -550,8 +511,8 @@ describe('底栏对齐 BottomNav 契约（nav 语义 / 发丝线 / 限宽 / 指�
 // 且只在浅色下」钉死。观感是否「不再发白」要由真机判定，这里只锁作用范围与变量值。
 describe('桌面侧栏浅色削白（只动侧栏那一块 chrome）', () => {
   // jsdom 给不出真实渲染，玻璃变量走 emotion 规则文本。Drawer paper 的样式分在多个
-  // css-* 类上（styled 一个、sx 一个），只取第一个类不够 —— 复用文件顶部的 ownRules，
-  // 它把元素身上全部 css-* 类对应的规则块拼起来（写法同 tasks-page.test.tsx）。
+  // css-* 类上（styled 一个、sx 一个），只取第一个类不够 —— 用共享的 ownRules，
+  // 它把元素身上全部 css-* 类对应的规则块拼起来。
 
   afterEach(() => {
     // theme-mode 是 localStorage 持久化的三态：不清会让后续用例跟着停在深色

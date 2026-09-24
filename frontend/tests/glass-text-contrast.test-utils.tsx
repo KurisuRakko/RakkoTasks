@@ -51,3 +51,46 @@ export function ruleTextOf(css: string, el: Element): string {
   const end = css.indexOf('}', start);
   return end < 0 ? '' : css.slice(start, end);
 }
+
+/** 元素身上全部 css-* 局部类对应规则块的拼接。与 ruleTextOf 的区别：emotion 把
+ *  styled 基类与 sx 类拆成两个 css-* 类，只取第一个会漏掉 sx 写的那半；同一个类的
+ *  嵌套块（&::before 这类假元素规则）与 @media 里的改写也是独立的顶层规则块，所以
+ *  按「以 .类名 开头的每条规则」收集，而不是只切第一个块。拼接结果为空串说明元素
+ *  没挂局部类，断言容器会空转——先用 .not.toBe('') 钉住非空再查声明。 */
+export function ownRules(css: string, el: Element): string {
+  const classes = Array.from(el.classList).filter((c) => c.startsWith('css-'));
+  const chunks: string[] = [];
+  for (const cls of classes) {
+    const head = `.${cls}`;
+    let from = 0;
+    for (;;) {
+      const start = css.indexOf(head, from);
+      if (start < 0) break;
+      // 类名必须正好结束：css-abc 不该匹配 css-abcd。不匹配只是这一处不是要找的规则
+      // （样式表里 .css-abcd 可能排在 .css-abc 前面），跳过它继续往后找，不能 break。
+      const next = css[start + head.length];
+      if (next !== '{' && next !== ':' && next !== '.' && next !== '[' && next !== ' ') {
+        from = start + head.length;
+        continue;
+      }
+      const open = css.indexOf('{', start);
+      if (open < 0) break;
+      let depth = 0;
+      let end = -1;
+      for (let i = open; i < css.length; i += 1) {
+        if (css[i] === '{') depth += 1;
+        else if (css[i] === '}') {
+          depth -= 1;
+          if (depth === 0) {
+            end = i;
+            break;
+          }
+        }
+      }
+      if (end < 0) break;
+      chunks.push(css.slice(start, end + 1));
+      from = end + 1;
+    }
+  }
+  return chunks.join(' ');
+}
