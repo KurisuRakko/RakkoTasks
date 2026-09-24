@@ -381,7 +381,7 @@ docker compose exec worker python -m app.cli archive-backfill [--days N] [--acco
 4. mbox 是全部邮件的明文副本（含附件），备份与访问控制要按敏感数据对待；归档目录不在
    `data/` 下时，上面备份小节里的 `cp -a data/` 不会带上它，需单独备份。
 5. 旧版本留下的 `<账户>/<日期>/*.eml` 不会自动并入 mbox，可以在回补后删掉，
-   回补会从服务器重新拉 30 天内的原件。
+   回补会从服务器重新拉 `--days` 指定天数内（缺省为 `INITIAL_BACKFILL_DAYS`）的原件。
 
 **启用步骤**
 
