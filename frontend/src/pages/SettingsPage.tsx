@@ -286,7 +286,7 @@ export default function SettingsPage() {
       <Box data-glass="panel" sx={PANEL_SX}>
         <Typography variant="overline">壁纸</Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-          壁纸只存在本机浏览器里，换设备需要重新设置。
+          不设置时使用默认壁纸；自选壁纸只存在本机浏览器里，换设备需要重新设置。
         </Typography>
         <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap' }}>
           <Button variant="outlined" onClick={() => fileInputRef.current?.click()}>
@@ -294,7 +294,7 @@ export default function SettingsPage() {
           </Button>
           {wallpaper && (
             <Button variant="outlined" onClick={() => setWallpaper(null)}>
-              移除壁纸
+              恢复默认壁纸
             </Button>
           )}
         </Stack>

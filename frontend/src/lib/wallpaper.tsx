@@ -3,12 +3,16 @@
 // 状态模型照 src/lib/list-cache.ts：模块级状态 + useSyncExternalStore 订阅。不做 React
 // Context Provider——App.tsx 归壳层另一路，这里不能被 Provider 包裹。
 //
-// 图源以 CSS 变量（WALLPAPER_VAR）写到 <html>，body 背景由主题层消费：主题层在图上叠
+// 图源以 CSS 变量（WALLPAPER_VAR）写到 <html>，壁纸承载层背景由主题层消费：主题层在图上叠
 // 驯化层纸色，图再被顶栏（chrome）与内容玻璃板（panel）各模糊一次——整页只允许这两次
 // backdrop 读回。
+//
+// 用户没设过壁纸不是「没有背景」：applyToRoot 此时写 DEFAULT_WALLPAPER_URL，玻璃身后
+// 永远有图。模块内存态与 useWallpaper 的返回值仍是「用户是否设过」——null 表示用默认图，
+// 默认地址不混进状态，否则「恢复默认壁纸」这个动作在状态里表达不出来。
 
 import { useSyncExternalStore } from 'react';
-import { WALLPAPER_ATTR, WALLPAPER_VAR } from './glass';
+import { DEFAULT_WALLPAPER_URL, WALLPAPER_VAR } from './glass';
 
 /** localStorage 存储键。index.html 的首帧内联脚本在模块系统之外只能手抄同一份
  *  （那边不能 import 常量），tests/wallpaper.test.tsx 会断言两处一致。 */
@@ -37,16 +41,16 @@ function subscribe(listener: () => void): () => void {
   return () => listeners.delete(listener);
 }
 
-/** 把壁纸图源同步到 <html> 的 CSS 变量：形状不符的脏值按没有壁纸处理（置 'none'），
- *  不抛错——localStorage 里是脏数据不该让整个应用崩掉 */
+/** 把壁纸图源同步到 <html> 的 CSS 变量：用户没设过（null）或形状不符的脏值一律回
+ *  DEFAULT_WALLPAPER_URL，不抛错——localStorage 里是脏数据不该让整个应用崩掉，也不该
+ *  让背景空掉 */
 function applyToRoot(dataUrl: string | null): void {
   const root = document.documentElement;
   const safe = dataUrl !== null && SAFE_DATA_URL.test(dataUrl);
-  root.style.setProperty(WALLPAPER_VAR, safe ? `url("${dataUrl}")` : 'none');
-  // 属性标记跟 safe 同一判定（脏值同样算没有壁纸），由主题层用
-  // :root:not([data-wallpaper]) 消费：没有壁纸时玻璃身后没有图像可透，透镜渐变与
-  // 内侧高光只剩无来由的光泽，应被禁用。
-  root.toggleAttribute(WALLPAPER_ATTR, safe);
+  root.style.setProperty(
+    WALLPAPER_VAR,
+    safe ? `url("${dataUrl}")` : `url("${DEFAULT_WALLPAPER_URL}")`,
+  );
 }
 
 /** 同步读 localStorage 里的壁纸 data URL；读失败（隐私模式等）或形状不符返回 null */
@@ -59,11 +63,11 @@ export function readWallpaper(): string | null {
   }
 }
 
-/**
- * 写壁纸：dataUrl 为 null 表示移除。先持久化，成功后才改内存态与 <html> 变量并通知
- * 订阅者。这里刻意不接异常：localStorage 写入超配额会抛 QuotaExceededError（隐私模式
- * 连 setItem 都直接抛），让它自然冒泡到调用方去提示用户——这与 theme-mode 的
- * 「写失败静默降级」不同：壁纸写不进去等于功能没生效，静默掉用户永远不知道。
+/** 写壁纸：dataUrl 为 null 表示改用默认壁纸（清掉用户那份）。先持久化，成功后才改内存态
+ *  与 <html> 变量并通知订阅者。这里刻意不接异常：localStorage 写入超配额会抛
+ *  QuotaExceededError（隐私模式连 setItem 都直接抛），让它自然冒泡到调用方去提示用户
+ *  ——这与 theme-mode 的「写失败静默降级」不同：壁纸写不进去等于功能没生效，静默掉
+ *  用户永远不知道。
  */
 export function setWallpaper(dataUrl: string | null): void {
   if (dataUrl === null) localStorage.removeItem(WALLPAPER_STORAGE_KEY);
@@ -120,7 +124,8 @@ export function renderWallpaper(image: HTMLImageElement, area: WallpaperArea): s
   return canvas.toDataURL('image/jpeg', JPEG_QUALITY);
 }
 
-/** 订阅当前壁纸 data URL（无壁纸为 null）；写后所有订阅者随 setWallpaper 的 emit 更新 */
+/** 订阅用户壁纸 data URL（未设过为 null，此时背景走默认壁纸）；写后所有订阅者随
+ *  setWallpaper 的 emit 更新 */
 export function useWallpaper(): string | null {
   return useSyncExternalStore(subscribe, () => current);
 }

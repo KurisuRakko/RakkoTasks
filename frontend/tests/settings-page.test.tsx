@@ -362,24 +362,24 @@ describe('SettingsPage 壁纸', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: '设为壁纸' })).toBeEnabled());
   }
 
-  it('未设壁纸：只有「选择图片」，没有「移除壁纸」也没有「壁纸预览」', async () => {
+  it('未设壁纸：只有「选择图片」，没有「恢复默认壁纸」也没有「壁纸预览」', async () => {
     renderSettings();
 
     expect(await screen.findByRole('button', { name: '选择图片' })).toBeTruthy();
-    expect(screen.queryByRole('button', { name: '移除壁纸' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '恢复默认壁纸' })).toBeNull();
     expect(screen.queryByLabelText('壁纸预览')).toBeNull();
   });
 
-  it('已设壁纸：出现「移除壁纸」但没有「壁纸预览」；点击移除后 readWallpaper() 返回 null、按钮同步消失', async () => {
+  it('已设壁纸：出现「恢复默认壁纸」但没有「壁纸预览」；点击后 readWallpaper() 返回 null、按钮同步消失', async () => {
     setWallpaper('data:image/jpeg;base64,AAAA');
     renderSettings();
 
-    expect(await screen.findByRole('button', { name: '移除壁纸' })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: '恢复默认壁纸' })).toBeTruthy();
     expect(screen.queryByLabelText('壁纸预览')).toBeNull();
 
-    fireEvent.click(screen.getByRole('button', { name: '移除壁纸' }));
+    fireEvent.click(screen.getByRole('button', { name: '恢复默认壁纸' }));
     expect(readWallpaper()).toBeNull();
-    expect(screen.queryByRole('button', { name: '移除壁纸' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '恢复默认壁纸' })).toBeNull();
     expect(screen.queryByLabelText('壁纸预览')).toBeNull();
   });
 

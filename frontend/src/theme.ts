@@ -24,7 +24,7 @@ import {
   TYPE_SCALE,
   WHISPER_SHADOW,
 } from './rakko-tokens';
-import { SCRIM_COLOR, WALLPAPER_ATTR, WALLPAPER_LAYER_ID, WALLPAPER_VAR } from './lib/glass';
+import { DEFAULT_WALLPAPER_URL, SCRIM_COLOR, WALLPAPER_LAYER_ID, WALLPAPER_VAR } from './lib/glass';
 
 type Mode = 'light' | 'dark';
 
@@ -160,15 +160,8 @@ function buildThemeOptions(mode: Mode): ThemeOptions {
             '--glass-text-glow': GLASS_AERO[mode].textGlow,
             '--shadow-whisper': GLASS_SHADOW_WHISPER[mode],
           },
-          // 无壁纸时玻璃没有图像可透（body 退回纯纸色，模糊读不出），透镜渐变与内侧
-          // 高光只剩无来由的光泽——本块把高光 token 置 transparent 而非删掉声明：配方里
-          // 两处消费都是 var(--glass-highlight)（panel 档的左上透镜渐变与 1px 内侧高光），
-          // token 置透明即可让两者同时失效，不必碰 rakko-glass.css 的镜像配方；
-          // :root:not(...) 特异性 (0,2,0) 高于 :root 的 (0,1,0)，能盖住上面的下发值。
-          // --shadow-whisper 不动：阴影不是高光，无壁纸时浮层仍需它托起。
-          [`:root:not([${WALLPAPER_ATTR}])`]: {
-            '--glass-highlight': 'transparent',
-          },
+          // 玻璃高光不再按「有没有壁纸」分档：用户没设壁纸时背景是默认壁纸，玻璃身后
+          // 永远有图像可透，高光恒为 GLASS.highlight 一档。
           // body 只留排版属性：地板整体在下面的壁纸承载层里。
           body: {
             letterSpacing: '0.01em',
@@ -188,16 +181,17 @@ function buildThemeOptions(mode: Mode): ThemeOptions {
           //   今天 canvas 的基色是 CssBaseline 给 body 设的 background.default 传播上去的，
           //   与这里的 n1 同色，垫上去当前观感等价；它的价值是不依赖 body → canvas 这条
           //   传播链，body 背景一旦改透明，这一层就是唯一的不透明地板。
-          //   无壁纸时这一层就是纯纸色，观感不变——有无壁纸同一条路径。
+          //   这一层今天恒有图：用户壁纸或默认壁纸，纸色只是图尚未解码时的底。
           // 壁纸图源由 lib/wallpaper 写到 <html> 的 CSS 变量上，不叠驯化层纸色（驯化层已
-          // 移除，壁纸显示用户原图）；无壁纸时该变量为 none，只剩纸色地板。
+          // 移除，壁纸显示用户原图）；变量的兜底值是默认壁纸而不是 none——lib/wallpaper
+          // 尚未执行时也不该空成纯纸色。
           [`#${WALLPAPER_LAYER_ID}`]: {
             position: 'fixed',
             inset: 0,
             zIndex: -1,
             pointerEvents: 'none',
             backgroundColor: n1,
-            backgroundImage: `var(${WALLPAPER_VAR}, none)`,
+            backgroundImage: `var(${WALLPAPER_VAR}, url("${DEFAULT_WALLPAPER_URL}"))`,
             backgroundSize: 'cover',
             backgroundPosition: 'center',
             backgroundRepeat: 'no-repeat',

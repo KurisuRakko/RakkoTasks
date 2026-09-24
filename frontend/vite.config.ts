@@ -14,7 +14,11 @@ export default defineConfig({
       registerType: 'prompt',
       // 不注入自动注册脚本，注册/周期检查/回前台补查统一走 src/lib/pwa-update.ts
       injectRegister: false,
-      includeAssets: ['icon.svg'],
+      // 默认壁纸必须进预缓存：它是背景层的图源，离线时命中不到就是空背景。workbox 的
+      // globPatterns 默认只收 js/wasm/css/html，jpg 收不进来，所以随 includeAssets 单列
+      // （该列表按 public 目录解析，与 icon.svg 同一机制）。
+      // 0.9MB 在 workbox 的 maximumFileSizeToCacheInBytes 默认 2MB 之内，不必调上限。
+      includeAssets: ['icon.svg', 'wallpaper-default.jpg'],
       manifest: {
         name: 'RakkoTasks',
         short_name: 'RakkoTasks',
