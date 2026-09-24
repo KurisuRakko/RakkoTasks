@@ -11,6 +11,7 @@ import { consumeCallback, getMe, startLogin } from './lib/phainon';
 import { useAppTheme } from './theme';
 import { ThemeModeProvider } from './lib/theme-mode';
 import { SessionProvider } from './lib/session';
+import { SyncStatusProvider } from './lib/sync-status';
 import AppShell from './components/AppShell';
 import type { PhainonMe } from './types';
 
@@ -50,7 +51,11 @@ function AuthGate() {
   }
   return me ? (
     <SessionProvider value={me}>
-      <AppShell />
+      {/* 同步状态在壳层之外：AppBar 的刷新按钮与 /sync 状态页都要读它，挂在 AppShell 里面
+          会让壳层自己成了消费方又成了提供方 */}
+      <SyncStatusProvider>
+        <AppShell />
+      </SyncStatusProvider>
     </SessionProvider>
   ) : null;
 }

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Callable
 
 from sqlalchemy import select
@@ -17,7 +17,8 @@ from app.emailtext import email_plain_text
 from app.imap import client as imap_client
 from app.imap.parser import parse_message
 from app.itemrules import CATEGORIES
-from app.models import Account, Email, Item
+from app.models import Account, Email, Item, SyncRun
+from app.sync_state import SyncProgress
 
 # worker 与 API 触发同步共用：进度日志只含计数，不写邮件内容
 logger = logging.getLogger("rakkotasks.sync")
@@ -32,8 +33,13 @@ def _default_imap_factory(account: Account, settings: Settings):
 
 def _sync_account(
     session: Session, account: Account, imap: Any, settings: Settings, archive: EmailArchive | None = None
-) -> None:
-    """拉取一个账户的增量邮件并入库存。"""
+) -> int:
+    """拉取一个账户的增量邮件并入库存，返回本轮新入库的邮件数。
+
+    返回的是「新入库」而不是「拉到的」：去重命中的 UID 不计数，调用方拿它
+    填前端进度里的 new_count。提交由调用方负责——提交失败会整批回滚并把该
+    账户标 error，此时这个计数也就不会被采用。
+    """
     uidvalidity = imap.select_inbox()
     if account.uidvalidity is not None and account.uidvalidity != uidvalidity:
         # UIDVALIDITY 变化：旧 UID 全部失效，重置游标全量回补
@@ -47,8 +53,9 @@ def _sync_account(
     # UID 序列查询是闭区间：过滤掉等于 last_uid 的最后一封
     uids = [u for u in uids if u > account.last_uid]
     if not uids:
-        return
+        return 0
 
+    new_count = 0
     for uid in uids:
         raw = imap.fetch_uid(uid)
         parsed = parse_message(raw)
@@ -78,7 +85,9 @@ def _sync_account(
                 llm_state="pending",
             )
         )
+        new_count += 1
     account.last_uid = max(account.last_uid, max(uids))
+    return new_count
 
 
 def _archive_uids(account: Account, imap: Any, archive: EmailArchive, uids: list[int]) -> None:
@@ -157,18 +166,23 @@ def _process_pending(
     llm: Any,
     rows: list[Email],
     logger: logging.Logger | None = None,
-) -> None:
+    *,
+    progress: SyncProgress | None = None,
+) -> dict:
     """逐封分类待处理邮件（pending 首次 / error 下轮重试）：过滤则标记，否则建 item。
 
     每封处理完立即逐封提交（见 _commit_email）；错误标记同样要落盘，
     否则下轮会重复调用 LLM 重试同一封。传入 logger 时每处理 10 封输出
-    一条只含计数的进度日志，不输出邮件主题/正文。
+    一条只含计数的进度日志，不输出邮件主题/正文。传入 progress 时逐封推进
+    分类阶段计数，返回本轮的计数汇总（total/filtered/created/failed），
+    调用方据此判断阶段成败。
     """
     total = len(rows)
     filtered = 0
     created = 0
     failed = 0
     for index, email in enumerate(rows, start=1):
+        made_item = False  # 这一封是否产出了新 Item，决定进度里的 created 加不加
         info = {
             "subject": email.subject,
             "sender": email.sender,
@@ -217,9 +231,14 @@ def _process_pending(
                     )
                 )
                 created += 1
+                made_item = True
             email.llm_state = "done"
             if not _commit_email(session, email):
                 failed += 1  # 提交失败转 error 的封计入失败
+        if progress is not None:
+            # 失败封也算处理过一封（与详情阶段同款）：done 与 total 对齐，
+            # 阶段是否 failed 由调用方按失败数决定
+            progress.step("classify", created=1 if made_item else 0)
         if logger is not None and index % 10 == 0:
             logger.info(
                 "分类进度：%d/%d（过滤 %d / 建任务 %d / 失败 %d）",
@@ -229,10 +248,17 @@ def _process_pending(
                 created,
                 failed,
             )
+    return {"total": total, "filtered": filtered, "created": created, "failed": failed}
 
 
 def _prefill_details(
-    session: Session, llm: Any, items: list[Item], settings: Settings, logger: logging.Logger | None = None
+    session: Session,
+    llm: Any,
+    items: list[Item],
+    settings: Settings,
+    logger: logging.Logger | None = None,
+    *,
+    progress: SyncProgress | None = None,
 ) -> dict:
     """为 detail_md 为空的条目预生成详情（agentic，含关联邮件检索），逐条提交，返回计数汇总。
 
@@ -242,6 +268,7 @@ def _prefill_details(
     详情现会检索关联邮件，一条可能是多轮 LLM 调用。
     单条失败只记日志并跳过，detail_md 保持 NULL 由下轮重试；
     逐条提交的理由同 _commit_email：中途崩溃不丢已完成的结果。
+    传入 progress 时逐条推进详情阶段计数。
     """
     total = len(items)
     generated = 0
@@ -258,6 +285,8 @@ def _prefill_details(
             if logger is not None:
                 # 只输出条目 id 与异常，不输出邮件主题/正文
                 logger.warning("详情生成失败（item %d）：%s", item.id, exc)
+        if progress is not None:
+            progress.step("detail")  # 成功与失败都算处理过一条
         if logger is not None and index % 10 == 0:
             logger.info("详情进度：%d/%d（生成 %d / 失败 %d）", index, total, generated, failed)
     return {"total": total, "generated": generated, "failed": failed}
@@ -268,11 +297,18 @@ def run_once(
     imap_factory: ImapFactory | None = None,
     llm: Any = None,
     settings: Settings | None = None,
+    *,
+    trigger: str = "scheduled",
+    run_id: int | None = None,
+    detail_window_days: int | None = None,
 ) -> dict:
     """执行一轮同步：逐账户 try/except，成功 ok，异常 error + last_error。返回汇总。
 
     LLM 处理与 IMAP 同步解耦：LLM 不可用（未配置/未注入）不阻塞拉取入库，
     pending 邮件标记 error，待下轮重试。
+    轮次本身与三个阶段（fetch/classify/detail）的进度都写进 sync_runs，供
+    /api/sync/status 读取。worker 认领手动请求后带着 run_id 调用，定时轮次
+    自己建行；detail_window_days 非空时详情只回填最近这么多天的邮件。
     """
     settings = settings or get_settings()
     imap_factory = imap_factory or _default_imap_factory
@@ -286,68 +322,123 @@ def run_once(
             llm = None  # 未配置 LLM：跳过分类阶段
     summary: dict[str, Any] = {"accounts": {}, "pending_llm": 0}
     with session_factory() as session:
+        run = session.get(SyncRun, run_id) if run_id is not None else None
+        if run is None:
+            run = SyncRun(trigger=trigger, state="running", started_at=datetime.now())
+            session.add(run)
+        else:
+            # 认领过的请求行已是 running 且 started_at 已填；这里只兜底补齐
+            # （手工传 run_id 或将来别的调用方漏填 started_at 时）
+            run.state = "running"
+            if run.started_at is None:
+                run.started_at = datetime.now()
+        session.commit()
+        summary["run_id"] = run.id
         # 只同步启用中的账户；enabled=0（软删除）的账户跳过，其邮件与任务保留
         accounts = session.execute(select(Account).where(Account.enabled.is_(True))).scalars().all()
-        for account in accounts:
-            if not has_credentials(account):
-                # 刚添加/停用后尚未设置凭据（gmail 未录应用密码、微软未完成授权）的账户：
-                # 跳过不同步，也不标 error——连不上是预期状态，凭据就绪后下一轮自动开始回补
-                summary["accounts"][account.email] = {"status": "pending", "error": None}
-                continue
-            imap = None
-            try:
-                imap = imap_factory(account, settings)
-                _sync_account(session, account, imap, settings, archive)
-                session.commit()
-                account.status = "ok"
-                account.last_sync_at = datetime.now()
-                account.last_error = None
-                summary["accounts"][account.email] = {"status": "ok", "error": None}
-                if archive is not None:
-                    # 先提交收件箱成果与账户状态，发件箱失败时回滚的只有发件箱游标
+        progress = SyncProgress(session, run, [account.email for account in accounts])
+        try:
+            progress.stage("fetch", "running")
+            fetch_failed = 0
+            for account in accounts:
+                if not has_credentials(account):
+                    # 刚添加/停用后尚未设置凭据（gmail 未录应用密码、微软未完成授权）的账户：
+                    # 跳过不同步，也不标 error——连不上是预期状态，凭据就绪后下一轮自动开始回补
+                    summary["accounts"][account.email] = {"status": "pending", "error": None}
+                    progress.account(account.email, "skipped")
+                    continue
+                imap = None
+                try:
+                    progress.account(account.email, "running")
+                    imap = imap_factory(account, settings)
+                    new_count = _sync_account(session, account, imap, settings, archive)
                     session.commit()
-                    try:
-                        _archive_sent(account, imap, settings, archive)
+                    account.status = "ok"
+                    account.last_sync_at = datetime.now()
+                    account.last_error = None
+                    summary["accounts"][account.email] = {"status": "ok", "error": None}
+                    if archive is not None:
+                        # 先提交收件箱成果与账户状态，发件箱失败时回滚的只有发件箱游标
                         session.commit()
-                    except Exception as exc:
-                        session.rollback()
-                        logger.warning("发件箱归档失败（account %d）：%s", account.id, type(exc).__name__)
-            except Exception as exc:
-                session.rollback()
-                account.status = "error"
-                account.last_error = str(exc)
-                summary["accounts"][account.email] = {"status": "error", "error": str(exc)}
-            finally:
-                if imap is not None:
-                    imap.logout()
-            session.commit()
-        # LLM 队列：pending 计数 + 处理（含 error 重试）
-        queue = session.execute(
-            select(Email).where(Email.llm_state.in_(("pending", "error")))
-        ).scalars().all()
-        summary["pending_llm"] = len([e for e in queue if e.llm_state == "pending"])
-        if llm is not None:
-            _process_pending(session, llm, queue, logger=logger)
-        else:
-            for email in queue:
-                if email.llm_state == "pending":
-                    email.llm_state = "error"
-                    email.filter_reason = "LLM 未配置，下轮重试"
-        session.commit()
-        # 详情预生成：分类之后补齐 detail_md 为空的条目（本轮新建 + 历史回填），
-        # 新条目在前——越新越可能被点开；只处理邮件条目——手动条目没有邮件正文，
-        # 不生成 AI 详情
-        if llm is not None:
-            todo = (
-                session.execute(
-                    select(Item)
-                    .where(Item.detail_md.is_(None), Item.email_id.is_not(None))
-                    .order_by(Item.id.desc())
-                )
-                .scalars()
-                .all()
+                        try:
+                            _archive_sent(account, imap, settings, archive)
+                            session.commit()
+                        except Exception as exc:
+                            session.rollback()
+                            logger.warning("发件箱归档失败（account %d）：%s", account.id, type(exc).__name__)
+                    progress.account(account.email, "done", new_count=new_count)
+                except Exception as exc:
+                    session.rollback()
+                    account.status = "error"
+                    account.last_error = str(exc)
+                    summary["accounts"][account.email] = {"status": "error", "error": str(exc)}
+                    fetch_failed += 1
+                    # 上面的 rollback 连同本账户期间的进度 JSON 一起丢了，
+                    # account() 的整段重写会把完整骨架补回来（见 SyncProgress 注释）
+                    progress.account(account.email, "failed", error=str(exc))
+                finally:
+                    if imap is not None:
+                        imap.logout()
+                session.commit()
+            progress.stage(
+                "fetch",
+                "failed" if fetch_failed else "done",
+                error=f"{fetch_failed} 个邮箱拉取失败" if fetch_failed else None,
             )
-            summary["details"] = _prefill_details(session, llm, todo, settings, logger=logger)
+            # LLM 队列：pending 计数 + 处理（含 error 重试）
+            queue = session.execute(
+                select(Email).where(Email.llm_state.in_(("pending", "error")))
+            ).scalars().all()
+            summary["pending_llm"] = len([e for e in queue if e.llm_state == "pending"])
+            progress.stage("classify", "running", total=len(queue), done=0, created=0)
+            if llm is not None:
+                classified = _process_pending(
+                    session, llm, queue, logger=logger, progress=progress
+                )
+                if classified["failed"]:
+                    progress.stage("classify", "failed", error=f"{classified['failed']} 封分类失败")
+                else:
+                    progress.stage("classify", "done")
+            else:
+                for email in queue:
+                    if email.llm_state == "pending":
+                        email.llm_state = "error"
+                        email.filter_reason = "LLM 未配置，下轮重试"
+                progress.stage("classify", "failed", error="LLM 未配置")
+            session.commit()
+            # 详情预生成：分类之后补齐 detail_md 为空的条目（本轮新建 + 历史回填），
+            # 新条目在前——越新越可能被点开；只处理邮件条目——手动条目没有邮件正文，
+            # 不生成 AI 详情
+            if llm is not None:
+                stmt = select(Item).where(Item.detail_md.is_(None), Item.email_id.is_not(None))
+                if detail_window_days is not None:
+                    # 只看最近 N 天收到的邮件：手动点刷新时用户等的是刚到的邮件，
+                    # 把时间花在历史积压上会让这一轮久久不结束。sent_at 为空的
+                    # 邮件没有时间可比，一并排除。
+                    stmt = stmt.join(Email, Item.email_id == Email.id).where(
+                        Email.sent_at >= datetime.now() - timedelta(days=detail_window_days)
+                    )
+                todo = session.execute(stmt.order_by(Item.id.desc())).scalars().all()
+                progress.stage("detail", "running", total=len(todo), done=0)
+                details = _prefill_details(
+                    session, llm, todo, settings, logger=logger, progress=progress
+                )
+                summary["details"] = details
+                if details["failed"]:
+                    progress.stage("detail", "failed", error=f"{details['failed']} 条详情生成失败")
+                else:
+                    progress.stage("detail", "done")
+            else:
+                progress.stage("detail", "failed", error="LLM 未配置")
+        except Exception as exc:
+            # 整轮级异常（如库不可用）：先落盘成败再原样抛出，worker 会记录日志并
+            # 继续下一轮，否则这一行会一直停在 running。先 rollback 是因为异常
+            # 可能就来自失败的 commit（事务已失效），不 rollback 的话 finish 里的
+            # commit 会立刻再抛一次，把原始异常盖掉。
+            session.rollback()
+            progress.finish(error=str(exc))
+            raise
+        progress.finish()
     if archive is not None:
         summary["archive"] = archive.summary()
     return summary

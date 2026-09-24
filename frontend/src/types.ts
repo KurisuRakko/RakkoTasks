@@ -129,6 +129,65 @@ export interface StatusResponse {
   pending_llm: number;
 }
 
+/** 同步轮次的触发来源：manual = 用户点刷新，scheduled = 后台定时 */
+export type SyncTrigger = 'manual' | 'scheduled';
+
+/** 轮次 / 阶段的进行状态 */
+export type SyncState = 'running' | 'done' | 'failed';
+
+/** 阶段状态；pending = 前一阶段还没轮到它 */
+export type SyncStageState = 'pending' | 'running' | 'done' | 'failed';
+
+/** 单个邮箱在拉取阶段的状态；skipped = 账户没凭据，本轮跳过 */
+export type SyncAccountState = 'pending' | 'running' | 'done' | 'failed' | 'skipped';
+
+/** 拉取阶段里每个邮箱的进度 */
+export interface SyncAccountProgress {
+  email: string;
+  state: SyncAccountState;
+  /** 本轮该邮箱新入库的邮件数 */
+  new_count: number;
+  error: string | null;
+}
+
+/** 阶段通用部分：state + 一句话错误（单封失败不中断阶段，只在收尾时汇总进 error） */
+export interface SyncStage {
+  state: SyncStageState;
+  error: string | null;
+}
+
+/** 一轮同步的三个阶段（后端 Run 的 stages 字段） */
+export interface SyncStages {
+  fetch: SyncStage & { accounts: SyncAccountProgress[] };
+  classify: SyncStage & { total: number; done: number; created: number };
+  detail: SyncStage & { total: number; done: number };
+}
+
+/** 一轮同步（Run）；error 只在整轮自身抛异常时非空 */
+export interface SyncRun {
+  id: number;
+  trigger: SyncTrigger;
+  state: SyncState;
+  started_at: string;
+  finished_at: string | null;
+  error: string | null;
+  stages: SyncStages;
+}
+
+/** GET /api/sync/status 返回体：current = 进行中，last = 最近一轮已结束（都没有为 null） */
+export interface SyncStatus {
+  current: SyncRun | null;
+  last: SyncRun | null;
+  /** 已有唤醒请求但 worker 尚未开始（点了刷新、worker 还没醒） */
+  pending_request: boolean;
+}
+
+/** POST /api/sync/trigger 返回体；已有一轮在跑时不重复写请求，already_running 为 true */
+export interface SyncTriggerResponse {
+  accepted: boolean;
+  already_running: boolean;
+}
+
 /** AI 搜索引用的一封邮件 */
 export interface SearchCitation {
   email_id: number;

@@ -260,6 +260,39 @@ describe('AppShell 设置入口与壳层标记', () => {
   });
 });
 
+// 待办页顶栏的刷新按钮与 /sync 同步状态页是同一件事的两个入口：前者只在待办页出现
+// （其他页面顶栏仍是纯标题），后者是普通子页，移动端给返回箭头回待办页。
+describe('AppShell 顶栏刷新按钮与 /sync 子页', () => {
+  it('待办页顶栏是「刷新」按钮，没有纯标题；其他页面仍是纯标题、没有刷新按钮', async () => {
+    renderShell();
+    await screen.findByText('没有待办任务');
+
+    const bar = appBar();
+    expect(within(bar).getByRole('button', { name: '刷新' })).toBeTruthy();
+    // 抢标题动效只在待办页：标题留在 DOM 里（淡出靠 opacity），但不该有第二个页面标题
+    expect(within(bar).getByText('RakkoTasks')).toBeTruthy();
+
+    // 切到已完成页：顶栏回到纯标题，刷新按钮消失
+    fireEvent.click(within(document.querySelector('.MuiBottomNavigation-root')!).getByRole('button', { name: '已完成' }));
+    expect(await within(bar).findByText('已完成')).toBeTruthy();
+    expect(within(bar).queryByRole('button', { name: '刷新' })).toBeNull();
+  });
+
+  it('移动端 /sync：标题为「同步状态」且返回箭头回待办页', async () => {
+    renderShell([], '/sync');
+
+    const bar = appBar();
+    expect(await within(bar).findByText('同步状态')).toBeTruthy();
+    // /sync 不在导航项里（navIndexOf 返回 -1），AppBar 的「设置」按钮不出现
+    expect(within(bar).queryByRole('button', { name: '设置' })).toBeNull();
+
+    fireEvent.click(within(bar).getByRole('button', { name: '返回' }));
+
+    // 回到待办页：标题区换回刷新按钮
+    expect(await within(bar).findByRole('button', { name: '刷新' })).toBeTruthy();
+  });
+});
+
 // 壳层与列表行玻璃：内容玻璃板已删，玻璃不再按「壁纸开关 + 固定总数」预算——顶栏 /
 // 侧边栏 / 底栏是常驻 chrome，列表每行自己是一块 data-glass="panel" 玻璃（对上游
 // anti-patterns "A glass surface per list item" 的明知偏离，见 surface.ts 文件头）。

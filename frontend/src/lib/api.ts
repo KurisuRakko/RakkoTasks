@@ -24,6 +24,8 @@ import type {
   RelatedEmail,
   SearchResponse,
   StatusResponse,
+  SyncStatus,
+  SyncTriggerResponse,
 } from '../types';
 
 const API_BASE = `${API_BASE_URL}/api`;
@@ -261,6 +263,22 @@ export async function fetchStatus(): Promise<StatusResponse> {
   const res = await authedFetch(`${API_BASE}/status`);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return (await res.json()) as StatusResponse;
+}
+
+/** GET /api/sync/status：同步轮次进度（current = 进行中，last = 最近一轮已结束） */
+export async function fetchSyncStatus(): Promise<SyncStatus> {
+  const res = await authedFetch(`${API_BASE}/sync/status`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return (await res.json()) as SyncStatus;
+}
+
+/** POST /api/sync/trigger：请求唤醒同步 worker；期望 202。已有一轮在跑（或已有未消费的
+ *  唤醒请求）时后端不重复写请求，返回 already_running: true，状态码仍是 202——
+ *  它不是错误，调用方照常按「已受理」处理。 */
+export async function triggerSync(): Promise<SyncTriggerResponse> {
+  const res = await authedFetch(`${API_BASE}/sync/trigger`, { method: 'POST' });
+  if (res.status !== 202) throw new Error(`HTTP ${res.status}`);
+  return (await res.json()) as SyncTriggerResponse;
 }
 
 /** GET /api/accounts：当前用户全部账户（含已停用），响应为信封，返回其中的数组 */

@@ -40,6 +40,7 @@ from app.models import Account, Email, Item, Reminder, User
 from app.ratelimit import RateLimiter
 from app.sanitizer import build_email_document
 from app.search import run_search
+from app.sync_state import request_sync, status_payload
 
 logger = logging.getLogger("rakkotasks.api")
 
@@ -647,6 +648,22 @@ def create_app(
             "accounts": [account_info(a) for a in accounts],
             "pending_llm": pending_llm,
         }
+
+    # 同步进度与手动触发：前端顶栏刷新按钮用（GET 拉进度，POST 唤醒 worker 立刻跑一轮）。
+    # 必须在 SPA fallback 之前注册，否则会被 GET 兜底吞掉。
+    @app.get("/api/sync/status")
+    def sync_status(
+        user: CurrentUser = Depends(require_auth), db: Session = Depends(_get_db)
+    ) -> dict:
+        """当前轮次 / 最近一轮 / 有无待认领请求；逐账户明细只回该用户自己的邮箱。"""
+        return status_payload(db, user.sub)
+
+    @app.post("/api/sync/trigger", status_code=202)
+    def sync_trigger(
+        user: CurrentUser = Depends(require_auth), db: Session = Depends(_get_db)
+    ) -> dict:
+        """写一条手动请求等 worker 认领；已有请求或在跑时不重复写。"""
+        return {"accepted": True, "already_running": not request_sync(db)}
 
     # 邮箱账户自助管理（/api/accounts*）；须在 SPA fallback 之前注册
     register_accounts(app, settings, _get_db)
