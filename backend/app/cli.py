@@ -1,4 +1,4 @@
-"""账户与用户 CLI：python -m app.cli accounts add/connect/auth-url/auth-code/list/set-password/remove、users list、reclassify、regen-details。
+"""账户与用户 CLI：python -m app.cli accounts add/connect/auth-url/auth-code/list/set-password/remove、users list、reclassify、regen-details、archive-backfill。
 
 accounts 子命令（connect 除外）复用 app/accounts.py 服务层，与网页 /api/accounts* 语义一致；
 网页已提供自助管理，CLI 保留为运维兜底。Gmail 应用专用密码仅经 getpass 交互录入，
@@ -452,6 +452,44 @@ def _cmd_regen_details(args: argparse.Namespace, settings: Settings) -> None:
         )
 
 
+def _cmd_archive_backfill(args: argparse.Namespace, settings: Settings) -> None:
+    """回补历史原件归档：按 SINCE 重扫收件箱与发件箱，追加进各账户的 mbox。
+
+    可以在 worker 运行时执行：两个进程靠 mbox 文件锁与索引（<邮箱名>.mbox.idx）
+    去重保证安全，同一封邮件不会被追加两次，也不会漏掉。
+    只写归档文件，不碰数据库、不动同步游标。
+    """
+    from app.archive import EmailArchive
+    from app.imap.client import connect_account
+    from app.sync import backfill_archive
+
+    archive = EmailArchive.from_settings(settings)
+    if archive is None:
+        print("错误：未配置 email_archive_dir，原件归档已关闭", file=sys.stderr)
+        sys.exit(2)
+    days = args.days if args.days is not None else settings.initial_backfill_days
+    engine = make_engine(settings.database_path)
+    init_db(engine)
+    with make_session_factory(engine)() as session:
+        query = select(Account).where(Account.enabled.is_(True))
+        if args.account is not None:
+            query = query.where(Account.id == args.account)
+        for account in session.execute(query).scalars().all():
+            if not accounts.has_credentials(account):
+                continue
+            imap = None
+            try:
+                imap = connect_account(account, settings)[0]
+                backfill_archive(account, imap, archive, days)
+            except Exception as exc:
+                # 只报账户 id 与异常类名：异常字符串可能带上文件夹名/路径
+                print(f"账户 {account.id} 回补失败：{type(exc).__name__}", file=sys.stderr)
+            finally:
+                if imap is not None:
+                    imap.logout()
+    print(f"归档回补完成：{archive.summary()}")
+
+
 def main() -> None:
     from app.imap import mstoken  # 保持 msal 懒加载：其它子命令不依赖它
 
@@ -537,6 +575,17 @@ def main() -> None:
     regen.add_argument("--account", default=None, help="只重置该邮箱账户；缺省为该用户全部账户")
     regen.add_argument("--yes", action="store_true", help="跳过确认（非交互调用）")
     regen.set_defaults(handler=_cmd_regen_details)
+
+    backfill = sub.add_parser(
+        "archive-backfill",
+        help="回补历史原件归档：按天数重扫收件箱与发件箱，追加进各账户的 mbox（可在 worker 运行时执行）",
+    )
+    backfill.add_argument(
+        "--days", type=int, default=None, metavar="N",
+        help="回补最近 N 天（IMAP SINCE）；缺省用配置 initial_backfill_days",
+    )
+    backfill.add_argument("--account", type=int, default=None, help="只回补该账户 id；缺省为全部启用中的账户")
+    backfill.set_defaults(handler=_cmd_archive_backfill)
 
     args = parser.parse_args()
     args.handler(args, settings)

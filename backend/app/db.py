@@ -86,6 +86,10 @@ _COLUMN_ALTERS: dict[str, dict[str, str]] = {
         "calendar_token": "TEXT",
         "caldav_password_hash": "TEXT",
     },
+    "accounts": {
+        "sent_uidvalidity": "INTEGER",
+        "sent_last_uid": "INTEGER NOT NULL DEFAULT 0",
+    },
 }
 
 
