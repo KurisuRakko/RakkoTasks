@@ -66,9 +66,13 @@ export function ownRules(css: string, el: Element): string {
     for (;;) {
       const start = css.indexOf(head, from);
       if (start < 0) break;
-      // 类名必须正好结束：css-abc 不该匹配 css-abcd
+      // 类名必须正好结束：css-abc 不该匹配 css-abcd。不匹配只是这一处不是要找的规则
+      // （样式表里 .css-abcd 可能排在 .css-abc 前面），跳过它继续往后找，不能 break。
       const next = css[start + head.length];
-      if (next !== '{' && next !== ':' && next !== '.' && next !== '[' && next !== ' ') break;
+      if (next !== '{' && next !== ':' && next !== '.' && next !== '[' && next !== ' ') {
+        from = start + head.length;
+        continue;
+      }
       const open = css.indexOf('{', start);
       if (open < 0) break;
       let depth = 0;

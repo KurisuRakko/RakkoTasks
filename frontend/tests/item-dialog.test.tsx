@@ -406,7 +406,7 @@ describe('ItemDialog 截止日与列表同一口径', () => {
 
 describe('ItemDialog 正文里的长串不把整张对话框撑出横向滚动', () => {
   // 无空格长串：URL / 订单号 / 邮箱地址这类内容没有自然断点，缺了断点就会撑宽 paper。
-  // 两个用例都走 email_id: null 的手动条目——不触发详情/邮件请求，无需 fetch mock。
+  // 用例走 email_id: null 的手动条目——不触发详情/邮件请求，无需 fetch mock。
   const LONG = 'a'.repeat(200);
 
   it('正文容器自带 overflow-wrap:anywhere：长串在正文宽度内折行', () => {
@@ -429,23 +429,5 @@ describe('ItemDialog 正文里的长串不把整张对话框撑出横向滚动',
     expect(rule, '长串必须能在任意位置断行，否则整张 paper 横向可滚').toContain(
       'overflow-wrap:anywhere',
     );
-  });
-
-  it('分类 / 截止日那一行 Stack 自带 flex-wrap:wrap：两枚 Chip 放不下时折行而不是互相挤压', () => {
-    // 分类是 Category 闭合联合（最长两个字）、截止日渲染成「8月1日」，两枚 Chip 今天
-    // 本来放得下；这条钉的是不变量——放不下时换行，而不是挤成省略号或溢出正文。
-    render(
-      <ItemDialog
-        item={makeItem({ email_id: null, category: '工作', due_date: '2026-08-01' })}
-        onClose={vi.fn()}
-      />,
-    );
-
-    const stack = screen.getByText('工作').closest('.MuiStack-root') as HTMLElement | null;
-    expect(stack).not.toBeNull();
-
-    const rule = ownRules(allStyleText(), stack!);
-    expect(rule, 'Stack 上没读到自身的 css-* 规则，下面的断言会空转').not.toBe('');
-    expect(rule, '两枚 Chip 放不下时折行，不要互相挤压').toContain('flex-wrap:wrap');
   });
 });

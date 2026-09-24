@@ -214,11 +214,7 @@ export default function ItemDialog({ item, onClose, onChanged, onDeleted }: Prop
         <Typography variant="h6" gutterBottom>
           {current.title}
         </Typography>
-        {/* 两枚 Chip 各自 max-width 100%，同一行放不下时不许互相挤压（.MuiChip-label 带
-            overflow: hidden，flex 项的自动最小尺寸会解析成 0，不换行就只剩省略号）；
-            换行让放不下的那一枚整枚落到下一行。useFlexGap 不能省：不开它时 MUI Stack
-            用相邻兄弟选择器给子元素加 margin，折到第二行的首个 Chip 会莫名带着左间距。 */}
-        <Stack direction="row" spacing={1} useFlexGap sx={{ mb: 1.5, flexWrap: 'wrap' }}>
+        <Stack direction="row" spacing={1} sx={{ mb: 1.5 }}>
           <Chip label={current.category} size="small" variant="outlined" />
           {/* 与列表行同一个 DueChip：逾期/临期的配色口径只有一处，不会两边分叉 */}
           <DueChip item={current} today={new Date()} />
