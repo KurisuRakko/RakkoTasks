@@ -3,6 +3,8 @@
 // 本页只保留「原邮件」Dialog 内部的 AppBar。
 // 回执行 / 引用行与各自长出来的 Dialog paper 共用 VT_NAMES.sheet 做容器变换，
 // 来源 key 带 turn.id（同一待办/邮件可能出现在多轮里，只用 id 会撞名）。
+// 输入台不在本页的流里：ChatComposer 自己 Portal 到 body 并固定在视口底部，
+// 本页只在消息流末尾放一个与它等高的占位块（见 COMPOSER_GAP_PX）。
 
 import { useEffect, useRef, useState } from 'react';
 import AppBar from '@mui/material/AppBar';
@@ -17,7 +19,7 @@ import Typography from '@mui/material/Typography';
 import CloseIcon from '@mui/icons-material/Close';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import { useTheme } from '@mui/material/styles';
-import ChatComposer from '../components/assistant/ChatComposer';
+import ChatComposer, { COMPOSER_FALLBACK_HEIGHT } from '../components/assistant/ChatComposer';
 import ChatMessage from '../components/assistant/ChatMessage';
 import EmailViewer from '../components/EmailViewer';
 import ItemDialog from '../components/ItemDialog';
@@ -37,10 +39,16 @@ const SUGGESTIONS = [
   '提醒我明天上午 10 点交电费',
 ] as const;
 
+/** 输入台与最后一条消息之间的呼吸间距：占位块除面板高度外要额外算上这一段 */
+const COMPOSER_GAP_PX = 16;
+
 export default function AssistantPage() {
   const turns = useChatTurns();
   const pending = useChatPending();
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  // 输入台固定在视口底部、不占流：高度由它自己量出来上报（量不到时是兜底值），
+  // 页面按这个高度在消息流末尾留位，最后一条消息才不会被玻璃压住
+  const [composerHeight, setComposerHeight] = useState(COMPOSER_FALLBACK_HEIGHT);
   // 正在打开的回执来源 key：非空期间其余回执禁用，避免两个容器变换同时起跑
   const [openingKey, setOpeningKey] = useState<string | null>(null);
   // 关闭只改 open、保留 text：Snackbar 退场动画期间文字不会先被抽空
@@ -120,8 +128,15 @@ export default function AssistantPage() {
             />
           ))}
         </Box>
-        {/* 输入台跟在消息流后面：对话短时它就在内容下方，长了自然吸底 */}
-        <ChatComposer inputRef={inputRef} />
+        {/* 给固定的输入台让位：高度 = 面板实际高度 + 间距。放在对话记录之外——
+            role="log" 是 aria-live 区域，塞一个空盒子进去会被读屏念一遍空白 */}
+        <Box
+          data-testid="composer-spacer"
+          sx={{ height: composerHeight + COMPOSER_GAP_PX }}
+        />
+        {/* 输入台 Portal 到 body 并 fixed 在视口底部，JSX 位置与呈现位置无关；
+            占位块在上面替它占住消息流末尾的空间 */}
+        <ChatComposer inputRef={inputRef} onHeightChange={setComposerHeight} />
       </Box>
       {/* ItemDialog 自带 Dialog、过渡与持名；条目状态决定它归哪个列表口径 */}
       {receipt.current && (
