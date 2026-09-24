@@ -1,4 +1,4 @@
-"""SQLAlchemy 2.0 声明式模型：users / accounts / emails / items / reminders（见 DESIGN.md 第 5 节）。"""
+"""SQLAlchemy 2.0 声明式模型：users / accounts / emails / items / reminders / sync_runs（见 DESIGN.md 第 5 节）。"""
 from __future__ import annotations
 
 import uuid
@@ -151,3 +151,24 @@ class Reminder(Base):
         # 同一条目同一时刻只留一个：去重在 validate_reminders 里做，这里是兜底
         UniqueConstraint("item_id", "remind_at", name="uq_reminders_item_at"),
     )
+
+
+class SyncRun(Base):
+    """一轮同步；同一张表也存 web 进程写下的手动唤醒请求。
+
+    请求行（state=requested）被 worker 认领后就地变成轮次行（state=running），
+    所以不另建请求表：请求与轮次是同一件事的两个阶段，分行存反而要处理
+    「请求有行、轮次没行」的对账问题。requested_at 只有请求阶段有意义。
+    """
+
+    __tablename__ = "sync_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    trigger: Mapped[str] = mapped_column(String(16), nullable=False)  # manual | scheduled
+    state: Mapped[str] = mapped_column(String(16), nullable=False)  # requested | running | done | failed
+    requested_at: Mapped[datetime | None] = mapped_column(DateTime)  # 仅手动请求
+    started_at: Mapped[datetime | None] = mapped_column(DateTime)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime)
+    error: Mapped[str | None] = mapped_column(Text)  # 整轮级异常；单邮箱失败只记在 stages 里
+    # 各阶段进度的 JSON 串（结构见 sync_state 里给前端的契约），只由 SyncProgress 整段重写
+    stages: Mapped[str] = mapped_column(Text, default="{}", nullable=False)
