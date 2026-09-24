@@ -74,11 +74,10 @@ See section 7 of [docs/DESIGN.md](docs/DESIGN.md).
 Three steps. Prerequisites, Phainon app registration, Cloudflare Tunnel setup and the complete
 walkthrough are in [deploy/README.md](deploy/README.md) (Chinese).
 
-1. Configure: `cp deploy/.env.example .env` and fill in `LLM_API_KEY`, `TUNNEL_TOKEN` and the
-   other values.
-2. Start: `docker compose -f deploy/docker-compose.yml up -d --build`
-   (three services: web, worker and cloudflared; public traffic reaches the app over HTTPS
-   through the tunnel).
+1. Configure: `cp deploy/.env.example .env` and fill in `LLM_API_KEY` and the other values.
+2. Start: `docker compose up -d --build` (run it in the repository root; two services: web and
+   worker — the public entry point is provided by the host's cloudflared systemd service, see
+   section 3 of [deploy/README.md](deploy/README.md)).
 3. Connect mailboxes: sign in once on the web app, then Settings → Mail accounts → Add
    mailbox — Gmail takes the app password you generate in your Google account; Outlook /
    Microsoft 365 runs a generate-link → sign-in → paste-the-address wizard. No terminal

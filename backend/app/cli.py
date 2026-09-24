@@ -410,7 +410,7 @@ def _cmd_reclassify(args: argparse.Namespace, settings: Settings) -> None:
         print(
             f"已完成：{n_emails} 封邮件已重置为待分类，共删除 {n_items} 条任务。"
             "worker 将在下一轮同步时按新规则重新分类；"
-            "如需立即触发，可在部署目录运行 docker compose -f deploy/docker-compose.yml restart worker"
+            "如需立即触发，可在部署目录运行 docker compose restart worker"
         )
 
 
@@ -448,7 +448,7 @@ def _cmd_regen_details(args: argparse.Namespace, settings: Settings) -> None:
         print(
             f"已完成：{n_items} 条任务详情已标记为待重生成。"
             "worker 将在下一轮同步时重新生成；"
-            "如需立即触发，可在部署目录运行 docker compose -f deploy/docker-compose.yml restart worker"
+            "如需立即触发，可在部署目录运行 docker compose restart worker"
         )
 
 

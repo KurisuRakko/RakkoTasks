@@ -90,8 +90,8 @@ cloudflared tunnel route dns --overwrite-dns rakkoserver tasks.rakko.cn
 sudo systemctl restart cloudflared
 ```
 
-`.env` 里的 `TUNNEL_TOKEN` 对本部署已不再需要（保留不影响运行），它只服务于把
-cloudflared 跑在 compose 内的旧部署形态。
+`deploy/.env.example` 已不再包含 `TUNNEL_TOKEN`；旧 `.env` 里留着这一行不影响运行，
+可以删掉。
 
 ## 4. 配置
 
