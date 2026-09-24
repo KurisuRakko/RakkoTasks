@@ -18,6 +18,71 @@ IMAP_PORT = 993
 _UIDVALIDITY_RE = re.compile(r"UIDVALIDITY\s+(\d+)", re.I)
 
 
+def _as_text(value: object) -> str:
+    """LIST 响应里的 bytes 按 utf-8（非法字节替换）解码后再解析。"""
+    if isinstance(value, (bytes, bytearray)):
+        return bytes(value).decode("utf-8", errors="replace")
+    return str(value)
+
+
+def _split_flags(text: str) -> tuple[set[str], str] | None:
+    """把 `(<flags>) <剩余>` 拆成（flags 集合, 剩余部分）；开头不是 (...) 时返回 None。"""
+    if not text.startswith("("):
+        return None
+    end = text.find(")")
+    if end < 0:
+        return None
+    return set(text[1:end].split()), text[end + 1 :].strip()
+
+
+def _skip_quoted(text: str) -> int:
+    """text 以双引号开头时，返回闭引号之后的下标；找不到闭引号返回 len(text)。"""
+    i = 1
+    while i < len(text):
+        if text[i] == "\\":
+            i += 2
+            continue
+        if text[i] == '"':
+            return i + 1
+        i += 1
+    return len(text)
+
+
+def _unescape_quoted(text: str) -> str:
+    """去掉包裹的双引号并还原 \\ 与 \\" 转义。"""
+    end = _skip_quoted(text)
+    inner = text[1 : end - 1] if text[end - 1 : end] == '"' else text[1:]
+    return re.sub(r"\\(.)", r"\1", inner)
+
+
+def parse_list_line(line: bytes | str) -> tuple[set[str], str] | None:
+    """解析一行 IMAP LIST 响应，返回 (flags 集合, 文件夹原始名字)；无法解析返回 None。
+
+    形态：`(<flags>) <delim> <name>`，delim 是带引号的字符串或 NIL。
+    name 带双引号时去掉引号并还原 \\ 与 \\"；不带引号时原样取 atom。
+    名字按原样返回，绝不解码 modified UTF-7（&XfJT0ZABkK5O9g- 就是「已发送邮件」）。
+    """
+    split = _split_flags(_as_text(line).strip())
+    if split is None:
+        return None
+    flags, rest = split
+    if not rest:
+        return None
+    if rest.startswith('"'):
+        rest = rest[_skip_quoted(rest) :].strip()  # 跳过分隔符
+    else:
+        parts = rest.split(None, 1)
+        rest = parts[1].strip() if len(parts) > 1 else ""
+    if not rest:
+        return None
+    return flags, _unescape_quoted(rest) if rest.startswith('"') else rest
+
+
+def _quote_mailbox(name: str) -> str:
+    """给文件夹名加双引号并转义其中的 \\ 与 "（"[Gmail]/Sent Mail" 这类名字必须带引号）。"""
+    return '"' + name.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
 class ImapClient:
     """对 imaplib.IMAP4_SSL 的薄封装，仅暴露同步所需操作。"""
 
@@ -67,6 +132,58 @@ class ImapClient:
         if data and isinstance(data[0], tuple):
             return data[0][1]
         raise RuntimeError(f"UID FETCH {uid} 返回异常: {data!r}")
+
+    def fetch_uid_peek(self, uid: int) -> bytes:
+        """逐封 UID FETCH (BODY.PEEK[])，返回原始邮件字节。
+
+        用 PEEK 而不是 RFC822：PEEK 不会设置 \\Seen，归档专用的拉取不能改变
+        用户邮箱里的已读状态（发件箱尤其明显——用户没读过的已发送邮件不该
+        因为归档变成已读）。
+        """
+        typ, data = self.conn.uid("FETCH", str(uid), "(BODY.PEEK[])")
+        if typ != "OK" or not data:
+            raise RuntimeError(f"UID FETCH {uid} 失败: {typ}")
+        if isinstance(data[0], tuple):
+            return data[0][1]
+        raise RuntimeError(f"UID FETCH {uid} 返回异常: {data!r}")
+
+    def find_sent_folder(self) -> str | None:
+        """返回 LIST 里第一个带 \\Sent 标记的文件夹原始名字；没有则 None。
+
+        生产四个账户的发件箱都带 \\Sent（包括不声明 SPECIAL-USE 的 Outlook），
+        所以按标记找而不是按名字猜；名字按原样返回（不解码 modified UTF-7）。
+        """
+        typ, data = self.conn.list()
+        if typ != "OK" or not data:
+            return None
+        for entry in data:
+            if isinstance(entry, tuple):
+                # 字面量形式：flags 在 tuple[0] 里，名字已经是解析好的原始字节
+                split = _split_flags(_as_text(entry[0]).strip()) if entry else None
+                flags = split[0] if split else set()
+                name = _as_text(entry[1]) if len(entry) > 1 else ""
+            else:
+                parsed = parse_list_line(entry)
+                if parsed is None:
+                    continue
+                flags, name = parsed
+            if any(f.lower() == "\\sent" for f in flags):
+                return name
+        return None
+
+    def select_folder_readonly(self, name: str) -> int:
+        """SELECT <name>（只读）并返回 UIDVALIDITY；失败抛 RuntimeError。"""
+        quoted = _quote_mailbox(name)
+        typ, _data = self.conn.select(quoted, readonly=True)
+        if typ != "OK":
+            raise RuntimeError(f"SELECT {quoted} 失败: {typ}")
+        typ, data = self.conn.status(quoted, "(UIDVALIDITY)")
+        if typ != "OK" or not data or not data[0]:
+            raise RuntimeError("读取 UIDVALIDITY 失败")
+        m = _UIDVALIDITY_RE.search(str(data[0]))
+        if not m:
+            raise RuntimeError(f"无法解析 UIDVALIDITY: {data[0]!r}")
+        return int(m.group(1))
 
     def logout(self) -> None:
         try:

@@ -60,13 +60,10 @@ def _sync_account(
         if exists:
             continue  # 去重 (account_id, message_id)
         if archive is not None:
-            # 写在去重之后：已入库的邮件不重写文件（UIDVALIDITY 重置会整批重拉）。
-            # 用 message_id 而非 email.id 命名：此处 session.add 尚未 flush，
-            # email.id 要等本轮 commit 才有值。归档失败已在 store 内吞掉，
+            # 写在去重之后：已入库的邮件不重写（UIDVALIDITY 重置会整批重拉）。
+            # 回滚后重拉同一批 UID 时由 mbox 索引去重；归档失败已在 store 内吞掉，
             # 不影响入库与游标推进。
-            archive.store(
-                account.email, parsed["message_id"], parsed["subject"], parsed["sent_at"], raw
-            )
+            archive.store(account.email, parsed["message_id"], parsed["sent_at"], raw)
         session.add(
             Email(
                 account_id=account.id,
@@ -82,6 +79,54 @@ def _sync_account(
             )
         )
     account.last_uid = max(account.last_uid, max(uids))
+
+
+def _archive_sent(account: Account, imap: Any, settings: Settings, archive: EmailArchive) -> None:
+    """发件箱只归档：邮件进 mbox，不入库、不跑 LLM、不建待办。
+
+    游标与收件箱分开（sent_last_uid / sent_uidvalidity）：发件箱文件夹的
+    UIDVALIDITY 变化时只重置自己这一份，不影响收件箱。
+    """
+    name = imap.find_sent_folder()
+    if name is None:
+        return  # 没有 \Sent 标记的文件夹：该账户没有可归档的发件箱
+    uidvalidity = imap.select_folder_readonly(name)
+    if account.sent_uidvalidity != uidvalidity:
+        # UIDVALIDITY 变化：旧 UID 全部失效，游标重置后按日期回补
+        account.sent_uidvalidity = uidvalidity
+        account.sent_last_uid = 0
+    criteria = imap_client.build_search_criteria(account.sent_last_uid, settings.initial_backfill_days)
+    # UID 序列查询是闭区间：过滤掉等于 sent_last_uid 的最后一封
+    uids = [u for u in imap.search_uids(criteria) if u > account.sent_last_uid]
+    for uid in uids:
+        raw = imap.fetch_uid_peek(uid)
+        parsed = parse_message(raw)
+        archive.store(account.email, parsed["message_id"], parsed["sent_at"], raw)
+    if uids:
+        account.sent_last_uid = max(account.sent_last_uid, max(uids))
+
+
+def backfill_archive(account: Account, imap: Any, archive: EmailArchive, days: int) -> None:
+    """按 SINCE 回补历史原件：收件箱 + 发件箱，只追加进 mbox。
+
+    不碰 emails 表、不动任何游标（所以不收 session，也不收 settings）；
+    归档专用的拉取走 fetch_uid_peek，不改动邮箱的已读状态。
+    """
+    criteria = f"SINCE {imap_client._since_date(days)}"
+    imap.select_folder_readonly("INBOX")
+    for uid in imap.search_uids(criteria):
+        raw = imap.fetch_uid_peek(uid)
+        parsed = parse_message(raw)
+        archive.store(account.email, parsed["message_id"], parsed["sent_at"], raw)
+
+    sent = imap.find_sent_folder()
+    if sent is None:
+        return
+    imap.select_folder_readonly(sent)
+    for uid in imap.search_uids(criteria):
+        raw = imap.fetch_uid_peek(uid)
+        parsed = parse_message(raw)
+        archive.store(account.email, parsed["message_id"], parsed["sent_at"], raw)
 
 
 def _commit_email(session: Session, email: Email) -> bool:
@@ -113,8 +158,6 @@ def _process_pending(
     llm: Any,
     rows: list[Email],
     logger: logging.Logger | None = None,
-    *,
-    archive: EmailArchive | None = None,
 ) -> None:
     """逐封分类待处理邮件（pending 首次 / error 下轮重试）：过滤则标记，否则建 item。
 
@@ -178,16 +221,6 @@ def _process_pending(
             email.llm_state = "done"
             if not _commit_email(session, email):
                 failed += 1  # 提交失败转 error 的封计入失败
-            elif archive is not None and email.filtered:
-                # 先提交再删，且提交成功后只看 email.filtered：队列里只有
-                # pending / error 两种状态，这两种在库里的 filtered 必定是 False
-                # （error 分支从不置 True，reclassify 会重置为 False），所以此时
-                # filtered 仍为 True 当且仅当本轮被过滤并且真的落库；commit 失败
-                # 会 rollback 并把该封改标 error，filtered 回到 False，文件必须留着。
-                # LLM 抛异常、未被过滤（建了待办）的分支不走到这里，文件一律保留。
-                archive.discard(
-                    email.account.email, email.message_id, email.subject, email.sent_at
-                )
         if logger is not None and index % 10 == 0:
             logger.info(
                 "分类进度：%d/%d（过滤 %d / 建任务 %d / 失败 %d）",
@@ -271,6 +304,22 @@ def run_once(
                 account.last_sync_at = datetime.now()
                 account.last_error = None
                 summary["accounts"][account.email] = {"status": "ok", "error": None}
+                if archive is not None:
+                    # 发件箱必须排在收件箱提交之后：发件箱失败时回滚的只有发件箱
+                    # 游标，收件箱那一批（已提交）不受影响
+                    synced_at = account.last_sync_at
+                    try:
+                        _archive_sent(account, imap, settings, archive)
+                        session.commit()
+                    except Exception as exc:
+                        session.rollback()
+                        # rollback 会把上面刚写入的账户状态一并作废（对象被 expire
+                        # 后重载回旧值）；发件箱失败不该改变账户状态，这里补写回去，
+                        # 循环末尾的 commit 会把它落盘
+                        account.status = "ok"
+                        account.last_sync_at = synced_at
+                        account.last_error = None
+                        logger.warning("发件箱归档失败（account %d）：%s", account.id, type(exc).__name__)
             except Exception as exc:
                 session.rollback()
                 account.status = "error"
@@ -286,7 +335,7 @@ def run_once(
         ).scalars().all()
         summary["pending_llm"] = len([e for e in queue if e.llm_state == "pending"])
         if llm is not None:
-            _process_pending(session, llm, queue, logger=logger, archive=archive)
+            _process_pending(session, llm, queue, logger=logger)
         else:
             for email in queue:
                 if email.llm_state == "pending":

@@ -245,6 +245,59 @@ def test_old_users_table_gets_calendar_token_column():
     assert "calendar_token" in _columns(engine, "users")
 
 
+def test_old_accounts_table_gets_sent_cursor_columns():
+    """旧 accounts 表（无发件箱归档游标）init_db 就地补出两列，sent_last_uid 默认 0；再跑一次幂等。"""
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                CREATE TABLE accounts (
+                    id INTEGER NOT NULL PRIMARY KEY,
+                    user_sub TEXT NOT NULL,
+                    name VARCHAR(128) NOT NULL,
+                    kind VARCHAR(16) NOT NULL,
+                    email VARCHAR(256) NOT NULL,
+                    ms_client_id VARCHAR(64),
+                    app_password TEXT,
+                    token_cache TEXT,
+                    enabled BOOLEAN NOT NULL DEFAULT 1,
+                    uidvalidity INTEGER,
+                    last_uid INTEGER NOT NULL DEFAULT 0,
+                    last_sync_at DATETIME,
+                    last_error TEXT,
+                    status VARCHAR(16) NOT NULL DEFAULT 'pending'
+                )
+                """
+            )
+        )
+        Base.metadata.create_all(conn)
+    assert not {"sent_uidvalidity", "sent_last_uid"} & _columns(engine, "accounts")
+
+    init_db(engine)
+    assert {"sent_uidvalidity", "sent_last_uid"} <= _columns(engine, "accounts")
+    with engine.begin() as conn:
+        conn.execute(
+            text("INSERT INTO accounts (user_sub, name, kind, email) VALUES ('u1', 'n', 'gmail', 't@x.com')")
+        )
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT sent_uidvalidity, sent_last_uid FROM accounts")).fetchone() == (
+            None,
+            0,
+        )
+
+    init_db(engine)  # 幂等：再跑一次不影响已有行与列
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT sent_uidvalidity, sent_last_uid FROM accounts")).fetchone() == (
+            None,
+            0,
+        )
+
+
 # ── CalDAV：items 四新列 + 身份回填，users.caldav_password_hash ──
 
 

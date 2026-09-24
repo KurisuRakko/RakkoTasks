@@ -1,16 +1,16 @@
 """单轮同步测试：FakeImap / FakeLLM 注入，不触网。"""
 import json
 import logging
-from datetime import datetime
+import mailbox
+from email.header import decode_header, make_header
 from email.message import EmailMessage
 
 import pytest
 from sqlalchemy import select
 
-from app.archive import EmailArchive, archive_path, local_zone
 from app.config import Settings
 from app.models import Account, Email, Item, User
-from app.sync import _process_pending, run_once
+from app.sync import run_once
 
 
 def make_raw(subject="主题", message_id="<m@example.com>", body="正文", sender="a@example.com"):
@@ -39,21 +39,47 @@ def make_raw_html_only(subject="主题", message_id="<m@example.com>", html="<p>
 
 
 class FakeImap:
-    """duck-typing 协议类：select_inbox / search_uids / fetch_uid / logout。"""
+    """duck-typing 协议类：select_inbox / search_uids / fetch_uid / logout
+    + 归档用的 find_sent_folder / select_folder_readonly / fetch_uid_peek。"""
 
-    def __init__(self, uidvalidity: int = 1):
+    def __init__(self, uidvalidity: int = 1, sent_uidvalidity: int | None = None):
         self.uidvalidity = uidvalidity
         self.mails: dict[int, bytes] = {}
+        self.sent_mails: dict[int, bytes] = {}
+        self.sent_folder: str | None = None
+        self.sent_uidvalidity = uidvalidity if sent_uidvalidity is None else sent_uidvalidity
+        self.select_error: Exception | None = None
+        self.selected: str | None = None
+        self.searches: list[str] = []
+        self.peeked: list[int] = []
         self.logged_out = False
 
     def select_inbox(self) -> int:
+        self.selected = "INBOX"
         return self.uidvalidity
 
     def search_uids(self, criteria: str) -> list[int]:
+        self.searches.append(criteria)
+        # 真实 IMAP 的 SEARCH 作用于当前选中的文件夹
+        if self.sent_folder is not None and self.selected == self.sent_folder:
+            return list(self.sent_mails)
         return list(self.mails)
 
     def fetch_uid(self, uid: int) -> bytes:
         return self.mails[uid]
+
+    def find_sent_folder(self) -> str | None:
+        return self.sent_folder
+
+    def select_folder_readonly(self, name: str) -> int:
+        if self.select_error is not None:
+            raise self.select_error
+        self.selected = name
+        return self.sent_uidvalidity
+
+    def fetch_uid_peek(self, uid: int) -> bytes:
+        self.peeked.append(uid)
+        return self.sent_mails[uid]
 
     def logout(self) -> None:
         self.logged_out = True
@@ -122,19 +148,31 @@ def _run(session_factory, imap: FakeImap, llm: FakeLLM, settings: Settings | Non
 
 
 def _archive_settings(tmp_path, zone: str = "Australia/Sydney") -> Settings:
-    """开启原件归档的配置：根目录指向 tmp_path，时区固定便于算路径。"""
+    """开启原件归档的配置：根目录指向 tmp_path。"""
     return Settings(email_archive_dir=str(tmp_path), local_timezone=zone)
 
 
-# make_raw 固定 Date: Tue, 26 Aug 2026 10:00:00 +0800 → parser 转成 naive UTC
-_ARCHIVED_SENT_AT = datetime(2026, 8, 26, 2, 0, 0)
+# 归档文件按账户邮箱命名：一个账户一个 mbox
+_ACCOUNT_EMAIL = "t@example.com"
+_MBOX_NAME = f"{_ACCOUNT_EMAIL}.mbox"
 
 
-def _archived_path(tmp_path, settings: Settings, message_id: str, subject: str):
-    """同步用的那封邮件应落到的归档路径（与实现同一套规则）。"""
-    return archive_path(
-        tmp_path, "t@example.com", message_id, subject, _ARCHIVED_SENT_AT, local_zone(settings.local_timezone)
-    )
+def _mbox_messages(tmp_path) -> list:
+    """读回该账户的 mbox（读完即关：mailbox 是惰性读的）。"""
+    box = mailbox.mbox(str(tmp_path / _MBOX_NAME))
+    try:
+        return list(box)
+    finally:
+        box.close()
+
+
+def _mbox_subjects(tmp_path) -> list[str]:
+    """mbox 里的主题（EmailMessage 写的主题是 RFC2047 编码，读回要解码）。"""
+    return [str(make_header(decode_header(m["Subject"] or ""))) for m in _mbox_messages(tmp_path)]
+
+
+def _mbox_ids(tmp_path) -> list[str]:
+    return [m["Message-ID"] for m in _mbox_messages(tmp_path)]
 
 
 def _seed_account(sf) -> None:
@@ -142,7 +180,7 @@ def _seed_account(sf) -> None:
         s.add(User(sub="user-1"))
         s.commit()
         # app_password 必填：run_once 自 2026-09-06 起跳过无凭据账户（本轮需真实走 IMAP 路径）
-        s.add(Account(user_sub="user-1", name="测试邮箱", kind="gmail", email="t@example.com",
+        s.add(Account(user_sub="user-1", name="测试邮箱", kind="gmail", email=_ACCOUNT_EMAIL,
                       app_password="app-pw", status="pending"))
         s.commit()
 
@@ -529,8 +567,8 @@ def test_detail_per_item_commit_survives_crash(session_factory):
     assert items["崩溃封"].detail_md is None
 
 
-def test_archive_stores_raw_message_bytes(session_factory, tmp_path):
-    """归档开启：新邮件在本地日期目录下写出 .eml，字节与 IMAP 给的 raw 完全一致。"""
+def test_inbox_mail_archived_into_mbox(session_factory, tmp_path):
+    """归档开启：新邮件追加进该账户的 mbox。"""
     _seed_account(session_factory)
     imap = FakeImap()
     raw = make_raw(message_id="<arch1>", subject="归档主题")
@@ -539,15 +577,14 @@ def test_archive_stores_raw_message_bytes(session_factory, tmp_path):
 
     summary = _run(session_factory, imap, FakeLLM(results=[_ok_result("任务")]), settings)
 
-    path = _archived_path(tmp_path, settings, "<arch1>", "归档主题")
-    assert path.parent.name == "2026-08-26"  # UTC 02:00 → 悉尼 12:00，同日
-    assert path.name.startswith("120000_归档主题_")
-    assert path.read_bytes() == raw
-    assert summary["archive"] == {"written": 1, "failed": 0, "discarded": 0}
+    assert _mbox_ids(tmp_path) == ["<arch1>"]
+    assert _mbox_subjects(tmp_path) == ["归档主题"]
+    assert _mbox_messages(tmp_path)[0].get_payload(decode=True).decode() == "正文\n"
+    assert summary["archive"] == {"written": 1, "duplicates": 0, "failed": 0}
 
 
-def test_archive_discards_filtered_mail_but_keeps_tasks(session_factory, tmp_path):
-    """被过滤的邮件原件被删；进入待办与 LLM 失败的都保留。"""
+def test_filtered_mail_stays_in_mbox(session_factory, tmp_path):
+    """被过滤的邮件也留在 mbox 里：归档不再因为分类结果删任何东西。"""
     _seed_account(session_factory)
     imap = FakeImap()
     imap.mails = {
@@ -567,14 +604,12 @@ def test_archive_discards_filtered_mail_but_keeps_tasks(session_factory, tmp_pat
 
     summary = _run(session_factory, imap, llm, settings)
 
-    assert not _archived_path(tmp_path, settings, "<filtered>", "促销邮件").exists()
-    assert _archived_path(tmp_path, settings, "<real>", "交作业").exists()
-    assert _archived_path(tmp_path, settings, "<broken>", "失败封").exists()
-    assert summary["archive"] == {"written": 3, "failed": 0, "discarded": 1}
+    assert _mbox_ids(tmp_path) == ["<filtered>", "<real>", "<broken>"]
+    assert summary["archive"] == {"written": 3, "duplicates": 0, "failed": 0}
 
     with session_factory() as s:
         emails = {e.message_id: e for e in s.execute(select(Email)).scalars().all()}
-    assert emails["<filtered>"].filtered is True  # 邮件记录仍在库中，删的只是原件文件
+    assert emails["<filtered>"].filtered is True  # 邮件记录仍在库中，原件也仍在 mbox 里
     assert emails["<broken>"].llm_state == "error"
 
 
@@ -604,68 +639,97 @@ def test_archive_write_failure_does_not_break_sync(session_factory, tmp_path):
     summary = _run(session_factory, imap, FakeLLM(results=[_ok_result("任务")]), settings)
 
     assert summary["accounts"]["t@example.com"] == {"status": "ok", "error": None}
-    assert summary["archive"] == {"written": 0, "failed": 1, "discarded": 0}
+    assert summary["archive"] == {"written": 0, "duplicates": 0, "failed": 1}
     with session_factory() as s:
         assert [e.message_id for e in s.execute(select(Email)).scalars().all()] == ["<fail1>"]
     assert _account(session_factory).last_uid == 1  # 游标照常推进
 
 
-def _filtered_result():
-    """LLM 判为过滤（不建待办）的分类结果。"""
-    return {"filtered": True, "filter_reason": "广告营销", "title": "", "summary": "",
-            "category": "", "due_date": None, "actionable": False}
+def test_sent_mail_archived_and_cursor_advances(session_factory, tmp_path):
+    """配了发件箱时发件箱邮件进 mbox、sent_last_uid 推进；第二轮没有新邮件就不追加。"""
+    _seed_account(session_factory)
+    imap = FakeImap()
+    imap.mails = {1: make_raw(message_id="<in1>", subject="收件")}
+    imap.sent_folder = "Sent"
+    imap.sent_mails = {
+        1: make_raw(message_id="<s1>", subject="发件一"),
+        2: make_raw(message_id="<s2>", subject="发件二"),
+    }
+    settings = _archive_settings(tmp_path)
+
+    summary = _run(session_factory, imap, FakeLLM(results=[_ok_result("任务")]), settings)
+
+    assert _mbox_ids(tmp_path) == ["<in1>", "<s1>", "<s2>"]  # 收件箱先、发件箱后
+    assert summary["archive"] == {"written": 3, "duplicates": 0, "failed": 0}
+    acc = _account(session_factory)
+    assert acc.sent_uidvalidity == 1
+    assert acc.sent_last_uid == 2
+
+    second = _run(session_factory, imap, FakeLLM(), settings)  # 第二轮没有新邮件
+
+    assert second["archive"] == {"written": 0, "duplicates": 0, "failed": 0}
+    assert len(_mbox_messages(tmp_path)) == 3
 
 
-def _seed_pending_email(session) -> Email:
-    """直接塞一封 pending 邮件（不经 IMAP），供 _process_pending 单独驱动。"""
-    session.add(User(sub="user-1"))
-    session.add(Account(user_sub="user-1", name="测试邮箱", kind="gmail", email="t@example.com",
-                        app_password="app-pw", status="pending"))
-    session.commit()
-    account_id = session.execute(select(Account)).scalars().one().id
-    email = Email(account_id=account_id, message_id="<pending1>", subject="促销邮件",
-                  sender="a@example.com", recipients="me@example.com",
-                  sent_at=_ARCHIVED_SENT_AT, text_body="正文", html_body=None,
-                  attachments_json="[]", llm_state="pending")
-    session.add(email)
-    session.commit()
-    return email
+def test_sent_mail_not_inserted_into_db(session_factory, tmp_path):
+    """发件箱邮件只归档：不进 emails 表、不建待办、不进 LLM。"""
+    _seed_account(session_factory)
+    imap = FakeImap()
+    imap.mails = {1: make_raw(message_id="<in1>", subject="收件")}
+    imap.sent_folder = "Sent"
+    imap.sent_mails = {1: make_raw(message_id="<s1>", subject="发件")}
+    settings = _archive_settings(tmp_path)
+    llm = FakeLLM(results=[_ok_result("收件任务")])
 
+    _run(session_factory, imap, llm, settings)
 
-def _row(session_factory, message_id: str) -> Email:
     with session_factory() as s:
-        return s.execute(select(Email).where(Email.message_id == message_id)).scalars().one()
+        assert [e.message_id for e in s.execute(select(Email)).scalars().all()] == ["<in1>"]
+        assert [i.title for i in s.execute(select(Item)).scalars().all()] == ["收件任务"]
+    assert [info["subject"] for info in llm.seen_infos] == ["收件"]
 
 
-def test_commit_failure_keeps_archived_original(session_factory, tmp_path, monkeypatch):
-    """提交失败（rollback 后改标 error）时原件必须留着：过滤标记没落库，删了就永久丢了。"""
-    archive = EmailArchive(tmp_path, local_zone("Australia/Sydney"))
-    with session_factory() as session:
-        _seed_pending_email(session)
-        archive.store("t@example.com", "<pending1>", "促销邮件", _ARCHIVED_SENT_AT, b"raw-bytes")
-        path = archive_path(tmp_path, "t@example.com", "<pending1>", "促销邮件",
-                            _ARCHIVED_SENT_AT, archive.zone)
-        assert path.exists()
+def test_sent_uidvalidity_change_resets_sent_cursor(session_factory, tmp_path):
+    """发件箱文件夹 UIDVALIDITY 变化：游标重置为 0 后重扫，索引挡住重复追加。"""
+    _seed_account(session_factory)
+    imap = FakeImap()
+    imap.mails = {1: make_raw(message_id="<in1>", subject="收件")}
+    imap.sent_folder = "Sent"
+    imap.sent_mails = {1: make_raw(message_id="<s1>", subject="发件")}
+    settings = _archive_settings(tmp_path)
+    _run(session_factory, imap, FakeLLM(results=[_ok_result("任务")]), settings)
+    assert _account(session_factory).sent_last_uid == 1
 
-        original = session.commit
-        calls = []
+    imap.sent_uidvalidity = 99
+    summary = _run(session_factory, imap, FakeLLM(), settings)
 
-        def flaky_commit():
-            calls.append(1)
-            if len(calls) == 1:
-                raise RuntimeError("约束冲突")
-            return original()
+    acc = _account(session_factory)
+    assert acc.sent_uidvalidity == 99
+    assert acc.sent_last_uid == 1  # 重扫后仍推进到该文件夹的最大 UID
+    assert summary["archive"] == {"written": 0, "duplicates": 1, "failed": 0}
+    assert len(_mbox_messages(tmp_path)) == 2
 
-        monkeypatch.setattr(session, "commit", flaky_commit)
-        rows = session.execute(select(Email).where(Email.llm_state == "pending")).scalars().all()
-        _process_pending(session, FakeLLM(results=[_filtered_result()]), rows, archive=archive)
 
-    assert len(calls) == 2  # 第一次失败，第二次把 error 标记提交成功
-    row = _row(session_factory, "<pending1>")
-    assert row.llm_state == "error"
-    assert row.filtered is False
-    assert path.exists()  # 原件未被删
-    assert archive.summary() == {"written": 1, "failed": 0, "discarded": 0}
+def test_sent_archive_failure_keeps_account_ok(session_factory, tmp_path, caplog):
+    """发件箱归档失败：收件箱照常入库、账户仍 ok，warning 只含账户 id 与异常类名。"""
+    _seed_account(session_factory)
+    imap = FakeImap()
+    imap.mails = {1: make_raw(message_id="<in1>", subject="收件")}
+    imap.sent_folder = "Sent"
+    imap.select_error = RuntimeError("发件箱不可读：绝密文件夹名")
+    settings = _archive_settings(tmp_path)
+
+    with caplog.at_level(logging.WARNING, logger="rakkotasks.sync"):
+        summary = _run(session_factory, imap, FakeLLM(results=[_ok_result("任务")]), settings)
+
+    assert summary["accounts"]["t@example.com"] == {"status": "ok", "error": None}
+    acc = _account(session_factory)
+    assert acc.status == "ok"
+    assert acc.last_error is None
+    assert acc.sent_last_uid == 0  # 发件箱游标没有推进
+    assert _mbox_ids(tmp_path) == ["<in1>"]
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert warnings == [f"发件箱归档失败（account {acc.id}）：RuntimeError"]
 
 
 class FlakyFetchImap(FakeImap):
@@ -682,8 +746,8 @@ class FlakyFetchImap(FakeImap):
         return super().fetch_uid(uid)
 
 
-def test_rollback_then_refetch_reuses_same_archive_file(session_factory, tmp_path):
-    """整批回滚后下轮重拉同一批 UID：同 message_id 覆盖同一路径，不多出副本也不留 .tmp。"""
+def test_rollback_then_refetch_does_not_duplicate_in_mbox(session_factory, tmp_path):
+    """整批回滚后下轮重拉同一批 UID：第 1 封由 mbox 索引去重，只留一份。"""
     _seed_account(session_factory)
     mails = {1: make_raw(message_id="<r1>", subject="回滚封"), 2: make_raw(message_id="<r2>", subject="触发封")}
     settings = _archive_settings(tmp_path)
@@ -693,20 +757,21 @@ def test_rollback_then_refetch_reuses_same_archive_file(session_factory, tmp_pat
     summary = _run(session_factory, first, FakeLLM(), settings)
 
     assert summary["accounts"]["t@example.com"]["status"] == "error"
-    assert len(list(tmp_path.rglob("*.eml"))) == 1  # 第 1 封的原件已落盘
+    assert _mbox_ids(tmp_path) == ["<r1>"]  # 第 1 封的原件已落盘
     assert _emails(session_factory) == []  # 但整批回滚，库里没有行
+    assert first.logged_out is True
 
     second = FakeImap()
     second.mails = dict(mails)
-    _run(session_factory, second, FakeLLM(results=[_ok_result("任务1"), _ok_result("任务2")]), settings)
+    summary = _run(session_factory, second, FakeLLM(results=[_ok_result("任务1"), _ok_result("任务2")]), settings)
 
     assert len(_emails(session_factory)) == 2
-    assert len(list(tmp_path.rglob("*.eml"))) == 2  # 第 1 封被覆盖，不是又多一份
-    assert not list(tmp_path.rglob("*.tmp"))
+    assert _mbox_ids(tmp_path) == ["<r1>", "<r2>"]  # 第 1 封没有第二份
+    assert summary["archive"]["duplicates"] == 1
 
 
-def test_dedup_hit_does_not_rewrite_existing_archive(session_factory, tmp_path):
-    """UIDVALIDITY 变化导致重拉同一批 UID 时命中去重，不再写盘。"""
+def test_dedup_hit_does_not_append_to_mbox(session_factory, tmp_path):
+    """UIDVALIDITY 变化导致重拉同一批 UID 时命中去重，不再追加。"""
     _seed_account(session_factory)
     imap = FakeImap(uidvalidity=5)
     imap.mails = {1: make_raw(message_id="<d1>", subject="第一封"), 2: make_raw(message_id="<d2>", subject="第二封")}
@@ -714,12 +779,11 @@ def test_dedup_hit_does_not_rewrite_existing_archive(session_factory, tmp_path):
 
     first = _run(session_factory, imap, FakeLLM(results=[_ok_result("任务1"), _ok_result("任务2")]), settings)
     assert first["archive"]["written"] == 2
-    files = sorted(p.name for p in tmp_path.rglob("*.eml"))
-    assert len(files) == 2
+    assert len(_mbox_messages(tmp_path)) == 2
 
     imap.uidvalidity = 99  # 游标重置 → 全量回补 → 两封都被 (account_id, message_id) 去重
     second = _run(session_factory, imap, FakeLLM(), settings)
 
     assert second["archive"]["written"] == 0
-    assert sorted(p.name for p in tmp_path.rglob("*.eml")) == files
+    assert len(_mbox_messages(tmp_path)) == 2
     assert len(_emails(session_factory)) == 2
