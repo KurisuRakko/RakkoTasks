@@ -46,6 +46,9 @@ class Account(Base):
     # IMAP 增量游标
     uidvalidity: Mapped[int | None] = mapped_column(Integer)
     last_uid: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # 发件箱归档游标：与收件箱游标分开，各自随自己文件夹的 UIDVALIDITY 重置
+    sent_uidvalidity: Mapped[int | None] = mapped_column(Integer)
+    sent_last_uid: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     last_sync_at: Mapped[datetime | None] = mapped_column(DateTime)
     last_error: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(16), default="pending", nullable=False)  # ok|error|pending
