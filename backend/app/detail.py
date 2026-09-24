@@ -13,7 +13,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.agent import _build_index, _owned_account_ids, run_tool_loop
+from app.agent import TOOLS, _build_index, _owned_account_ids, email_tool_dispatch, run_tool_loop
 from app.config import Settings
 from app.emailtext import email_plain_text
 from app.llm import email_prompt
@@ -71,9 +71,8 @@ def generate_item_detail(db: Session, llm: Any, item: Item, settings: Settings) 
     data = run_tool_loop(
         llm,
         messages,
-        db,
-        settings,
-        owned_ids,
+        tools=TOOLS,
+        dispatch=email_tool_dispatch(db, settings, owned_ids),
         max_rounds=MAX_DETAIL_ROUNDS,
         retry_hint='你上一次的输出不是合法 JSON。请只输出 {"detail_md": "...", "related": [...]}。',
     )

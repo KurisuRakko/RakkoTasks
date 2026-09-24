@@ -10,7 +10,7 @@ from datetime import date
 import pytest
 from sqlalchemy import select
 
-from app.agent import run_tool_loop
+from app.agent import TOOLS, email_tool_dispatch, run_tool_loop
 from app.config import Settings
 from app.detail import apply_detail, build_export_text, generate_item_detail, resolve_related
 from app.models import Account, Email, Item, User
@@ -293,8 +293,12 @@ def test_run_tool_loop_fenced_json_parsed_once(session_factory):
     with session_factory() as s:
         llm = FencedJsonLLM()
         data = run_tool_loop(
-            llm, [{"role": "user", "content": "hi"}], s, _settings(), [],
-            max_rounds=8, retry_hint="hint",
+            llm,
+            [{"role": "user", "content": "hi"}],
+            tools=TOOLS,
+            dispatch=email_tool_dispatch(s, _settings(), []),
+            max_rounds=8,
+            retry_hint="hint",
         )
         assert data == {"detail_md": "ok", "related": []}
         assert len(llm.calls) == 1
@@ -307,8 +311,12 @@ def test_run_tool_loop_json_retry(session_factory):
         messages = [{"role": "user", "content": "hi"}]
         llm = RetryLLM(final={"detail_md": "ok", "related": []})
         data = run_tool_loop(
-            llm, messages, s, _settings(), [],
-            max_rounds=8, retry_hint='请只输出 {"detail_md": "...", "related": [...]}。',
+            llm,
+            messages,
+            tools=TOOLS,
+            dispatch=email_tool_dispatch(s, _settings(), []),
+            max_rounds=8,
+            retry_hint='请只输出 {"detail_md": "...", "related": [...]}。',
         )
         assert data == {"detail_md": "ok", "related": []}
         assert len(llm.calls) == 2
@@ -325,8 +333,12 @@ def test_run_tool_loop_invalid_json_twice_raises(session_factory):
         llm = RetryLLM(final={}, fail_all=True)
         with pytest.raises(RuntimeError) as exc:
             run_tool_loop(
-                llm, [{"role": "user", "content": "hi"}], s, _settings(), [],
-                max_rounds=8, retry_hint="hint",
+                llm,
+                [{"role": "user", "content": "hi"}],
+                tools=TOOLS,
+                dispatch=email_tool_dispatch(s, _settings(), []),
+                max_rounds=8,
+                retry_hint="hint",
             )
         assert "非法 JSON" in str(exc.value)
 
@@ -337,8 +349,12 @@ def test_run_tool_loop_over_max_rounds_raises(session_factory):
         llm = RetryLLM(final={}, always_tool=True)
         with pytest.raises(RuntimeError) as exc:
             run_tool_loop(
-                llm, [{"role": "user", "content": "hi"}], s, _settings(), [],
-                max_rounds=3, retry_hint="hint",
+                llm,
+                [{"role": "user", "content": "hi"}],
+                tools=TOOLS,
+                dispatch=email_tool_dispatch(s, _settings(), []),
+                max_rounds=3,
+                retry_hint="hint",
             )
         assert "3" in str(exc.value)
         assert llm.calls[-1]["n"] > 1  # 工具结果确实回填进对话

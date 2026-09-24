@@ -8,6 +8,7 @@ import secrets
 from collections.abc import Iterator
 from datetime import date, datetime, timezone
 from pathlib import Path
+from typing import Annotated, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
@@ -20,6 +21,12 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.accounts import account_info
 from app.accounts_api import register_accounts
+from app.assistant import (
+    CHAT_ASSISTANT_MAX,
+    CHAT_HISTORY_MAX,
+    CHAT_USER_MAX,
+    run_assistant,
+)
 from app.auth import CurrentUser, require_auth
 from app.calendar import build_ics
 from app.caldav import register_caldav
@@ -28,18 +35,16 @@ from app.config import Settings, get_settings
 from app.db import init_db, make_engine, make_session_factory
 from app.detail import apply_detail, build_export_text, generate_item_detail, resolve_related
 from app.itemrules import (
-    CATEGORIES,
     DEFAULT_TITLE,
     ItemFieldError,
     local_wall_to_utc,
-    set_status,
     validate_item_fields,
     validate_reminders,
 )
+from app.items_service import apply_item_patch, create_manual_item, item_dict, owned_item, query_items
 from app.models import Account, Email, Item, Reminder, User
 from app.ratelimit import RateLimiter
 from app.sanitizer import build_email_document
-from app.search import run_search
 from app.sync_state import request_sync, status_payload
 
 logger = logging.getLogger("rakkotasks.api")
@@ -74,8 +79,25 @@ class ParseRequest(BaseModel):
     tz: str | None = None               # IANA 时区名，如 "Australia/Sydney"
 
 
-class SearchRequest(BaseModel):
-    question: str = Field(max_length=2000)  # 防超长问题灌进 LLM 上下文烧钱
+class ChatUserMessage(BaseModel):
+    role: Literal["user"]
+    content: str = Field(min_length=1, max_length=CHAT_USER_MAX)
+
+
+class ChatAssistantMessage(BaseModel):
+    role: Literal["assistant"]
+    # 助理回复可以比提问长得多（含 Markdown 列表与引用），上限另给一档
+    content: str = Field(min_length=1, max_length=CHAT_ASSISTANT_MAX)
+
+
+ChatMessageIn = Annotated[ChatUserMessage | ChatAssistantMessage, Field(discriminator="role")]
+
+
+class ChatRequest(BaseModel):
+    # 服务端无状态：聊天记录只在前端内存，每轮把截断后的历史整包发上来
+    messages: list[ChatMessageIn] = Field(min_length=1, max_length=CHAT_HISTORY_MAX)
+    today: str | None = None  # 用户浏览器本地日期 YYYY-MM-DD
+    tz: str | None = None     # IANA 时区名，如 "Australia/Sydney"
 
 
 def _resolve_today(raw: str | None, settings) -> str:
@@ -138,13 +160,6 @@ def _owned_account_ids(db: Session, user_sub: str) -> list[int]:
     return list(db.execute(select(Account.id).where(Account.user_sub == user_sub)).scalars().all())
 
 
-def _owned_item(db: Session, item_id: int, user_sub: str) -> Item | None:
-    """按归属直挂字段取属于该用户的条目；不属于返回 None（对外按 404 处理）。"""
-    return db.execute(
-        select(Item).where(Item.id == item_id, Item.user_sub == user_sub)
-    ).scalars().first()
-
-
 def _owned_email(db: Session, email_id: int, user_sub: str) -> Email | None:
     """按归属链 Email→Account 取属于该用户的邮件；不属于返回 None（对外按 404 处理）。"""
     return db.execute(
@@ -172,7 +187,8 @@ def create_app(
     app.state.session_factory = session_factory
 
     # 每用户限流：保护会产生 LLM 费用的端点（每个 app 实例各一份，测试互不污染）
-    search_limiter = RateLimiter(6, 60.0)
+    # 助理的计费口径是「每轮对话一次」：一轮里模型可能调多次工具，只算一次
+    assistant_limiter = RateLimiter(6, 60.0)
     detail_limiter = RateLimiter(30, 60.0)
     # parse 与 quick 共用同一份 20 次/60 秒计数
     parse_limiter = RateLimiter(20, 60.0)
@@ -224,47 +240,29 @@ def create_app(
         status: str = Query(default="open"),
         category: str | None = Query(default=None),
     ) -> dict:
-        stmt = select(Item).where(Item.user_sub == user.sub, Item.status == status)
-        if category:
-            stmt = stmt.where(Item.category == category)
-        items = (
-            db.execute(stmt.order_by(Item.due_date.is_(None), Item.due_date.asc(), Item.created_at.desc()))
-            .scalars()
-            .all()
-        )
+        items = query_items(db, user.sub, status=status, category=category)
         owned_ids = _owned_account_ids(db, user.sub)  # 只查一次，逐条复用
-        return {"items": [_item_dict(i, resolve_related(db, i, owned_ids)) for i in items]}
+        return {"items": [item_dict(i, resolve_related(db, i, owned_ids)) for i in items]}
 
     @app.post("/api/items", status_code=201)
     def create_item(
         body: ItemCreate, user: CurrentUser = Depends(require_auth), db: Session = Depends(_get_db)
     ) -> dict:
-        """新建手动条目（无源邮件，email_id 为 null）：importance/actionable 省略时默认落
-        normal / True，status=open。"""
         try:
-            due = validate_item_fields(
-                body.title, body.summary, body.category, body.due_date, body.importance
+            item = create_manual_item(
+                db, user.sub,
+                title=body.title,
+                summary=body.summary,
+                category=body.category,
+                due_date=body.due_date,
+                importance=body.importance,
+                actionable=body.actionable,
+                reminders=body.reminders,
             )
-            reminders = validate_reminders(body.reminders)  # None = 没传；list = 升序去重 naive UTC
         except ItemFieldError as e:
             raise HTTPException(status_code=400, detail={"code": e.code}) from None
-        item = Item(
-            user_sub=user.sub,
-            email_id=None,
-            title=body.title.strip(),
-            summary=body.summary,
-            category=body.category,
-            due_date=due,
-            importance=body.importance or "normal",
-            actionable=True if body.actionable is None else body.actionable,
-            status="open",
-        )
-        db.add(item)
-        if reminders is not None:
-            for dt in reminders:
-                item.reminders.append(Reminder(remind_at=dt))  # 关系 append，ORM 自己填 item_id
         db.commit()
-        return _item_dict(item, [])
+        return item_dict(item, [])
 
     def _ai_parse(text: str, today: str | None, tz: str | None) -> list[dict]:
         """/parse 与 /quick 共用的解析路径：解析「今天」与「时区」→ parse_task →
@@ -378,78 +376,29 @@ def create_app(
                 item.reminders.append(Reminder(remind_at=dt))
             items.append(item)
         db.commit()
-        return {"items": [_item_dict(item, []) for item in items], "ai_parsed": ai_parsed}
+        return {"items": [item_dict(item, []) for item in items], "ai_parsed": ai_parsed}
 
     @app.patch("/api/items/{item_id}")
     def patch_item(
         item_id: int, body: ItemPatch, user: CurrentUser = Depends(require_auth), db: Session = Depends(_get_db)
     ) -> dict:
-        item = _owned_item(db, item_id, user.sub)
+        item = owned_item(db, item_id, user.sub)
         if item is None:
             raise HTTPException(status_code=404, detail={"code": "not_found"})
-        fields = body.model_fields_set
-        if not fields:
-            raise HTTPException(status_code=400, detail={"code": "bad_request"})
-        # 邮件条目与手动条目在 PATCH 上同权（产品决策）：条目内容字段谁都能改，
-        # 下面统一走「现值合并 + 整体校验」这一条路径。reminders 不进这个集合
-        # 不是因为权限，而是写入语义不同——它是整体替换 + 差集计算，单独走
-        # 下面的分支，任何条目都能改。
-        editable = fields & {"title", "summary", "category", "due_date", "importance", "actionable"}
-        if "status" in fields:
-            if body.status not in ("done", "open"):
-                raise HTTPException(status_code=400, detail={"code": "bad_status"})
-            set_status(item, body.status, now=datetime.now())
-        if "reminders" in fields:
-            # 整体替换（不是增量）：传 [] 清空全部；传 null 与 [] 同义，都清空
-            # （list[str] | None 的 null 在这里没有第三种含义，统一成清空）。
-            # 实现上算差集而不是 clear()+重建：同一时刻的行若先删后插，会在同一次
-            # flush 里先 INSERT 再 DELETE（unit-of-work 顺序），新行撞上还没删掉的
-            # 旧行命中 UNIQUE(item_id, remind_at) → 500。差集只删多余、只加新增，
-            # 交集行原样保留（id 稳定，也少写库）。
-            try:
-                new_reminders = validate_reminders(body.reminders)  # None（=清空）或 naive UTC 列表
-            except ItemFieldError as e:
-                raise HTTPException(status_code=400, detail={"code": e.code}) from None
-            wanted = set(new_reminders or [])
-            existing = {r.remind_at: r for r in item.reminders}
-            for at, row in existing.items():
-                if at not in wanted:
-                    item.reminders.remove(row)  # delete-orphan 负责真删
-            for at in sorted(wanted - existing.keys()):
-                item.reminders.append(Reminder(remind_at=at))
-        if editable:
-            # 未给出的字段用现值合并后整体校验一次（校验语义与 POST 一致）；
-            # actionable 由 Pydantic 保证 bool 类型，不进 validate_item_fields
-            title = body.title if "title" in fields else item.title
-            summary = body.summary if "summary" in fields else item.summary
-            category = body.category if "category" in fields else item.category
-            due_raw = (
-                body.due_date
-                if "due_date" in fields
-                else (item.due_date.isoformat() if item.due_date else None)
-            )
-            importance = body.importance if "importance" in fields else item.importance
-            try:
-                due = validate_item_fields(title, summary, category, due_raw, importance)
-            except ItemFieldError as e:
-                raise HTTPException(status_code=400, detail={"code": e.code}) from None
-            item.title = title.strip()
-            item.summary = summary
-            item.category = category
-            item.due_date = due
-            item.importance = importance
-            if "actionable" in fields:
-                # 只认 model_fields_set（fields）判断字段是否给出：actionable 是布尔，
-                # 显式 false 是合法修改，写成真值判断会让「改成 false」静默失效
-                item.actionable = bool(body.actionable)
+        # 只有出现在请求体里的字段才算改动：字段的 None 一律是「没传」，不是「清空」
+        changes = {name: getattr(body, name) for name in body.model_fields_set}
+        try:
+            apply_item_patch(item, changes, now=datetime.now())
+        except ItemFieldError as e:
+            raise HTTPException(status_code=400, detail={"code": e.code}) from None
         db.commit()
-        return _item_dict(item, resolve_related(db, item, _owned_account_ids(db, user.sub)))
+        return item_dict(item, resolve_related(db, item, _owned_account_ids(db, user.sub)))
 
     @app.delete("/api/items/{item_id}", status_code=204)
     def delete_item(
         item_id: int, user: CurrentUser = Depends(require_auth), db: Session = Depends(_get_db)
     ) -> Response:
-        item = _owned_item(db, item_id, user.sub)
+        item = owned_item(db, item_id, user.sub)
         if item is None:
             raise HTTPException(status_code=404, detail={"code": "not_found"})
         if item.email_id is not None:
@@ -460,16 +409,16 @@ def create_app(
 
     @app.get("/api/items/{item_id}")
     def get_item(item_id: int, user: CurrentUser = Depends(require_auth), db: Session = Depends(_get_db)) -> dict:
-        item = _owned_item(db, item_id, user.sub)
+        item = owned_item(db, item_id, user.sub)
         if item is None:
             raise HTTPException(status_code=404, detail={"code": "not_found"})
-        return _item_dict(item, resolve_related(db, item, _owned_account_ids(db, user.sub)))
+        return item_dict(item, resolve_related(db, item, _owned_account_ids(db, user.sub)))
 
     @app.post("/api/items/{item_id}/detail")
     def generate_detail_endpoint(
         item_id: int, user: CurrentUser = Depends(require_auth), db: Session = Depends(_get_db)
     ) -> dict:
-        item = _owned_item(db, item_id, user.sub)
+        item = owned_item(db, item_id, user.sub)
         if item is None:
             raise HTTPException(status_code=404, detail={"code": "not_found"})
         if item.email_id is None:
@@ -492,7 +441,7 @@ def create_app(
     @app.get("/api/items/{item_id}/export")
     def export_item(item_id: int, user: CurrentUser = Depends(require_auth), db: Session = Depends(_get_db)) -> dict:
         """导出条目为 Markdown 纯文本（含 AI 见解与关联邮件全文）；纯读、无 LLM 调用，不限流。"""
-        item = _owned_item(db, item_id, user.sub)
+        item = owned_item(db, item_id, user.sub)
         if item is None:
             raise HTTPException(status_code=404, detail={"code": "not_found"})
         return {"text": build_export_text(db, item, _owned_account_ids(db, user.sub))}
@@ -616,21 +565,37 @@ def create_app(
             "html": html,
         }
 
-    @app.post("/api/search")
-    def search(
-        request: SearchRequest, user: CurrentUser = Depends(require_auth), db: Session = Depends(_get_db)
+    @app.post("/api/assistant/chat")
+    def assistant_chat(
+        body: ChatRequest, user: CurrentUser = Depends(require_auth), db: Session = Depends(_get_db)
     ) -> dict:
-        if not request.question.strip():
+        """多轮对话：返回 {"answer_md", "citations", "actions"}。
+
+        服务端无状态——聊天记录只在前端内存，每轮把截断后的历史整包发上来。
+        actions 是本轮成功执行的写操作回执（按执行顺序），前端渲染成回执卡。
+        """
+        last = body.messages[-1]
+        if last.role != "user":
+            raise HTTPException(status_code=400, detail={"code": "bad_request"})
+        if not last.content.strip():
             raise HTTPException(status_code=400, detail={"code": "empty_question"})
-        if not search_limiter.allow(user.sub):
+        if not assistant_limiter.allow(user.sub):
             raise HTTPException(status_code=429, detail={"code": "rate_limited"})
         from app.llm import get_llm  # 延迟导入，便于测试 monkeypatch
 
         try:
-            return run_search(request.question, db, get_llm(settings), user.sub)
+            return run_assistant(
+                [m.model_dump() for m in body.messages],
+                db,
+                get_llm(settings),
+                settings,
+                user.sub,
+                today=_resolve_today(body.today, settings),
+                zone=_resolve_zone(body.tz, settings),
+            )
         except Exception as exc:
-            logger.exception("AI 搜索失败")
-            raise HTTPException(status_code=502, detail={"code": "search_error"}) from exc
+            logger.exception("AI 助理失败")
+            raise HTTPException(status_code=502, detail={"code": "assistant_error"}) from exc
 
     @app.get("/api/status")
     def status_endpoint(
@@ -690,35 +655,3 @@ def create_app(
             return FileResponse(base / "index.html")
 
     return app
-
-
-def _item_dict(item: Item, related: list[dict]) -> dict:
-    email = item.email
-    return {
-        "id": item.id,
-        "email_id": item.email_id,
-        # DB 存 naive UTC，显式补 +00:00 偏移，前端 new Date() 才不会按本地时区误读
-        "email_sent_at": (
-            email.sent_at.replace(tzinfo=timezone.utc).isoformat() if email and email.sent_at else None
-        ),
-        "email_subject": email.subject if email else None,
-        "email_sender": email.sender if email else None,
-        "title": item.title,
-        "summary": item.summary,
-        "category": item.category,
-        "due_date": item.due_date.isoformat() if item.due_date else None,
-        "importance": item.importance,
-        "actionable": item.actionable,
-        "status": item.status,
-        "detail_md": item.detail_md,
-        "related": related,
-        "created_at": item.created_at.isoformat() if item.created_at else None,
-        "done_at": item.done_at.isoformat() if item.done_at else None,
-        # 显式按 remind_at 升序排序，不依赖关系上 order_by 的隐式行为；
-        # 序列化与 email_sent_at 同款：库内 naive UTC 显式补 +00:00，前端
-        # new Date() 才不会按本地时区误读
-        "reminders": [
-            {"id": r.id, "remind_at": r.remind_at.replace(tzinfo=timezone.utc).isoformat()}
-            for r in sorted(item.reminders, key=lambda r: r.remind_at)
-        ],
-    }

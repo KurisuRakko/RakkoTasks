@@ -1,12 +1,13 @@
-"""共享 agent 层：FTS5 检索工具 + 多轮工具循环，AI 搜索与任务详情（agentic）共用。
+"""共享 agent 层：邮件检索工具（FTS5）+ 通用多轮工具循环，AI 助理与详情生成共用。
 
-从 search.py 搬出（不在 search.py 保留副本或 re-export）：两个使用方按需
-从本模块导入；搜索与详情各自的轮数上限、提示与后处理留在各自模块。
+工具循环本身不内置任何具体工具：调用方用 tools + dispatch 注入自己的工具集，
+轮数上限、提示词与结果后处理留在各自模块。
 """
 from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -21,6 +22,9 @@ from app.promptguard import strip_sentinels, wrap_untrusted
 
 SEARCH_LIMIT_MAX = 50
 READ_LIMIT_MAX = 20
+
+# 工具分发器：run_tool_loop 只按名字调它，不认识任何具体工具（调用方决定工具集）
+Dispatch = Callable[[str, dict[str, Any]], dict]
 
 TOOLS: list[dict] = [
     {
@@ -191,6 +195,11 @@ def _dispatch_tool(db: Session, name: str, args: dict[str, Any], settings: Setti
     return {"ok": False, "error": f"未知工具 {name}"}
 
 
+def email_tool_dispatch(db: Session, settings: Settings, owned_ids: list[int]) -> Dispatch:
+    """把邮件工具绑定到当前用户的账户白名单，返回可直接交给 run_tool_loop 的分发器。"""
+    return lambda name, args: _dispatch_tool(db, name, args, settings, owned_ids)
+
+
 def _build_index(db: Session, settings: Settings, user_sub: str) -> str:
     """最近 SEARCH_INDEX_DAYS 天该用户邮件的紧凑索引，无条数上限。"""
     since = datetime.now() - timedelta(days=settings.search_index_days)
@@ -231,23 +240,23 @@ def _parse_final_json(content: str) -> dict:
 def run_tool_loop(
     llm: Any,
     messages: list[dict],
-    db: Session,
-    settings: Settings,
-    owned_ids: list[int],
     *,
+    tools: list[dict],
+    dispatch: Dispatch,
     max_rounds: int,
     retry_hint: str,
 ) -> dict:
     """agentic 工具循环：有 tool_calls 则回填执行并继续，无则把 content 当最终 JSON 解析返回。
 
     llm 需提供 chat_completion(messages, tools=None, json_mode=False) -> dict（openai message 风格）。
+    tools 是本轮可用的工具声明，dispatch(name, args) -> dict 负责执行并把结果写回对话。
     最终输出按 _parse_final_json 解析（容忍 ```json 围栏包裹）；不是合法 JSON / 顶层不是对象时
     追加 retry_hint 并用 json_mode=True 重试一次，仍失败抛 RuntimeError("最终输出非法 JSON")；
     超 max_rounds 轮抛 RuntimeError("工具循环超过 N 轮")。
     messages 就地追加（调用方持有引用即可读到完整对话，测试依赖此行为）。
     """
     for _round in range(max_rounds):
-        msg = llm.chat_completion(messages, tools=TOOLS)
+        msg = llm.chat_completion(messages, tools=tools)
         if msg.get("tool_calls"):
             messages.append({"role": "assistant", "content": msg.get("content") or "", "tool_calls": msg["tool_calls"]})
             for tc in msg["tool_calls"]:
@@ -255,7 +264,7 @@ def run_tool_loop(
                     args = json.loads(tc["function"]["arguments"] or "{}")
                 except json.JSONDecodeError:
                     args = {}
-                result = _dispatch_tool(db, tc["function"]["name"], args, settings, owned_ids)
+                result = dispatch(tc["function"]["name"], args)
                 messages.append(
                     {"role": "tool", "tool_call_id": tc["id"], "content": json.dumps(result, ensure_ascii=False)}
                 )
@@ -268,7 +277,7 @@ def run_tool_loop(
             # 一次显式 json_object 重试
             messages.append({"role": "assistant", "content": content})
             messages.append({"role": "user", "content": retry_hint})
-            msg = llm.chat_completion(messages, tools=TOOLS, json_mode=True)
+            msg = llm.chat_completion(messages, tools=tools, json_mode=True)
             try:
                 return _parse_final_json(msg.get("content") or "")
             except ValueError:

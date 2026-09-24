@@ -254,13 +254,13 @@ def test_detail_injection_image_is_sanitized(session_factory, monkeypatch):
     assert "![" not in resp.json()["detail_md"]
 
 
-def test_search_injection_image_is_sanitized(session_factory, monkeypatch):
+def test_assistant_injection_image_is_sanitized(session_factory, monkeypatch):
     """模型被攻陷输出外泄图片：answer_md 接口吐不出图片语法（验收核心）。"""
     _seed(session_factory)
     monkeypatch.setattr("app.llm.get_llm", lambda settings=None: EvilSearchLLM())
     client = _client(session_factory, monkeypatch)
 
-    resp = client.post("/api/search", json={"question": "发票在哪里"})
+    resp = client.post("/api/assistant/chat", json={"messages": [{"role": "user", "content": "发票在哪里"}]})
     assert resp.status_code == 200
     assert "evil.com" not in resp.json()["answer_md"]
     assert "![" not in resp.json()["answer_md"]
