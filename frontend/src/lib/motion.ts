@@ -1,12 +1,11 @@
-// 动效工具层：入场 stagger、勾选离场收起、带方向的路由跳转、容器变换对话框。
+// 动效工具层：入场 stagger、勾选离场收起、容器变换对话框。
 // 只用 CSS 与浏览器 View Transitions，不引第三方动画库。
+// 换页跳转与方向判定在 lib/nav（useNavigateTo / routeDirection），不在这里。
 
 import { useCallback, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import useMediaQuery from '@mui/material/useMediaQuery';
-import { useLocation, useNavigate } from 'react-router-dom';
 import { MOTION } from '../rakko-tokens';
-import { routeDirection } from './nav';
 import { ROW_GAP_PX, ROW_MIN_HEIGHT_PX } from './surface';
 import { runViewTransition, VT_NAMES } from './view-transition';
 import type { SxProps } from '@mui/material';
@@ -108,29 +107,6 @@ export function rowSx(
         }
       : {}),
   };
-}
-
-/**
- * 带方向的路由跳转：方向判定收在 lib/nav 的 routeDirection（设置组内按路径深度），
- * 交给 View Transitions 做共享轴转场。目标与当前路径相同时不导航，避免原地
- * 触发一次无意义的转场。
- */
-export function useTransitionNavigate(): (to: string) => void {
-  const navigate = useNavigate();
-  const location = useLocation();
-  const reduced = usePrefersReducedMotion();
-  return useCallback(
-    (to: string) => {
-      if (to === location.pathname) return;
-      const forward = routeDirection(location.pathname, to) === 'forward';
-      void runViewTransition(
-        forward ? 'route-forward' : 'route-back',
-        () => navigate(to),
-        reduced,
-      );
-    },
-    [location.pathname, navigate, reduced],
-  );
 }
 
 export interface MorphDialog<T> {

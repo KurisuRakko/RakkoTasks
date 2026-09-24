@@ -603,7 +603,13 @@ CalDAV 例外：`/caldav/*` 与 `/.well-known/caldav` 不走上述 Bearer 中间
 - 设置页「邮箱账户」区：账户卡片（状态 Chip、凭据是否就绪、上次同步、错误）+「添加邮箱」。
   容器按断点分流：桌面（md 起）用 Dialog（`mainAreaDialogSx`），移动端用独立路由页
   `/settings/accounts/new`、`/settings/accounts/:id`、`/settings/accounts/:id/remove`，
-  进入从右滑入、返回向左滑出（View Transitions route-forward / route-back；设置组内按路径深度定方向）。
+  进入从右滑入、返回向左滑出（由 `RouteTransition` 的内容列入场动画实现，方向仍由
+  `routeDirection` 按导航索引 / 设置组路径深度判定）。**换页刻意不走 View Transitions**：
+  那条链路要先拍整页旧快照、同步渲染整页新状态、再合成多张全屏快照，而列表每行一块
+  `backdrop-filter` 玻璃、行的入场 stagger 最长 540ms，全都要每帧重栅格化进快照，这是
+  卡顿的主要来源；并且 root 快照带着 `CssBaseline` 传播到 canvas 的不透明纸色背景，会整块
+  盖住静止在 z-index -1 的壁纸层，换页期间用户看到的是纸色底而不是壁纸。壁纸层、壳层
+  （AppBar / 底栏 / 桌面抽屉）与悬浮按钮都留在真实 DOM 里不动，换页只让内容列播入场动画。
   - 添加向导：① 选类型（Gmail / Outlook·Microsoft 365，学校与公司邮箱也选后者）→ ② 名称、邮箱；
     Gmail 附应用专用密码输入与生成指引（Google 账号 → 安全性 → 两步验证 → 应用专用密码）；
     微软可展开「高级」填自定义 client_id（默认 Thunderbird）→ ③ 微软授权引导：生成链接 →

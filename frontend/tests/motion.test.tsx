@@ -1,12 +1,14 @@
-// motion.ts 测试：带方向的 View Transitions 路由跳转（data-vt 标记与导航行为）、
-// 容器变换对话框状态机（sourceName 的持名/让名时机）、rowSx 与离场时长 token。
+// motion.ts 测试：容器变换对话框状态机（sourceName 的持名/让名时机）、
+// rowSx 与离场时长 token；换页跳转 useNavigateTo（lib/nav）的导航行为与
+// 「不碰 View Transitions」也在这里——它和容器变换共用同一份 stub 口径。
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, renderHook } from '@testing-library/react';
 import { createTheme, ThemeProvider } from '@mui/material/styles';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import type { ReactNode } from 'react';
-import { LEAVE_DURATION, rowSx, useMorphDialog, useTransitionNavigate } from '../src/lib/motion';
+import { LEAVE_DURATION, rowSx, useMorphDialog } from '../src/lib/motion';
+import { useNavigateTo } from '../src/lib/nav';
 import { ROW_GAP_PX, ROW_MIN_HEIGHT_PX } from '../src/lib/surface';
 import { MOTION } from '../src/rakko-tokens';
 import { VT_ATTR, VT_NAMES } from '../src/lib/view-transition';
@@ -58,9 +60,9 @@ function themeWrapper({ children }: { children: ReactNode }) {
 function renderNavProbe(initial: string) {
   return renderHook(
     () => {
-      const go = useTransitionNavigate();
+      const go = useNavigateTo();
       const location = useLocation();
-      return { go, path: location.pathname };
+      return { go, path: location.pathname, key: location.key };
     },
     {
       wrapper: ({ children }: { children: ReactNode }) => (
@@ -74,54 +76,25 @@ function renderNavProbe(initial: string) {
   );
 }
 
-describe('useTransitionNavigate 方向映射', () => {
-  it('/ → /done 是 route-forward，导航生效且结束后清除标记', async () => {
-    installStartViewTransition();
-    const { result } = renderNavProbe('/');
+describe('useNavigateTo', () => {
+  it('C：跳到不同路径导航生效，且不调 startViewTransition、<html> 上没有 data-vt', () => {
+    const startViewTransition = installStartViewTransition();
+    const { result } = renderNavProbe('/assistant');
     act(() => result.current.go('/done'));
-    expect(vt()).toBe('route-forward');
     expect(result.current.path).toBe('/done');
-    await act(async () => {});
+    expect(startViewTransition).not.toHaveBeenCalled();
     expect(vt()).toBeNull();
   });
 
-  it('/done → / 是 route-back', async () => {
-    installStartViewTransition();
-    const { result } = renderNavProbe('/done');
-    act(() => result.current.go('/'));
-    expect(vt()).toBe('route-back');
-    expect(result.current.path).toBe('/');
-    await act(async () => {});
-    expect(vt()).toBeNull();
-  });
-
-  it('任意页 → /settings 按 route-forward（settings 视为更深一层）', async () => {
+  it('D：目标与当前路径相同：不导航（location.key 原地不动，不重复压历史记录）', () => {
     installStartViewTransition();
     const { result } = renderNavProbe('/assistant');
-    act(() => result.current.go('/settings'));
-    expect(vt()).toBe('route-forward');
-    expect(result.current.path).toBe('/settings');
-    await act(async () => {});
-    expect(vt()).toBeNull();
-  });
-
-  it('/settings → / 是 route-back', async () => {
-    installStartViewTransition();
-    const { result } = renderNavProbe('/settings');
-    act(() => result.current.go('/'));
-    expect(vt()).toBe('route-back');
-    expect(result.current.path).toBe('/');
-    await act(async () => {});
-    expect(vt()).toBeNull();
-  });
-
-  it('目标等于当前路径：不发生导航、不调用转场、不打标记', async () => {
-    const startViewTransition = installStartViewTransition();
-    const { result } = renderNavProbe('/');
-    act(() => result.current.go('/'));
-    expect(startViewTransition).not.toHaveBeenCalled();
-    expect(result.current.path).toBe('/');
-    expect(vt()).toBeNull();
+    const before = result.current.key;
+    // key 是每条历史记录的唯一标识：真发生一次 push（哪怕同址）它必然换新
+    expect(before).toBeTruthy();
+    act(() => result.current.go('/assistant'));
+    expect(result.current.path).toBe('/assistant');
+    expect(result.current.key).toBe(before);
   });
 });
 

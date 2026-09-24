@@ -23,12 +23,9 @@ export const DEFAULT_WALLPAPER_URL = '/wallpaper-default.jpg';
  *  值恒为 url(...)——用户壁纸或 DEFAULT_WALLPAPER_URL，没有「空」态。 */
 export const WALLPAPER_VAR = '--rtk-wallpaper';
 
-/** 壁纸承载层的元素 id：index.html 里的一个真实 DOM 节点（不是伪元素）。
- *  样式由主题层按 `#rtk-wallpaper` 下发，换页时的持名规则在 motion-styles 段 (g)。
- *  必须是真实元素：View Transitions 的捕获循环只遍历「已连接的元素」
- *  （css-view-transitions-1 §7.6），伪元素永远拿不到分组，写在 body::before 上的
- *  view-transition-name 不生效，壁纸就只能焊死在 root 快照里跟着淡出。
- *  id 在 index.html 里是手抄的（那边在模块系统之外），tests/wallpaper.test.tsx 断言两处一致。 */
+/** 壁纸承载层的元素 id：index.html 里的一个真实 DOM 节点，整页不透明地板（纸色 + 壁纸原图）。
+ *  样式由主题层按 `#rtk-wallpaper` 下发，z-index -1 让它落在页面内容与玻璃表面（backdrop-filter）
+ *  之后。id 在 index.html 里是手抄的（那边在模块系统之外），tests/wallpaper.test.tsx 断言两处一致。 */
 export const WALLPAPER_LAYER_ID = 'rtk-wallpaper';
 
 /** Dialog 遮罩与壁纸裁剪框外遮罩共用的颜色（--glass-scrim-opacity 由主题层下发到 :root） */

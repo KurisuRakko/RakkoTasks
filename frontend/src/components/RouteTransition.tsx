@@ -1,19 +1,24 @@
-// 路由转场，按浏览器能力分两条路径：
-// 1) 支持 View Transitions（supportsViewTransitions() 为真）：直接渲染 children——
-//    不套盒子、不加动画、不留 transform。换页的方向转场由 lib/view-transition 的
-//    data-vt 标记与样式层 ::view-transition-* 规则完成，壳层元素（AppBar/底栏/抽屉）
-//    作为共享元素保持静止。这里的入场动画必须让位，因为 fill-mode: both 会让
-//    transform: translateX(0) 长期残留——非 none 的 transform 会成为 fixed 后代的
-//    包含块，任务页右下角悬浮按钮会因此跟着内容滚动。
-// 2) 不支持时退回「外层裁剪盒 + 内层入场动画盒」：方向性滑动（索引变大从右、变小
-//    从左、settings 组统一从右），参数对齐 design token；reduced-motion 时无动画。
-//    回退路径只做入场（离场需视图在换页后仍留在 DOM，要 TransitionGroup 管理）。
+// 路由转场：换页只让内容列播一段入场动画——外层裁剪盒 + 以 pathname 为 key 的内层
+// 动画盒，方向由 routeDirection 判定（导航索引变大从右、变小从左；设置组内按路径深度）。
+// 壁纸层、壳层（AppBar / 底栏 / 桌面抽屉）与悬浮按钮都留在真实 DOM 里不动，换页不影响它们。
+//
+// 换页刻意不走 View Transitions：那条链路要先拍整页旧快照、同步渲染整页新状态、再合成
+// 多张全屏快照，而列表每行一块 backdrop-filter 玻璃、行的入场 stagger 最长 540ms，全都得
+// 每帧重栅格化进快照，这是换页卡顿的主要来源；并且 root 快照带着 CssBaseline 传播到
+// canvas 的纸色背景，z-index -1 的壁纸层即使静止也会被整块盖住，换页期间看不到壁纸。
+// 列表行 / 引用项 ↔ 详情对话框的容器变换（expand / collapse）仍走 View Transitions，
+// 与本组件无关。
+//
+// 入场动画的 fill-mode 必须是 backwards：动画跑完不得残留 transform / opacity，否则残留的
+// translateX(0) 会让这个盒子成为 fixed 后代的包含块与层叠上下文。悬浮按钮已 portal 到
+// body（TasksPage），因此不受影响；以后新增的 fixed 元素要么同样 portal，要么别放进动画盒。
+// 只做入场：离场要求视图在换页后仍留在 DOM 里，得靠 TransitionGroup 才管得起来。
+// 首次挂载（路径未变）与 reduced-motion 下不加动画，裁剪盒照常生效。
 
 import { useRef } from 'react';
 import Box from '@mui/material/Box';
 import { useLocation } from 'react-router-dom';
 import { routeDirection } from '../lib/nav';
-import { supportsViewTransitions } from '../lib/view-transition';
 import { usePrefersReducedMotion } from '../lib/motion';
 import { MOTION, SHARED_AXIS_OFFSET_PX } from '../rakko-tokens';
 import type { ReactNode } from 'react';
@@ -39,11 +44,6 @@ export default function RouteTransition({ children }: { children: ReactNode }) {
   const prevPath = useRef(location.pathname);
   const path = location.pathname;
 
-  // 支持 View Transitions 时彻底让位：不加任何包裹与动画（见文件头注释）
-  if (supportsViewTransitions()) return children;
-
-  // 回退路径（无 View Transitions 的浏览器）：
-  // 方向与 useTransitionNavigate 同一来源（routeDirection）；只做入场动画
   const fromRight = routeDirection(prevPath.current, path) === 'forward';
   const moving = path !== prevPath.current;
   prevPath.current = path;
@@ -51,11 +51,11 @@ export default function RouteTransition({ children }: { children: ReactNode }) {
   const sx = reduced || !moving ? {} : fromRight
     ? {
         ...FROM_RIGHT_KEYFRAMES,
-        animation: `rtk-route-right ${MOTION.enter}ms ${MOTION.easeStandard} both`,
+        animation: `rtk-route-right ${MOTION.enter}ms ${MOTION.easeStandard} backwards`,
       }
     : {
         ...FROM_LEFT_KEYFRAMES,
-        animation: `rtk-route-left ${MOTION.enter}ms ${MOTION.easeStandard} both`,
+        animation: `rtk-route-left ${MOTION.enter}ms ${MOTION.easeStandard} backwards`,
       };
 
   return (

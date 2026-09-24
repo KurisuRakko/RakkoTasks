@@ -20,7 +20,7 @@ import AccountRemoveChoice from '../components/accounts/RemoveAccountChoice';
 import AccountWizard from '../components/accounts/AccountWizard';
 import { fetchAccounts } from '../lib/api';
 import { EMPTY_STATE_BOX_SX, PAGE_SX, PANEL_SX } from '../lib/layout';
-import { useTransitionNavigate } from '../lib/motion';
+import { useNavigateTo } from '../lib/nav';
 import type { AccountInfo } from '../types';
 
 type LoadState =
@@ -99,7 +99,7 @@ function ErrorPage() {
 
 /** 添加向导页：完成或取消都回设置列表（账户已建后回列表刷新即可看到） */
 export function AccountNewPage() {
-  const go = useTransitionNavigate();
+  const go = useNavigateTo();
   const desktop = useDesktopOnlyRedirect();
   if (desktop) return <Navigate to="/settings" replace />;
   return (
@@ -115,7 +115,7 @@ export function AccountNewPage() {
 /** 账户详情页 */
 export function AccountDetailPage() {
   const { id } = useParams();
-  const go = useTransitionNavigate();
+  const go = useNavigateTo();
   const desktop = useDesktopOnlyRedirect();
   const accountId = Number(id);
   const [load, setAccount] = useAccountLoader(accountId);
@@ -139,7 +139,7 @@ export function AccountDetailPage() {
 /** 移除二选一页：停用/彻底删除后回设置列表，取消回详情 */
 export function AccountRemovePage() {
   const { id } = useParams();
-  const go = useTransitionNavigate();
+  const go = useNavigateTo();
   const desktop = useDesktopOnlyRedirect();
   const accountId = Number(id);
   const [load] = useAccountLoader(accountId);

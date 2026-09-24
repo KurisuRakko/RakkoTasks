@@ -22,11 +22,8 @@ import useMediaQuery from "@mui/material/useMediaQuery";
 import { useTheme } from "@mui/material/styles";
 import { fetchStatus } from "../../lib/api";
 import { mainAreaDialogSx, EMPTY_STATE_BOX_SX } from "../../lib/layout";
-import {
-  enterSx,
-  usePrefersReducedMotion,
-  useTransitionNavigate,
-} from "../../lib/motion";
+import { enterSx, usePrefersReducedMotion } from "../../lib/motion";
+import { useNavigateTo } from "../../lib/nav";
 import { cardRowSx } from "../../lib/surface";
 import { timeAgo } from "../../lib/time";
 import { MOTION } from "../../rakko-tokens";
@@ -58,7 +55,7 @@ function dialogTitle(dialog: AccountDialog | null): string {
 export default function AccountsSection() {
   const theme = useTheme();
   const desktop = useMediaQuery(theme.breakpoints.up("md"));
-  const go = useTransitionNavigate();
+  const go = useNavigateTo();
   const reduced = usePrefersReducedMotion();
   const [data, setData] = useState<StatusResponse | null>(null);
   const [loading, setLoading] = useState(true);

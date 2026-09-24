@@ -6,8 +6,7 @@
 // 条目左侧今日点表示源邮件是今天发的，按日期自动过期，与查看/勾选状态无关。
 // 列表行与详情 Dialog 共用 VT_NAMES.sheet 做容器变换（点哪行哪行长成对话框）；
 // 右下角悬浮按钮经 portal 挂到 body——路由转场内层动画盒的 transform 会成为
-// fixed 后代的包含块，换页后按钮会跟着内容漂移。按钮只打 data-vt-shell 标记，
-// 与编辑器共用名字的持名时机由样式层按转场种类决定（见 FAB 处注释）。
+// fixed 后代的包含块，换页后按钮会跟着内容漂移。
 // 「+」打开的是 AI 快速添加对话框（AiAddDialog）：非速记模式先让 AI 把一句话解析
 // 成字段、预览可改后再保存；速记模式点「确定」立刻关窗（打完就走，不让用户等
 // LLM），落库请求（POST /api/items/quick）在后台跑完再弹结果提示。速记请求故意
@@ -41,12 +40,11 @@ import {
   rowSx,
   useMorphDialog,
   usePrefersReducedMotion,
-  useTransitionNavigate,
 } from '../lib/motion';
 import { useLongPress } from '../lib/long-press';
+import { useNavigateTo } from '../lib/nav';
 import { cardRowSx, hitSlopSx } from '../lib/surface';
 import { todayIso } from '../lib/time';
-import { shellAttr, VT_NAMES } from '../lib/view-transition';
 import { GLASS, MOTION, TYPE_SCALE } from '../rakko-tokens';
 import type { Category, Item, ItemFields } from '../types';
 import AiAddDialog from '../components/AiAddDialog';
@@ -413,7 +411,7 @@ export default function TasksPage() {
   // 只在这一轮列表确实为空时请求一次，不做每次刷新的常驻轮询；失败按「有账户」兜底。
   const [accountsExist, setAccountsExist] = useState<boolean | null>(null);
   const reduced = usePrefersReducedMotion();
-  const go = useTransitionNavigate();
+  const go = useNavigateTo();
   // 详情容器变换：current 非空即详情对话框打开（来源行与 paper 共享 VT_NAMES.sheet）
   const { current, open, close, sourceName } = useMorphDialog<Item>((item) => item.id);
   const timers = useRef<number[]>([]);
@@ -648,8 +646,6 @@ export default function TasksPage() {
         右下角 + ：新建待办。移动端浮在 64px 底栏（zIndex 1100）之上，计入安全区。
         portal 到 body：路由转场内层动画盒带 transform，会让 fixed 后代的定位退化成
         相对该盒（换页后按钮跟着内容滚）；挂到 body 下才保持视口角落定位。
-        持名只为换页服务（样式层按 data-vt-shell 在 route-* 下发名字，让它静止不动）；
-        打开详情（expand / collapse）时不持名，按钮留在 root 快照里跟遮罩一起压暗。
 
         与速记面板的编排：按下时按钮下沉让位（state 160ms），面板同时从底部升起
         （large 300ms）；关闭时面板先落下（largeExit 250ms），按钮延后 fadeOut 90ms
@@ -659,7 +655,6 @@ export default function TasksPage() {
         <Fab
           color="primary"
           aria-label="新建待办"
-          {...shellAttr(VT_NAMES.fab)}
           onClick={() => setAddOpen(true)}
           sx={{
             position: 'fixed',
