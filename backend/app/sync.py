@@ -182,9 +182,9 @@ def _process_pending(
                 # 先提交再删，且提交成功后只看 email.filtered：队列里只有
                 # pending / error 两种状态，这两种在库里的 filtered 必定是 False
                 # （error 分支从不置 True，reclassify 会重置为 False），所以此时
-                # filtered 仍为 True 当且仅当本轮判为广告并且真的落库；commit 失败
+                # filtered 仍为 True 当且仅当本轮被过滤并且真的落库；commit 失败
                 # 会 rollback 并把该封改标 error，filtered 回到 False，文件必须留着。
-                # LLM 抛异常、判非广告的分支不走到这里，文件一律保留。
+                # LLM 抛异常、未被过滤（建了待办）的分支不走到这里，文件一律保留。
                 archive.discard(
                     email.account.email, email.message_id, email.subject, email.sent_at
                 )
