@@ -38,7 +38,7 @@ import {
 import { copyText } from '../lib/clipboard';
 import { API_BASE_URL, PHAINON_API_BASE } from '../lib/env';
 import { PAGE_SX, PANEL_SX } from '../lib/layout';
-import { useTransitionNavigate } from '../lib/motion';
+import { useNavigateTo } from '../lib/nav';
 import { logout, startLogin } from '../lib/phainon';
 import { checkForUpdate } from '../lib/pwa-update';
 import { useSession } from '../lib/session';
@@ -66,7 +66,7 @@ export default function SettingsPage() {
   const [davGenerating, setDavGenerating] = useState(false);
   const { mode, setMode } = useThemeMode();
   const me = useSession();
-  const go = useTransitionNavigate();
+  const go = useNavigateTo();
   // 同步状态（顶栏刷新按钮与状态页共用同一份轮询结果）：这里只读上一轮的摘要
   const { status } = useSyncStatus();
   // 壁纸：订阅模块级状态（同 useThemeMode 之外的 list-cache 模式），无壁纸为 null

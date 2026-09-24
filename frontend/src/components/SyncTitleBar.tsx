@@ -18,7 +18,8 @@ import Typography from '@mui/material/Typography';
 import CheckIcon from '@mui/icons-material/Check';
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
 import RefreshIcon from '@mui/icons-material/Refresh';
-import { usePrefersReducedMotion, useTransitionNavigate } from '../lib/motion';
+import { usePrefersReducedMotion } from '../lib/motion';
+import { useNavigateTo } from '../lib/nav';
 import { useSyncStatus } from '../lib/sync-status';
 import { MOTION } from '../rakko-tokens';
 import type { SyncCompletion } from '../lib/sync-status';
@@ -51,7 +52,7 @@ interface ButtonFace {
 
 export default function SyncTitleBar() {
   const { status, completion, trigger, dismissCompletion } = useSyncStatus();
-  const go = useTransitionNavigate();
+  const go = useNavigateTo();
   const reduced = usePrefersReducedMotion();
   const phase = phaseOf(status, completion);
   const takeover = phase === 'manual' || phase === 'done' || phase === 'failed';
