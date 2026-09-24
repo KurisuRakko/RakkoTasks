@@ -5,8 +5,9 @@
 //   用户（与 theme-mode 的静默降级相反）；
 // - useWallpaper 在 setWallpaper 之后重渲染拿到新值（模块级订阅模式）；
 // - index.html 首帧内联脚本在模块系统之外只能手抄存储键与变量名，断言它与 lib 常量一致；
-// - compressWallpaper：jsdom 跑不了真 canvas，只测错误路径 reject（stub createImageBitmap），
-//   不给生产代码加测试专用分支。
+// - loadWallpaperSource / renderWallpaper：jsdom 既没有 HTMLImageElement.prototype.decode，
+//   也没有 2d 画布实现，解码与绘制全靠 stub 驱动（stub object URL + mock decode + 假
+//   canvas 上下文），不给生产代码加测试专用分支。
 // index.html 用 ?raw 读文本：tests 无 node 类型（同 motion-styles.test.ts 的做法），
 // node:fs 在此环境 typecheck 过不了。
 
@@ -14,8 +15,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, renderHook } from '@testing-library/react';
 import { WALLPAPER_ATTR, WALLPAPER_LAYER_ID, WALLPAPER_VAR } from '../src/lib/glass';
 import {
-  compressWallpaper,
+  loadWallpaperSource,
   readWallpaper,
+  renderWallpaper,
   setWallpaper,
   useWallpaper,
   WALLPAPER_STORAGE_KEY,
@@ -112,13 +114,80 @@ describe('index.html 首帧脚本与 lib 常量一致', () => {
   });
 });
 
-describe('compressWallpaper 错误路径', () => {
-  it('createImageBitmap 失败时 reject（jsdom 跑不了真解码与画布输出）', async () => {
-    const decode = vi.fn().mockRejectedValue(new Error('decode failed'));
-    vi.stubGlobal('createImageBitmap', decode);
-    const file = new File(['x'], 'photo.jpg', { type: 'image/jpeg' });
-    await expect(compressWallpaper(file)).rejects.toThrow('decode failed');
-    expect(decode).toHaveBeenCalledWith(file);
+describe('loadWallpaperSource', () => {
+  const FILE = new File(['x'], 'photo.jpg', { type: 'image/jpeg' });
+  const OBJECT_URL = 'blob:wallpaper-source';
+
+  /** jsdom 没实现 HTMLImageElement.prototype.decode，没有可 spy 的原方法，只能补一个；
+   *  本组 afterEach 把它删掉，不留痕。 */
+  function stubDecode(impl: () => Promise<void>) {
+    Object.defineProperty(HTMLImageElement.prototype, 'decode', {
+      configurable: true,
+      writable: true,
+      value: vi.fn(impl),
+    });
+  }
+
+  afterEach(() => {
+    Reflect.deleteProperty(HTMLImageElement.prototype, 'decode');
+  });
+
+  it('解码失败：reject 原错误，并 revoke 同一个 object URL（不吞错、不泄漏 URL）', async () => {
+    stubDecode(() => Promise.reject(new Error('decode failed')));
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue(OBJECT_URL);
+    const revoke = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+
+    await expect(loadWallpaperSource(FILE)).rejects.toThrow('decode failed');
+    expect(revoke).toHaveBeenCalledWith(OBJECT_URL);
+  });
+
+  it('解码成功：返回 object URL 与 src 指向它的 image，且不 revoke', async () => {
+    stubDecode(() => Promise.resolve());
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue(OBJECT_URL);
+    const revoke = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+
+    const source = await loadWallpaperSource(FILE);
+    expect(source.url).toBe(OBJECT_URL);
+    expect(source.image.src).toBe(OBJECT_URL);
+    expect(revoke).not.toHaveBeenCalled();
+  });
+});
+
+describe('renderWallpaper', () => {
+  /** 假的 2d 上下文：只记录 drawImage 的实参（jsdom 的 getContext('2d') 恒为 null） */
+  function stubCanvas(): ReturnType<typeof vi.fn> {
+    const drawImage = vi.fn();
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+      drawImage,
+    } as unknown as CanvasRenderingContext2D);
+    vi.spyOn(HTMLCanvasElement.prototype, 'toDataURL').mockReturnValue(FAKE);
+    return drawImage;
+  }
+
+  it('裁剪区域 3000×1500：等比缩到最长边 1920，drawImage 的目标矩形是 0,0,1920,960', () => {
+    const drawImage = stubCanvas();
+    const image = document.createElement('img');
+
+    expect(renderWallpaper(image, { x: 0, y: 0, width: 3000, height: 1500 })).toBe(FAKE);
+    expect(drawImage.mock.calls[0].slice(-4)).toEqual([0, 0, 1920, 960]);
+  });
+
+  it('裁剪区域 800×600：只缩不放，目标矩形保持 0,0,800,600；源矩形按 area 原样传', () => {
+    const drawImage = stubCanvas();
+    const image = document.createElement('img');
+
+    expect(renderWallpaper(image, { x: 40, y: 25, width: 800, height: 600 })).toBe(FAKE);
+    expect(drawImage.mock.calls[0].slice(0, 5)).toEqual([image, 40, 25, 800, 600]);
+    expect(drawImage.mock.calls[0].slice(-4)).toEqual([0, 0, 800, 600]);
+  });
+
+  it('getContext 返回 null 时抛错，不做无声输出', () => {
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
+    const image = document.createElement('img');
+
+    expect(() => renderWallpaper(image, { x: 0, y: 0, width: 800, height: 600 })).toThrow(
+      'canvas 2d 上下文不可用',
+    );
   });
 });
 

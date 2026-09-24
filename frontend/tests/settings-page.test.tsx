@@ -5,25 +5,65 @@
 // AccountsSection 内部会调用带方向导航的 hook，渲染需要 Router 上下文。
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import SettingsPage from '../src/pages/SettingsPage';
 import { ThemeModeProvider } from '../src/lib/theme-mode';
 import { readWallpaper, setWallpaper } from '../src/lib/wallpaper';
+import type { WallpaperArea } from '../src/lib/wallpaper';
+import { MOTION } from '../src/rakko-tokens';
 import type { StatusResponse } from '../src/types';
 import settingsPageSource from '../src/pages/SettingsPage.tsx?raw';
 
 // SettingsPage 依赖 pwa-update（其注册逻辑只在浏览器生效），这里替换 checkForUpdate
 const { checkForUpdateMock } = vi.hoisted(() => ({ checkForUpdateMock: vi.fn() }));
+const { loadWallpaperSourceMock, renderWallpaperMock } = vi.hoisted(() => ({
+  loadWallpaperSourceMock: vi.fn(),
+  renderWallpaperMock: vi.fn(),
+}));
 
 vi.mock('../src/lib/pwa-update', () => ({ checkForUpdate: checkForUpdateMock }));
 
-// 壁纸用例要驱动「选图→压缩→写入」整条链路；jsdom 跑不了真 canvas，mock 掉
-// compressWallpaper 的模块导出（其余导出保持原样——写入/订阅仍走真实现，
+// 壁纸用例要驱动「选图→裁剪→写入」整条链路；jsdom 既不能真解码图片、也没有 2d 画布，
+// mock 掉解码与渲染两个模块导出（其余导出保持原样——写入/订阅仍走真实现，
 // setWallpaper 的配额异常与提示分流是真实验证对象）
 vi.mock('../src/lib/wallpaper', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/lib/wallpaper')>();
-  return { ...actual, compressWallpaper: vi.fn(async () => 'data:image/jpeg;base64,OKOK') };
+  return {
+    ...actual,
+    loadWallpaperSource: loadWallpaperSourceMock,
+    renderWallpaper: renderWallpaperMock,
+  };
+});
+
+// react-easy-crop 在 jsdom 里量不出容器尺寸、也不会自己上报裁剪像素。替身把受控的
+// image / aspect / zoom 摊到 data-* 上供断言，并在挂载后上报一次裁剪像素。
+vi.mock('react-easy-crop', async () => {
+  const { useEffect } = await import('react');
+  return {
+    default: function FakeCropper(props: {
+      image?: string;
+      aspect?: number;
+      zoom?: number;
+      onCropComplete?: (croppedArea: WallpaperArea, pixels: WallpaperArea) => void;
+    }) {
+      // 只要求「挂载后调一次」：真组件是图加载完才上报，这里的 deps 数组保持空
+      useEffect(() => {
+        props.onCropComplete?.(
+          { x: 0, y: 0, width: 100, height: 100 },
+          { x: 10, y: 20, width: 300, height: 600 },
+        );
+      }, []);
+      return (
+        <div
+          data-testid="cropper"
+          data-image={props.image}
+          data-aspect={String(props.aspect)}
+          data-zoom={String(props.zoom)}
+        />
+      );
+    },
+  };
 });
 
 const STATUS: StatusResponse = {
@@ -267,6 +307,9 @@ describe('SettingsPage 玻璃分区与按钮配色', () => {
 
 describe('SettingsPage 壁纸', () => {
   const DAV = { username: 'a@x.com', path: '/caldav/', configured: false };
+  const OBJECT_URL = 'blob:wallpaper-source';
+  /** 替身 renderWallpaper 的返回值：形状要是合法 data URL，readWallpaper 才认 */
+  const RENDERED = 'data:image/jpeg;base64,UkVOREVSRUQ=';
 
   function makeFetchMock(): ReturnType<typeof vi.fn> {
     return vi.fn(async (url: string | URL) => {
@@ -279,6 +322,11 @@ describe('SettingsPage 壁纸', () => {
 
   beforeEach(() => {
     setWallpaper(null);
+    loadWallpaperSourceMock.mockReset().mockResolvedValue({
+      url: OBJECT_URL,
+      image: document.createElement('img'),
+    });
+    renderWallpaperMock.mockReset().mockReturnValue(RENDERED);
   });
 
   afterEach(() => {
@@ -306,7 +354,14 @@ describe('SettingsPage 壁纸', () => {
     });
   }
 
-  it('未设壁纸：渲染「选择图片」，不出现「移除壁纸」与预览', async () => {
+  /** 选图并等裁剪就绪：替身上报裁剪像素之前「设为壁纸」是禁用的，点了也不会生效 */
+  async function openCropDialog() {
+    pickImage();
+    await screen.findByText('裁剪壁纸');
+    await waitFor(() => expect(screen.getByRole('button', { name: '设为壁纸' })).toBeEnabled());
+  }
+
+  it('未设壁纸：只有「选择图片」，没有「移除壁纸」也没有「壁纸预览」', async () => {
     renderSettings();
 
     expect(await screen.findByRole('button', { name: '选择图片' })).toBeTruthy();
@@ -314,12 +369,12 @@ describe('SettingsPage 壁纸', () => {
     expect(screen.queryByLabelText('壁纸预览')).toBeNull();
   });
 
-  it('已设壁纸：出现「移除壁纸」与预览；点击移除后 readWallpaper() 返回 null、UI 同步消失', async () => {
+  it('已设壁纸：出现「移除壁纸」但没有「壁纸预览」；点击移除后 readWallpaper() 返回 null、按钮同步消失', async () => {
     setWallpaper('data:image/jpeg;base64,AAAA');
     renderSettings();
 
     expect(await screen.findByRole('button', { name: '移除壁纸' })).toBeTruthy();
-    expect(screen.getByLabelText('壁纸预览')).toBeTruthy();
+    expect(screen.queryByLabelText('壁纸预览')).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: '移除壁纸' }));
     expect(readWallpaper()).toBeNull();
@@ -327,11 +382,125 @@ describe('SettingsPage 壁纸', () => {
     expect(screen.queryByLabelText('壁纸预览')).toBeNull();
   });
 
-  it('预览圆角必须是 px 字面量（sx 数字会被当作 shape.borderRadius 的乘数：6×6=36px）', () => {
-    // jsdom 拿不到 emotion 生成样式的计算值，退一步做源码断言：
-    // 不允许 theme.shape.borderRadius 写法，必须是 RADIUS.base 的 px 字符串
+  it('壁纸预览块已从页面源码里删除（不是靠样式藏起来）', () => {
+    // jsdom 拿不到 emotion 生成样式的计算值，退一步做源码断言
+    expect(settingsPageSource).not.toContain('壁纸预览');
     expect(settingsPageSource).not.toContain('theme.shape.borderRadius');
-    expect(settingsPageSource).toContain('${RADIUS.base}px');
+  });
+
+  it('选图后进裁剪：替身拿到 object URL 与视口比例（390×844 视口下即 390/844）', async () => {
+    const originalWidth = window.innerWidth;
+    const originalHeight = window.innerHeight;
+    window.innerWidth = 390;
+    window.innerHeight = 844;
+    try {
+      renderSettings();
+      await screen.findByRole('button', { name: '选择图片' });
+
+      await openCropDialog();
+
+      const cropper = screen.getByTestId('cropper');
+      expect(cropper.getAttribute('data-image')).toBe(OBJECT_URL);
+      expect(cropper.getAttribute('data-aspect')).toBe(String(390 / 844));
+    } finally {
+      window.innerWidth = originalWidth;
+      window.innerHeight = originalHeight;
+    }
+  });
+
+  it('点「设为壁纸」：以替身上报的裁剪像素渲染，并把渲染结果写进 localStorage', async () => {
+    renderSettings();
+    await screen.findByRole('button', { name: '选择图片' });
+    await openCropDialog();
+
+    fireEvent.click(screen.getByRole('button', { name: '设为壁纸' }));
+
+    expect(renderWallpaperMock).toHaveBeenCalledWith(expect.any(HTMLImageElement), {
+      x: 10,
+      y: 20,
+      width: 300,
+      height: 600,
+    });
+    expect(readWallpaper()).toBe(RENDERED);
+  });
+
+  it('点「取消」：不渲染也不写入（readWallpaper 仍为 null）', async () => {
+    renderSettings();
+    await screen.findByRole('button', { name: '选择图片' });
+    await openCropDialog();
+
+    fireEvent.click(screen.getByRole('button', { name: '取消' }));
+
+    expect(renderWallpaperMock).not.toHaveBeenCalled();
+    expect(readWallpaper()).toBeNull();
+  });
+
+  it('退场期间不撤 object URL：对话框仍在 DOM、revoke 未被调用；退场跑完才 revoke 一次', async () => {
+    const revoke = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+    vi.useFakeTimers();
+    try {
+      renderSettings();
+      // 假定时器下不用 findBy*（waitFor 会被计时器接管），渲染与微任务各推进一次即可
+      screen.getByRole('button', { name: '选择图片' });
+      pickImage();
+      await act(async () => {});
+      expect(screen.getByText('裁剪壁纸')).toBeTruthy();
+
+      fireEvent.click(screen.getByRole('button', { name: '设为壁纸' }));
+      // 写入是同步的，退场还在跑
+      expect(readWallpaper()).toBe(RENDERED);
+
+      await act(async () => {
+        vi.advanceTimersByTime(Math.floor(MOTION.largeExit / 2));
+      });
+      expect(screen.queryByText('裁剪壁纸')).not.toBeNull();
+      expect(revoke).not.toHaveBeenCalled();
+
+      await act(async () => {
+        vi.advanceTimersByTime(MOTION.largeExit + 50);
+      });
+      expect(screen.queryByText('裁剪壁纸')).toBeNull();
+      expect(revoke).toHaveBeenCalledTimes(1);
+      expect(revoke).toHaveBeenCalledWith(OBJECT_URL);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('拖动缩放条：替身收到的 zoom 跟着变', async () => {
+    renderSettings();
+    await screen.findByRole('button', { name: '选择图片' });
+    await openCropDialog();
+
+    // MUI Slider 的取值口是它内部那个 range input
+    fireEvent.change(screen.getByLabelText('缩放'), { target: { value: '2' } });
+
+    expect(screen.getByTestId('cropper').getAttribute('data-zoom')).toBe('2');
+  });
+
+  it('图片解码失败：提示「图片处理失败」，不进裁剪', async () => {
+    loadWallpaperSourceMock.mockRejectedValue(new Error('decode failed'));
+    renderSettings();
+    await screen.findByRole('button', { name: '选择图片' });
+
+    pickImage();
+
+    expect(await screen.findByText('图片处理失败')).toBeTruthy();
+    expect(screen.queryByText('裁剪壁纸')).toBeNull();
+  });
+
+  it('渲染裁剪区域失败：提示「图片处理失败」，不写入壁纸', async () => {
+    renderWallpaperMock.mockImplementation(() => {
+      throw new Error('canvas 2d 上下文不可用');
+    });
+    renderSettings();
+    await screen.findByRole('button', { name: '选择图片' });
+    await openCropDialog();
+
+    fireEvent.click(screen.getByRole('button', { name: '设为壁纸' }));
+
+    expect(await screen.findByText('图片处理失败')).toBeTruthy();
+    expect(readWallpaper()).toBeNull();
   });
 
   it('写入抛 QuotaExceededError（超配额）：提示「图片太大，换一张小一点的」', async () => {
@@ -340,8 +509,10 @@ describe('SettingsPage 壁纸', () => {
     });
     renderSettings();
     await screen.findByRole('button', { name: '选择图片' });
+    await openCropDialog();
 
-    pickImage();
+    fireEvent.click(screen.getByRole('button', { name: '设为壁纸' }));
+
     expect(await screen.findByText('图片太大，换一张小一点的')).toBeTruthy();
   });
 
@@ -351,8 +522,10 @@ describe('SettingsPage 壁纸', () => {
     });
     renderSettings();
     await screen.findByRole('button', { name: '选择图片' });
+    await openCropDialog();
 
-    pickImage();
+    fireEvent.click(screen.getByRole('button', { name: '设为壁纸' }));
+
     expect(await screen.findByText('无法保存壁纸，浏览器存储不可用')).toBeTruthy();
     expect(screen.queryByText(/图片太大/)).toBeNull();
   });

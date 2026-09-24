@@ -1,5 +1,6 @@
 // 玻璃接线层：材质配方来自 rakko-glass.css（design-system/src/glass.css 的逐字镜像），
-// 本文件只剩壁纸接线——图源变量名（WALLPAPER_VAR）与壁纸布尔属性标记（WALLPAPER_ATTR）。
+// 本文件只剩壁纸接线——图源变量名（WALLPAPER_VAR）、壁纸布尔属性标记（WALLPAPER_ATTR）
+// 与遮罩色（SCRIM_COLOR）。
 // 驯化层纸色叠加已随产品决定移除：壁纸显示用户原图，不再垫纸色。
 //
 // 现存的玻璃表面：三块 chrome（顶栏 / 桌面侧边栏 / 移动端底栏）加每个可见列表行一块
@@ -32,3 +33,6 @@ export const WALLPAPER_ATTR = 'data-wallpaper';
  *  view-transition-name 不生效，壁纸就只能焊死在 root 快照里跟着淡出。
  *  id 在 index.html 里是手抄的（那边在模块系统之外），tests/wallpaper.test.tsx 断言两处一致。 */
 export const WALLPAPER_LAYER_ID = 'rtk-wallpaper';
+
+/** Dialog 遮罩与壁纸裁剪框外遮罩共用的颜色（--glass-scrim-opacity 由主题层下发到 :root） */
+export const SCRIM_COLOR = 'rgb(0 0 0 / var(--glass-scrim-opacity))';

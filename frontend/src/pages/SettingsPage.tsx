@@ -24,6 +24,7 @@ import ToggleButton from '@mui/material/ToggleButton';
 import ToggleButtonGroup from '@mui/material/ToggleButtonGroup';
 import Typography from '@mui/material/Typography';
 import AccountsSection from '../components/accounts/AccountsSection';
+import WallpaperCropDialog from '../components/WallpaperCropDialog';
 import {
   caldavTarget,
   calendarUrls,
@@ -40,8 +41,8 @@ import { checkForUpdate } from '../lib/pwa-update';
 import { useSession } from '../lib/session';
 import { hitSlopSx, ROW_GAP_PX } from '../lib/surface';
 import { useThemeMode } from '../lib/theme-mode';
-import { compressWallpaper, setWallpaper, useWallpaper } from '../lib/wallpaper';
-import { RADIUS } from '../rakko-tokens';
+import { loadWallpaperSource, renderWallpaper, setWallpaper, useWallpaper } from '../lib/wallpaper';
+import type { WallpaperArea, WallpaperSource } from '../lib/wallpaper';
 import type { CaldavInfo } from '../types';
 
 export default function SettingsPage() {
@@ -63,17 +64,44 @@ export default function SettingsPage() {
   const me = useSession();
   // 壁纸：订阅模块级状态（同 useThemeMode 之外的 list-cache 模式），无壁纸为 null
   const wallpaper = useWallpaper();
+  // 裁剪中的来源与比例。与 cropOpen 分开：退场期间还要靠 source 把上一张图显示完
+  const [crop, setCrop] = useState<{ source: WallpaperSource; aspect: number } | null>(null);
+  const [cropOpen, setCropOpen] = useState(false);
   // 「选择图片」按钮触发的是隐藏的 file input
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  /** 选中图片：先压缩再持久化。压缩失败与写入失败分开提示；写入失败再按错误类型
-   *  分流——超配额才是「图太大」，隐私模式等存储不可用的场景提示换小图是误导。 */
-  const handleWallpaperFile = async (file: File) => {
-    let dataUrl: string;
+  /** 选中图片 → 解码拿来源 → 按当前视口比例进裁剪。比例取视口是因为壁纸承载层是
+   *  position: fixed; inset: 0 + cover——用户取的就是最终看到的景，所见即所得。 */
+  const openCrop = async (file: File) => {
+    let source: WallpaperSource;
     try {
-      dataUrl = await compressWallpaper(file);
+      source = await loadWallpaperSource(file);
     } catch {
       setSnack('图片处理失败');
+      return;
+    }
+    setCrop({ source, aspect: window.innerWidth / window.innerHeight });
+    setCropOpen(true);
+  };
+
+  /** 关窗：清空来源与 revoke 都在退场跑完（界面层的 onExited）之后做，退场那段时间图
+   *  还得在。cropOpen 兜一层——退场途中重复点按钮不再重复触发。 */
+  const closeCrop = () => {
+    if (!cropOpen) return;
+    setCropOpen(false);
+  };
+
+  /** 确认裁剪：先渲染裁剪区域，再持久化。渲染失败与写入失败分开提示；写入失败再按错误
+   *  类型分流——超配额才是「图太大」，隐私模式等存储不可用的场景提示换小图是误导。
+   *  无论成败都关窗，失败提示交给 Snackbar。 */
+  const handleCropConfirm = (area: WallpaperArea) => {
+    if (crop === null) return;
+    let dataUrl: string;
+    try {
+      dataUrl = renderWallpaper(crop.source.image, area);
+    } catch {
+      setSnack('图片处理失败');
+      closeCrop();
       return;
     }
     try {
@@ -85,6 +113,13 @@ export default function SettingsPage() {
         (error.name === 'QuotaExceededError' || error.name === 'NS_ERROR_DOM_QUOTA_REACHED');
       setSnack(quota ? '图片太大，换一张小一点的' : '无法保存壁纸，浏览器存储不可用');
     }
+    closeCrop();
+  };
+
+  /** 退场结束才释放 object URL：裁剪面板与退场动画都得靠它 */
+  const handleCropExited = () => {
+    if (crop !== null) URL.revokeObjectURL(crop.source.url);
+    setCrop(null);
   };
 
   // 挂载时取日历订阅令牌（服务端尚无则生成后返回）
@@ -254,21 +289,6 @@ export default function SettingsPage() {
             </Button>
           )}
         </Stack>
-        {wallpaper && (
-          <Box
-            role="img"
-            aria-label="壁纸预览"
-            sx={{
-              height: 96,
-              // 圆角必须是 px 字符串：MUI 会把 sx 里的数字 borderRadius 当作圆角
-              // token（RADIUS.base = 6）的乘数，6 × 6 = 36px，不是 CSS 直通
-              borderRadius: `${RADIUS.base}px`,
-              backgroundImage: `url("${wallpaper}")`,
-              backgroundSize: 'cover',
-              backgroundPosition: 'center',
-            }}
-          />
-        )}
         {/* 隐藏的 file input：「选择图片」按钮触发它的 click；值每次清空，
             同一文件才能再次触发 change */}
         <input
@@ -278,7 +298,7 @@ export default function SettingsPage() {
           hidden
           onChange={(e) => {
             const file = e.target.files?.[0];
-            if (file) void handleWallpaperFile(file);
+            if (file) void openCrop(file);
             e.target.value = '';
           }}
         />
@@ -485,6 +505,15 @@ export default function SettingsPage() {
           </Button>
         </DialogActions>
       </Dialog>
+      {/* 壁纸裁剪：常驻挂载，入退场由它自己按 open 跑；来源在 onExited 里才释放 */}
+      <WallpaperCropDialog
+        open={cropOpen}
+        source={crop?.source ?? null}
+        aspect={crop?.aspect ?? 1}
+        onCancel={closeCrop}
+        onConfirm={handleCropConfirm}
+        onExited={handleCropExited}
+      />
       <Snackbar
         open={snack !== null}
         autoHideDuration={3000}
