@@ -74,6 +74,9 @@ docs/       本文档等
 - 首次回补 `INITIAL_BACKFILL_DAYS` 天（代码默认 7，2026-09-06 起；部署方在 `.env` 里
   可覆盖，生产实测为 30）。**前端任何文案都不许复述这个数字**——复述就是替后端撒谎。
 - 去重键 `(account_id, message_id)`；无 Message-ID 的邮件用内容哈希替代。
+- **系统对用户邮箱只读：所有文件夹用 `EXAMINE` 打开、所有正文用 `BODY.PEEK[]` 拉取，
+  永不改已读状态、永不移动/删除/追加邮件。** 收件箱同步与原件归档都受这条约束，
+  不是只有回补才这样；`ImapClient` 只发只读命令，靠守卫测试守住。
 - 解析：标准库 `email`，取 subject/from/to/date、text/plain 与 text/html 正文；附件只记文件名列表，
   附件内容不进数据库——开启原件归档时由 worker 另把含附件原始字节的邮件本体写进 mbox（见 3.1）。
 
@@ -103,7 +106,8 @@ docs/       本文档等
 - 权限：根目录 `0700`、mbox 与 `.idx` 文件 `0600`（容器内 uid 1000 写）。
 - 回补历史：`docker compose exec worker python -m app.cli archive-backfill [--days N] [--account ID]`。
   - 默认 N = `INITIAL_BACKFILL_DAYS`。
-  - 收件箱、发件箱都用只读的 `BODY.PEEK[]` 拉取，不改已读状态，不碰数据库，也不动同步游标。
+  - 收件箱、发件箱都只碰不改：只读打开、只读拉取，不改已读状态，不碰数据库，也不动同步游标
+    （这是 3 节那条只读不变量在回补上的具体体现，与常规同步一致）。
   - 可以重复执行，已归档的只计 duplicates。
   - 邮件已经从邮箱服务器上删掉的，补不回来。
 - 查看方式：

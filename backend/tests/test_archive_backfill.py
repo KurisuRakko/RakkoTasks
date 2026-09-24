@@ -33,7 +33,6 @@ class FakeImap:
         self.uidvalidity = uidvalidity
         self.selected: str | None = None
         self.searches: list[str] = []
-        self.peeked: list[int] = []
 
     def find_sent_folder(self) -> str | None:
         return self.sent_folder
@@ -46,8 +45,7 @@ class FakeImap:
         self.searches.append(criteria)
         return list(self.sent if self.selected == self.sent_folder else self.inbox)
 
-    def fetch_uid_peek(self, uid: int) -> bytes:
-        self.peeked.append(uid)
+    def fetch_uid(self, uid: int) -> bytes:
         return (self.sent if self.selected == self.sent_folder else self.inbox)[uid]
 
 

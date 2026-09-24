@@ -99,8 +99,83 @@ def test_select_folder_readonly_escapes_quotes_and_backslashes() -> None:
     assert ("select", '"a\\"b\\\\c"', True) in conn.calls
 
 
-def test_fetch_uid_peek_uses_body_peek() -> None:
-    """归档拉取必须走 BODY.PEEK[]：不设置 \\Seen，不改用户邮箱的已读状态。"""
+def test_select_inbox_is_readonly() -> None:
+    """收件箱也用 EXAMINE 打开（readonly=True），UIDVALIDITY 从 STATUS 解析。"""
+    conn = FakeConn(uidvalidity=13)
+    assert ImapClient(conn).select_inbox() == 13
+    assert ("select", "INBOX", True) in conn.calls
+    assert ("status", "INBOX", "(UIDVALIDITY)") in conn.calls
+
+
+def test_fetch_uid_uses_body_peek() -> None:
+    """唯一的拉取方法走 BODY.PEEK[]：不设置 \\Seen，不改用户邮箱的已读状态。"""
     conn = FakeConn()
-    assert ImapClient(conn).fetch_uid_peek(11) == b"raw-bytes"
+    assert ImapClient(conn).fetch_uid(11) == b"raw-bytes"
     assert ("uid", "FETCH", "11", "(BODY.PEEK[])") in conn.calls
+
+
+class StrictReadOnlyConn:
+    """只放行只读命令的假连接：任何写操作（含未显式定义的）都直接 raise。
+
+    显式定义的方法自己校验参数：select 必须 readonly=True（EXAMINE），uid 只
+    允许 SEARCH 与带 BODY.PEEK[ 的 FETCH。__getattr__ 兜住 store/copy/append/
+    expunge/create/delete/rename/subscribe 等一切未定义方法名。
+    """
+
+    def __init__(self, uidvalidity: int = 7, sent_folder: str = "Sent") -> None:
+        self.uidvalidity = uidvalidity
+        self.sent_folder = sent_folder
+        self.calls: list[tuple] = []
+
+    def list(self):
+        self.calls.append(("list",))
+        return "OK", [b'(\\HasNoChildren) "/" "INBOX"', f'(\\HasNoChildren \\Sent) "/" "{self.sent_folder}"'.encode()]
+
+    def select(self, name, readonly=False):
+        self.calls.append(("select", name, readonly))
+        # 不是只读打开就是越界：SELECT 会把邮箱置成可写并清掉 \Recent
+        assert readonly is True, f"SELECT {name!r} 未按只读（EXAMINE）打开"
+        assert isinstance(name, str), f"SELECT 的文件夹名不是字符串: {name!r}"
+        return "OK", [b"1"]
+
+    def status(self, name, what):
+        self.calls.append(("status", name, what))
+        return "OK", [f"{name} (UIDVALIDITY {self.uidvalidity})".encode()]
+
+    def uid(self, command, *args):
+        self.calls.append(("uid", command, *args))
+        assert command in ("SEARCH", "FETCH"), f"发现写命令 UID {command}"
+        if command == "FETCH":
+            # RFC822 会隐式设置 \Seen；只有 BODY.PEEK[] 不改用户邮箱状态
+            assert "BODY.PEEK[" in args[1], f"FETCH 未走 PEEK: {args[1]!r}"
+            return "OK", [(b"1 (BODY[] {5}", b"raw-bytes")]
+        return "OK", [b"11"]
+
+    def logout(self):
+        self.calls.append(("logout",))
+        return "BYE", [b"bye"]
+
+    def __getattr__(self, name: str):
+        raise AssertionError(f"ImapClient 调用了未授权的连接方法: {name}")
+
+
+def test_client_only_issues_readonly_commands_end_to_end() -> None:
+    """完整流程跑一遍：任何写命令或非 PEEK 拉取都会让 StrictReadOnlyConn 抛错。"""
+    conn = StrictReadOnlyConn()
+    client = ImapClient(conn)
+
+    assert client.select_inbox() == 7
+    assert client.search_uids("UID 11:*") == [11]
+    assert client.fetch_uid(11) == b"raw-bytes"
+    assert client.find_sent_folder() == "Sent"
+    assert client.select_folder_readonly("Sent") == 7
+    assert client.fetch_uid(11) == b"raw-bytes"
+    client.logout()
+
+    assert ("select", "INBOX", True) in conn.calls
+    assert ("select", '"Sent"', True) in conn.calls
+    assert [c for c in conn.calls if c[0] == "uid"] == [
+        ("uid", "SEARCH", "UID 11:*"),
+        ("uid", "FETCH", "11", "(BODY.PEEK[])"),
+        ("uid", "FETCH", "11", "(BODY.PEEK[])"),
+    ]
