@@ -1,5 +1,8 @@
 // 助理页测试：多轮聊天（发送 / 快捷键 / 失败回滚 / 模块级缓存）、回执卡与引用邮件的
-// 打开路径、以及玻璃与配色的两条守卫（haze 数、panel 数、玻璃不嵌套、n9 文字色）。
+// 打开路径、以及玻璃与配色的守卫（haze 数、panel 数、玻璃不嵌套、n9 文字色、
+// 输入台的 fixed 定位层与让位占位块）。
+// 输入台 Portal 到 body：它的面板不在 render 的 container 子树里，凡是数全页玻璃块数
+// 的用例都必须用 document 全局查询（container.querySelectorAll 会漏掉输入台那块）。
 // 输入台的快捷键语义分三条独立用例：Enter / Shift+Enter / 输入法组合中的 Enter
 // （Safari 的 keyCode 229 单独一条），任何一条放宽都会真发出一条消息。
 
@@ -7,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, renderHook, screen, within } from '@testing-library/react';
 import AssistantPage from '../src/pages/AssistantPage';
 import NewChatButton from '../src/components/NewChatButton';
+import { COMPOSER_FALLBACK_HEIGHT } from '../src/components/assistant/ChatComposer';
 import {
   RATE_LIMITED_MESSAGE,
   resetChat,
@@ -15,12 +19,23 @@ import {
   useChatDraft,
   useChatTurns,
 } from '../src/lib/chat';
+import { BOTTOM_NAV_HEIGHT_PX, CONTENT_MAX_WIDTH, DRAWER_WIDTH } from '../src/lib/layout';
 import { resetLists } from '../src/lib/list-cache';
 import { NEUTRAL_LIGHT, RADIUS } from '../src/rakko-tokens';
 import type { ChatAction, ChatActionField, ChatActionKind, Email, EmailCitation, Item } from '../src/types';
 import { allStyleText, ownEmotionClass, ownRules, renderWithAppTheme, ruleTextOf } from './glass-text-contrast.test-utils';
 
 const INPUT_LABEL = '给助理的消息';
+
+/** 玻璃面板往上第一个「有定位」的祖先，即输入台的定位层。
+ *  jsdom 对没声明 position 的元素返回空串（不是 'static'），两种都当没有定位。 */
+function positionedAncestor(el: HTMLElement): HTMLElement | null {
+  for (let node = el.parentElement; node && node !== document.body; node = node.parentElement) {
+    const position = getComputedStyle(node).position;
+    if (position && position !== 'static') return node;
+  }
+  return null;
+}
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -508,9 +523,10 @@ async function renderRoundTrip() {
 
 describe('玻璃不变量', () => {
   it('任何 [data-glass] 元素的祖先链上都没有另一块 [data-glass]', async () => {
-    const { container } = await renderRoundTrip();
+    await renderRoundTrip();
 
-    const glasses = Array.from(container.querySelectorAll('[data-glass]'));
+    // 输入台面板 Portal 在 body 下，不在 container 里：整页口径要查 document
+    const glasses = Array.from(document.querySelectorAll('[data-glass]'));
     expect(glasses.length).toBeGreaterThan(3);
     for (const glass of glasses) {
       expect(glass.parentElement!.closest('[data-glass]')).toBeNull();
@@ -518,9 +534,10 @@ describe('玻璃不变量', () => {
   });
 
   it('一轮含回执与引用的回复后：haze 恰 2 块（回答 + 引用标题）且都不带 data-haze，panel 恰 4 块', async () => {
-    const { container } = await renderRoundTrip();
+    await renderRoundTrip();
 
-    const hazes = container.querySelectorAll('[data-glass="haze"]');
+    // 同上：4 块 panel 里有 1 块是 Portal 出去的输入台，container 只能数到 3 块
+    const hazes = document.querySelectorAll('[data-glass="haze"]');
     expect(hazes).toHaveLength(2);
     for (const haze of Array.from(hazes)) {
       // cloud 是上游配方的默认形态，默认不写 data-haze——只有切 veil 才写该属性
@@ -528,7 +545,7 @@ describe('玻璃不变量', () => {
     }
 
     // 用户气泡 + 回执行 + 引用行 + 输入台
-    const panels = container.querySelectorAll('[data-glass="panel"]');
+    const panels = document.querySelectorAll('[data-glass="panel"]');
     expect(panels).toHaveLength(4);
     const rowPanels = Array.from(panels).filter((p) => p.classList.contains('MuiListItemButton-root'));
     expect(rowPanels).toHaveLength(2);
@@ -598,17 +615,57 @@ describe('玻璃不变量', () => {
     );
   });
 
-  it('输入台容器自身规则含 position:sticky，xs 档 bottom 让开移动端底栏', async () => {
+  it('输入台定位层是 position:fixed 的 Portal 层，xs 档 bottom 让开移动端底栏', () => {
     vi.stubGlobal('fetch', makeFetchMock({ answer_md: '不会用到' }));
-    renderWithAppTheme(<AssistantPage />);
+    const { container } = renderWithAppTheme(<AssistantPage />);
     const textarea = screen.getByLabelText(INPUT_LABEL);
-    const host = textarea.closest('[data-glass="panel"]') as HTMLElement | null;
-    expect(host).not.toBeNull();
+    const panel = textarea.closest('[data-glass="panel"]') as HTMLElement | null;
+    expect(panel).not.toBeNull();
 
-    const rule = ownRules(allStyleText(), host!);
-    expect(rule, '应能读到宿主自己的 emotion 规则').not.toBe('');
-    expect(rule).toContain('position:sticky');
-    expect(rule).toContain('bottom:calc(64px + env(safe-area-inset-bottom) + 8px)');
-    expect(rule).toContain('z-index:1');
+    // jsdom 不解析 @media 也不做布局：不带媒体查询的声明才读得到 computed，
+    // 分档的 left / bottom 只能读 emotion 的规则文本（见下方 ownRules）
+    const layer = positionedAncestor(panel!);
+    expect(layer, '玻璃面板之上应有一个定位层').not.toBeNull();
+    expect(getComputedStyle(layer!).position).toBe('fixed');
+    expect(getComputedStyle(layer!).pointerEvents, '定位层铺满整屏，必须让点击穿透').toBe('none');
+    // 1100 = theme.zIndex.appBar：在内容之上，底栏 / 抽屉 / Dialog 之下
+    expect(getComputedStyle(layer!).zIndex).toBe('1099');
+
+    // Portal：面板与定位层都不在 render 的 container 子树里，而是挂在 body 下
+    expect(container.contains(panel!)).toBe(false);
+    expect(container.contains(layer!)).toBe(false);
+    expect(document.body.contains(layer!)).toBe(true);
+
+    expect(layer!.hasAttribute('data-glass'), '玻璃挂在面板上，定位层不挂').toBe(false);
+    const rule = ownRules(allStyleText(), layer!);
+    expect(rule, '应能读到定位层自己的 emotion 规则').not.toBe('');
+    expect(rule).toContain('position:fixed');
+    expect(rule).toContain('pointer-events:none');
+    expect(rule).toContain(`left:${DRAWER_WIDTH}px`);
+    expect(rule).toContain(`bottom:calc(${BOTTOM_NAV_HEIGHT_PX}px + env(safe-area-inset-bottom) + 8px)`);
+
+    // 内层容器与 AppShell 的内容列同一居中口径，并把事件收回来（否则整条底边点不动）
+    const inner = layer!.firstElementChild as HTMLElement;
+    const innerRule = ownRules(allStyleText(), inner);
+    expect(innerRule).not.toBe('');
+    expect(innerRule).toContain(`max-width:${CONTENT_MAX_WIDTH}px`);
+    expect(getComputedStyle(inner).pointerEvents).toBe('auto');
+  });
+
+  it('消息流末尾有给固定输入台让位的占位块，高度 > 0', () => {
+    vi.stubGlobal('fetch', makeFetchMock({ answer_md: '不会用到' }));
+    const { container } = renderWithAppTheme(<AssistantPage />);
+
+    const spacer = screen.getByTestId('composer-spacer');
+    // 占位块留在页面流里（输入台自己 Portal 走了），且紧跟对话记录
+    expect(container.contains(spacer)).toBe(true);
+    expect(spacer.previousElementSibling).toBe(screen.getByRole('log'));
+    // 不能塞进 role="log"：那是 aria-live 区域，空白也会被读屏念一遍
+    expect(screen.getByRole('log').contains(spacer)).toBe(false);
+
+    // jsdom 没有 ResizeObserver：输入台上报兜底高度，占位块据此成型，不能塌成 0
+    const height = Number.parseFloat(getComputedStyle(spacer).height);
+    expect(height).toBeGreaterThan(0);
+    expect(height).toBeGreaterThanOrEqual(COMPOSER_FALLBACK_HEIGHT);
   });
 });
