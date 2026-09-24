@@ -9,6 +9,7 @@
 //    需用户主动点击，风险可接受，保留其实用价值。
 import ReactMarkdown from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
+import Box from '@mui/material/Box';
 
 /** 只放行 http/https/mailto 与站内相对路径；其余协议一律丢弃（返回空串）。 */
 function safeUrlTransform(url: string): string {
@@ -36,6 +37,11 @@ export default function SafeMarkdown({ children, breaks = false }: Props) {
       components={{
         a: ({ node: _node, ...props }) => (
           <a {...props} target="_blank" rel="noopener noreferrer nofollow" />
+        ),
+        // <pre> 的 white-space: pre 不参与折行，正文的 overflow-wrap 管不到它：
+        // 代码块只能在自己的框里横滑，不把宽度传给外层容器。
+        pre: ({ node: _node, ...props }) => (
+          <Box component="pre" {...props} sx={{ overflowX: 'auto' }} />
         ),
       }}
     >

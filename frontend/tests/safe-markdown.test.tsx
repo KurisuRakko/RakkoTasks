@@ -1,10 +1,12 @@
 // SafeMarkdown 测试：LLM 产出的 Markdown 必须经它渲染——
 // 图片是唯一零点击发起外部请求的元素，必须在渲染侧封死；
-// 危险协议链接不得带出；正常链接保留并加 rel 防护。
+// 危险协议链接不得带出；正常链接保留并加 rel 防护；
+// 版式上代码块的横向溢出由 <pre> 自己在框内吸收，不传给外层容器。
 
 import { afterEach, describe, expect, it } from 'vitest';
 import { cleanup, render } from '@testing-library/react';
 import SafeMarkdown from '../src/components/SafeMarkdown';
+import { allStyleText, ownRules } from './glass-text-contrast.test-utils';
 
 afterEach(() => {
   cleanup();
@@ -59,6 +61,23 @@ describe('SafeMarkdown 渲染', () => {
   it('默认（breaks 未开）单个换行不渲染 <br>', () => {
     const { container } = render(<SafeMarkdown>{'a\nb'}</SafeMarkdown>);
     expect(container.querySelector('br')).toBeNull();
+  });
+});
+
+describe('SafeMarkdown 版式', () => {
+  it('代码块自己横滑：<pre> 自带 overflow-x:auto', () => {
+    // 200 字符无空格长行：<pre> 的 white-space: pre 不折行，正文的 overflow-wrap
+    // 也管不到它，宽度只能由代码块自己吸收（在自身框内横滑）
+    const { container } = render(
+      <SafeMarkdown>{`\`\`\`\n${'x'.repeat(200)}\n\`\`\``}</SafeMarkdown>,
+    );
+
+    const pre = container.querySelector('pre');
+    expect(pre).not.toBeNull();
+
+    const rule = ownRules(allStyleText(), pre!);
+    expect(rule, '<pre> 没读到自身的 css-* 规则，下面的断言会空转').not.toBe('');
+    expect(rule, '代码块在自身框内横滑，不把宽度传给外层').toContain('overflow-x:auto');
   });
 });
 
