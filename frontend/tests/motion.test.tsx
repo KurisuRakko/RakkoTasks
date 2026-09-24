@@ -13,7 +13,10 @@ import { VT_ATTR, VT_NAMES } from '../src/lib/view-transition';
 // ?raw：读源文件原文做「无 backdrop-filter」断言；tsconfig 无 @types/node，node:fs 不可用
 import tasksPageSource from '../src/pages/TasksPage.tsx?raw';
 import donePageSource from '../src/pages/DonePage.tsx?raw';
-import searchPageSource from '../src/pages/SearchPage.tsx?raw';
+import assistantPageSource from '../src/pages/AssistantPage.tsx?raw';
+import chatComposerSource from '../src/components/assistant/ChatComposer.tsx?raw';
+import chatMessageSource from '../src/components/assistant/ChatMessage.tsx?raw';
+import receiptCardSource from '../src/components/assistant/ReceiptCard.tsx?raw';
 import surfaceSource from '../src/lib/surface.ts?raw';
 
 // jsdom 运行时不实现 startViewTransition（TS DOM lib 有类型、运行时没有），
@@ -94,7 +97,7 @@ describe('useTransitionNavigate 方向映射', () => {
 
   it('任意页 → /settings 按 route-forward（settings 视为更深一层）', async () => {
     installStartViewTransition();
-    const { result } = renderNavProbe('/search');
+    const { result } = renderNavProbe('/assistant');
     act(() => result.current.go('/settings'));
     expect(vt()).toBe('route-forward');
     expect(result.current.path).toBe('/settings');
@@ -237,8 +240,16 @@ describe('rowSx', () => {
 });
 
 describe('列表卡片层无 backdrop-filter（预算第 3 条硬红线）', () => {
-  it('三个页面的列表行与 surface.ts 的源码里都没有 backdrop-filter', () => {
-    for (const source of [tasksPageSource, donePageSource, searchPageSource, surfaceSource]) {
+  it('两个列表页、助理页与它的三个子组件、以及 surface.ts 的源码里都没有 backdrop-filter', () => {
+    for (const source of [
+      tasksPageSource,
+      donePageSource,
+      assistantPageSource,
+      chatComposerSource,
+      chatMessageSource,
+      receiptCardSource,
+      surfaceSource,
+    ]) {
       expect(source).not.toContain('backdrop-filter');
     }
   });

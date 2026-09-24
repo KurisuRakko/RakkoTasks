@@ -1,4 +1,4 @@
-// api 客户端测试：PATCH item 与 search 的 URL / 方法 / body 正确，且带 Bearer 头。
+// api 客户端测试：PATCH item 与助理聊天的 URL / 方法 / body 正确，且带 Bearer 头。
 
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as Api from '../src/lib/api';
@@ -46,22 +46,46 @@ describe('patchItem', () => {
   });
 });
 
-describe('search', () => {
-  it('POST /api/search，body {"question":"…"}', async () => {
+describe('chatAssistant', () => {
+  it('POST /api/assistant/chat，body {messages, today, tz}，带 Bearer', async () => {
     const fetchMock = vi.fn(async (_url: string | URL, _init?: RequestInit) =>
-      json({ answer_md: '**回答**', citations: [] }),
+      json({ answer_md: '**回答**', citations: [], actions: [] }),
     );
     vi.stubGlobal('fetch', fetchMock);
 
-    const result = await api.search('下周有什么截止？');
+    const messages = [{ role: 'user' as const, content: '下周有什么截止？' }];
+    const result = await api.chatAssistant(messages, '2026-09-21');
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit | undefined];
-    expect(url).toBe('/api/search');
+    expect(url).toBe('/api/assistant/chat');
     expect(init?.method).toBe('POST');
     expect((init?.headers as Record<string, string>).Authorization).toBe('Bearer test-token');
-    expect(JSON.parse(String(init?.body))).toEqual({ question: '下周有什么截止？' });
+    const body = JSON.parse(String(init?.body)) as { messages: unknown; today: string; tz: string };
+    expect(body.messages).toEqual(messages);
+    expect(body.today).toBe('2026-09-21');
+    expect(typeof body.tz).toBe('string');
+    expect(body.tz).not.toBe('');
+    // 返回体原样解析（信封不拆）
     expect(result.answer_md).toBe('**回答**');
+    expect(result.citations).toEqual([]);
+    expect(result.actions).toEqual([]);
+  });
+
+  it('429 → reject 的是 ApiError 且 status 为 429', async () => {
+    const fetchMock = vi.fn(async (_url: string | URL, _init?: RequestInit) =>
+      json({ code: 'rate_limited' }, 429),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const err = await api
+      .chatAssistant([{ role: 'user', content: '问一句' }], '2026-09-21')
+      .then(() => null)
+      .catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(api.ApiError);
+    expect((err as InstanceType<typeof api.ApiError>).status).toBe(429);
+    expect((err as InstanceType<typeof api.ApiError>).code).toBe('rate_limited');
   });
 });
 

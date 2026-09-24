@@ -188,17 +188,37 @@ export interface SyncTriggerResponse {
   already_running: boolean;
 }
 
-/** AI 搜索引用的一封邮件 */
-export interface SearchCitation {
+/** AI 助理回答里引用的一封邮件 */
+export interface EmailCitation {
   email_id: number;
   subject: string;
   sent_at: string | null;
 }
 
-/** POST /api/search 返回体 */
-export interface SearchResponse {
+/** 发给 POST /api/assistant/chat 的一条历史消息（角色只有用户与助理两种） */
+export interface ChatMessageIn {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+/** 助理本轮写操作的类型：新建 / 完成 / 重新打开 / 修改 */
+export type ChatActionKind = 'created' | 'completed' | 'reopened' | 'updated';
+
+/** 助理修改操作动了哪些字段（仅 updated 非空） */
+export type ChatActionField = 'title' | 'category' | 'due_date' | 'reminders';
+
+/** 助理本轮成功执行的一次写操作（item 与 GET /api/items/{id} 同形状） */
+export interface ChatAction {
+  kind: ChatActionKind;
+  item: Item;
+  fields: ChatActionField[];
+}
+
+/** POST /api/assistant/chat 返回体 */
+export interface ChatResponse {
   answer_md: string;
-  citations: SearchCitation[];
+  citations: EmailCitation[];
+  actions: ChatAction[];
 }
 
 /** 手动条目可编辑字段（POST /api/items 请求体；PATCH 时各字段可选） */

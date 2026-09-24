@@ -13,6 +13,8 @@ import type {
   CaldavInfo,
   CalendarTokenResponse,
   Category,
+  ChatMessageIn,
+  ChatResponse,
   Email,
   Item,
   ItemFields,
@@ -22,7 +24,6 @@ import type {
   ParseResponse,
   QuickAddResponse,
   RelatedEmail,
-  SearchResponse,
   StatusResponse,
   SyncStatus,
   SyncTriggerResponse,
@@ -47,7 +48,7 @@ export class ApiError extends Error {
   }
 }
 
-/** 把非 2xx 响应解析成 ApiError 抛出（只给新账户 API 用，既有函数维持原 throw 不动） */
+/** 把非 2xx 响应解析成 ApiError 抛出（给账户 API 与助理端点用，其余函数维持原 throw 不动） */
 async function raiseApiError(res: Response): Promise<never> {
   let code = `http_${res.status}`;
   let kind: AuthFailedKind | undefined;
@@ -197,19 +198,25 @@ export async function fetchEmail(id: number, opts: { remoteImages?: boolean } = 
   return (await res.json()) as Email;
 }
 
-/** POST /api/search {question}，agentic 检索总超时 180s */
-export async function search(question: string): Promise<SearchResponse> {
+/** POST /api/assistant/chat {messages, today, tz}：多轮助理对话，agentic 检索总超时 180s。
+ *  messages 是截断后的完整历史（最后一条必须是 user），today 为本地日期 YYYY-MM-DD，
+ *  tz 为浏览器 IANA 时区（在函数内部取，调用方不用传）。非 2xx 抛 ApiError：
+ *  调用方靠 status 区分 429 限流与其它失败。 */
+export async function chatAssistant(
+  messages: ChatMessageIn[],
+  today: string,
+): Promise<ChatResponse> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 180_000);
   try {
-    const res = await authedFetch(`${API_BASE}/search`, {
+    const res = await authedFetch(`${API_BASE}/assistant/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ question }),
+      body: JSON.stringify({ messages, today, tz: localTimeZone() }),
       signal: controller.signal,
     });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return (await res.json()) as SearchResponse;
+    if (!res.ok) await raiseApiError(res);
+    return (await res.json()) as ChatResponse;
   } finally {
     clearTimeout(timer);
   }
