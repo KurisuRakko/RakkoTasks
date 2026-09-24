@@ -52,9 +52,9 @@ LLM 会阅读不可信的邮件正文，因此存在提示注入的风险。Rakk
 三行式指引（前置条件、Phainon 应用注册、Cloudflare Tunnel 等完整步骤见
 [deploy/README.md](deploy/README.md)）：
 
-1. 填配置：`cp deploy/.env.example .env`，填写 `LLM_API_KEY`、`TUNNEL_TOKEN` 等项。
-2. 启动：`docker compose -f deploy/docker-compose.yml up -d --build`
-   （web + worker + cloudflared 三个服务，公网经隧道走 HTTPS）。
+1. 填配置：`cp deploy/.env.example .env`，填写 `LLM_API_KEY` 等项。
+2. 启动：`docker compose up -d --build`（在仓库根执行；compose 只有 web 与 worker 两个服务，
+   公网入口由宿主机 cloudflared 服务提供，见 [deploy/README.md](deploy/README.md) 第 3 节）。
 3. 接入邮箱：登录网页（后端自动创建用户记录）→ 设置 → 邮箱账户 → 添加邮箱：
    Gmail 填在 Google 账号里生成的应用专用密码；Outlook / Microsoft 365 走
    「生成授权链接 → 新标签页登录并完成 MFA → 把停在空白页的地址粘回」向导，

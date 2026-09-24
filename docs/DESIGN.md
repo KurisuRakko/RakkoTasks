@@ -578,8 +578,9 @@ CalDAV 例外：`/caldav/*` 与 `/.well-known/caldav` 不走上述 Bearer 中间
 
 - 单一 Dockerfile 多阶段：node 构建 frontend → python 镜像装 backend 并携带 `frontend/dist`，
   FastAPI StaticFiles 托管（SPA fallback 到 index.html）。
-- compose 服务：`web`（uvicorn :8000）、`worker`（`python -m app.worker`，同镜像）、
-  `cloudflared`（`TUNNEL_TOKEN` env；DNS 与隧道由使用者后配）。`./data` 挂载给 web 与 worker。
+- compose 只有 `web`（uvicorn，发布到 127.0.0.1:8000）与 `worker`（`python -m app.worker`，同镜像）
+  两个服务，公网入口由宿主机 cloudflared systemd 服务提供（见 `deploy/README.md` 第 3 节）。
+  `./data` 挂载给 web 与 worker。
 - 全部配置走 env，提供 `.env.example`。邮箱凭据与用户白名单不再走 env：
   `GMAIL_APP_PASSWORD` / `ALLOWED_SUBS` 已删除，Gmail 应用专用密码由用户在网页
   设置页录入存库（CLI 兜底），任何用户都可直接使用（无白名单）。
