@@ -40,7 +40,7 @@ def make_raw_html_only(subject="主题", message_id="<m@example.com>", html="<p>
 
 class FakeImap:
     """duck-typing 协议类：select_inbox / search_uids / fetch_uid / logout
-    + 归档用的 find_sent_folder / select_folder_readonly / fetch_uid_peek。"""
+    + 归档用的 find_sent_folder / select_folder_readonly。"""
 
     def __init__(self, uidvalidity: int = 1, sent_uidvalidity: int | None = None):
         self.uidvalidity = uidvalidity
@@ -51,7 +51,6 @@ class FakeImap:
         self.select_error: Exception | None = None
         self.selected: str | None = None
         self.searches: list[str] = []
-        self.peeked: list[int] = []
         self.logged_out = False
 
     def select_inbox(self) -> int:
@@ -66,6 +65,9 @@ class FakeImap:
         return list(self.mails)
 
     def fetch_uid(self, uid: int) -> bytes:
+        """按当前选中的文件夹取原件，与真实 IMAP 的 UID FETCH 语义一致。"""
+        if self.sent_folder is not None and self.selected == self.sent_folder:
+            return self.sent_mails[uid]
         return self.mails[uid]
 
     def find_sent_folder(self) -> str | None:
@@ -76,10 +78,6 @@ class FakeImap:
             raise self.select_error
         self.selected = name
         return self.sent_uidvalidity
-
-    def fetch_uid_peek(self, uid: int) -> bytes:
-        self.peeked.append(uid)
-        return self.sent_mails[uid]
 
     def logout(self) -> None:
         self.logged_out = True

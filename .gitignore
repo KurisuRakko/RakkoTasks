@@ -10,6 +10,7 @@ data/
 !.env.example
 .npm-cache/
 .pnpm-store/
+.pip-cache/
 .DS_Store
 coverage/
 .pytest_cache/

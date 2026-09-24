@@ -93,7 +93,7 @@ def _sync_account(
 def _archive_uids(account: Account, imap: Any, archive: EmailArchive, uids: list[int]) -> None:
     """逐封 PEEK 拉取（`BODY.PEEK[]`，不设置 \\Seen）→ 解析 → 追加进 mbox；不碰数据库。"""
     for uid in uids:
-        raw = imap.fetch_uid_peek(uid)
+        raw = imap.fetch_uid(uid)
         parsed = parse_message(raw)
         archive.store(account.email, parsed["message_id"], parsed["sent_at"], raw)
 

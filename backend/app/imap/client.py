@@ -84,7 +84,12 @@ def _quote_mailbox(name: str) -> str:
 
 
 class ImapClient:
-    """对 imaplib.IMAP4_SSL 的薄封装，仅暴露同步所需操作。"""
+    """对 imaplib.IMAP4_SSL 的薄封装，仅暴露同步所需操作。
+
+    不变量：对用户邮箱只发只读命令（EXAMINE / STATUS / LIST / UID SEARCH /
+    UID FETCH BODY.PEEK[]），不得出现 STORE / COPY / MOVE / APPEND / EXPUNGE /
+    CREATE / DELETE / RENAME / SUBSCRIBE。
+    """
 
     def __init__(self, conn: imaplib.IMAP4_SSL | object):
         self.conn = conn
@@ -102,8 +107,8 @@ class ImapClient:
     # ---- 会话 ----
 
     def select_inbox(self) -> int:
-        """SELECT INBOX 并返回 UIDVALIDITY。"""
-        typ, _data = self.conn.select("INBOX")
+        """只读打开 INBOX（EXAMINE）并返回 UIDVALIDITY。"""
+        typ, _data = self.conn.select("INBOX", readonly=True)
         if typ != "OK":
             raise RuntimeError(f"SELECT INBOX 失败: {typ}")
         typ, data = self.conn.status("INBOX", "(UIDVALIDITY)")
@@ -125,20 +130,11 @@ class ImapClient:
         return [int(u) for u in payload.split()]
 
     def fetch_uid(self, uid: int) -> bytes:
-        """逐封 UID FETCH (RFC822)，返回原始邮件字节。"""
-        typ, data = self.conn.uid("FETCH", str(uid), "(RFC822)")
-        if typ != "OK" or not data:
-            raise RuntimeError(f"UID FETCH {uid} 失败: {typ}")
-        if data and isinstance(data[0], tuple):
-            return data[0][1]
-        raise RuntimeError(f"UID FETCH {uid} 返回异常: {data!r}")
-
-    def fetch_uid_peek(self, uid: int) -> bytes:
         """逐封 UID FETCH (BODY.PEEK[])，返回原始邮件字节。
 
-        用 PEEK 而不是 RFC822：PEEK 不会设置 \\Seen，归档专用的拉取不能改变
-        用户邮箱里的已读状态（发件箱尤其明显——用户没读过的已发送邮件不该
-        因为归档变成已读）。
+        用 PEEK 而不是 RFC822：PEEK 不会设置 \\Seen，本客户端对用户邮箱只读，
+        拉取不能改变邮箱里的已读状态（发件箱尤其明显——用户没读过的已发送邮件
+        不该因为归档变成已读）。
         """
         typ, data = self.conn.uid("FETCH", str(uid), "(BODY.PEEK[])")
         if typ != "OK" or not data:
