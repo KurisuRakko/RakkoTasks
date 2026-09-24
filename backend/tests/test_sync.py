@@ -546,12 +546,12 @@ def test_archive_stores_raw_message_bytes(session_factory, tmp_path):
     assert summary["archive"] == {"written": 1, "failed": 0, "discarded": 0}
 
 
-def test_archive_discards_advertisement_but_keeps_other_mail(session_factory, tmp_path):
-    """判为广告的邮件原件被删；判非广告与 LLM 失败的都保留。"""
+def test_archive_discards_filtered_mail_but_keeps_tasks(session_factory, tmp_path):
+    """被过滤的邮件原件被删；进入待办与 LLM 失败的都保留。"""
     _seed_account(session_factory)
     imap = FakeImap()
     imap.mails = {
-        1: make_raw(message_id="<ad>", subject="促销邮件"),
+        1: make_raw(message_id="<filtered>", subject="促销邮件"),
         2: make_raw(message_id="<real>", subject="交作业"),
         3: make_raw(message_id="<broken>", subject="失败封"),
     }
@@ -567,14 +567,14 @@ def test_archive_discards_advertisement_but_keeps_other_mail(session_factory, tm
 
     summary = _run(session_factory, imap, llm, settings)
 
-    assert not _archived_path(tmp_path, settings, "<ad>", "促销邮件").exists()
+    assert not _archived_path(tmp_path, settings, "<filtered>", "促销邮件").exists()
     assert _archived_path(tmp_path, settings, "<real>", "交作业").exists()
     assert _archived_path(tmp_path, settings, "<broken>", "失败封").exists()
     assert summary["archive"] == {"written": 3, "failed": 0, "discarded": 1}
 
     with session_factory() as s:
         emails = {e.message_id: e for e in s.execute(select(Email)).scalars().all()}
-    assert emails["<ad>"].filtered is True  # 邮件记录仍在库中，删的只是原件文件
+    assert emails["<filtered>"].filtered is True  # 邮件记录仍在库中，删的只是原件文件
     assert emails["<broken>"].llm_state == "error"
 
 
@@ -610,8 +610,8 @@ def test_archive_write_failure_does_not_break_sync(session_factory, tmp_path):
     assert _account(session_factory).last_uid == 1  # 游标照常推进
 
 
-def _ad_result():
-    """LLM 判为广告的分类结果。"""
+def _filtered_result():
+    """LLM 判为过滤（不建待办）的分类结果。"""
     return {"filtered": True, "filter_reason": "广告营销", "title": "", "summary": "",
             "category": "", "due_date": None, "actionable": False}
 
@@ -658,7 +658,7 @@ def test_commit_failure_keeps_archived_original(session_factory, tmp_path, monke
 
         monkeypatch.setattr(session, "commit", flaky_commit)
         rows = session.execute(select(Email).where(Email.llm_state == "pending")).scalars().all()
-        _process_pending(session, FakeLLM(results=[_ad_result()]), rows, archive=archive)
+        _process_pending(session, FakeLLM(results=[_filtered_result()]), rows, archive=archive)
 
     assert len(calls) == 2  # 第一次失败，第二次把 error 标记提交成功
     row = _row(session_factory, "<pending1>")
