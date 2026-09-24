@@ -166,7 +166,7 @@ env：`LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` / `LLM_REASONING_EFFORT`（De
    判断依据：这封回信是否包含收件人此前不知道的**结论性信息**？是则保留，按「知悉即可」处理
    （actionable=false），importance 按后果轻重评定。注意：不以标题 `Re:` 前缀为判断依据——
    带 `Re:` 不必然保留也不必然过滤，看正文里有没有结论性内容。
-- 被过滤邮件不生成条目，但邮件本体仍入库、仍可被 AI 搜索读到。
+- 被过滤邮件不生成条目，但邮件本体仍入库、仍可被 AI 助理读到。
 - 保留条目中 `actionable=false` 只用于「需知悉但无需动手」的通知（课程结课通知、政策变更告知），
   不用来兜底表达「可能没用」；不可行动的通知类邮件仍生成条目（actionable=false，无截止日期），
   便于「看过就勾掉」。
@@ -184,7 +184,7 @@ env：`LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` / `LLM_REASONING_EFFORT`（De
 
 基于邮件全文写中文详情，剔除客套话、签名档、免责声明、无关信息，
 保留关键事实/时间/链接/要求的动作。生成前先走 agentic 循环（上限 8 轮，工具与
-AI 搜索同一套 `search_emails` / `read_emails`）：若邮件涉及来历不明的金额或退款、
+AI 助理同一套 `search_emails` / `read_emails`）：若邮件涉及来历不明的金额或退款、
 状态变化、异常标记（如成绩「未知」）、或是对之前某次通知的跟进，先翻阅该用户
 的其他邮件查清来龙去脉，只关联确实解释了本邮件的邮件；查到背景时在详情里写
 「## 背景」一节并点明结论来源邮件（主题 + 日期）。输出 JSON
@@ -198,17 +198,23 @@ AI 搜索同一套 `search_emails` / `read_emails`）：若邮件涉及来历不
 详情/关联逻辑调整后，`regen-details --user <sub|邮箱> [--account <邮箱>] [--yes]`
 可手动把该用户（可限账户）所有条目的详情与关联邮件置空，由 worker 下轮重新生成。
 
-### 4.3 AI 搜索（全库问答）
+### 4.3 AI 助理（多轮对话）
 
-`POST /api/search {question}` → agentic 循环（上限 15 轮工具调用，总超时 180s）：
+`POST /api/assistant/chat {messages, today, tz}` → agentic 工具循环（上限 10 轮，复用 `agent.run_tool_loop`；前端请求超时 180s）：
 
-- 系统提示（中文）：给出今天日期、账户列表，要求回答引用邮件。
-- 首条消息附「邮件索引」：最近 `SEARCH_INDEX_DAYS`（默认 90）天所有邮件的
-  `id / 日期 / 发件人 / 主题` 紧凑列表（不吝惜 token，用户明确要求喂足）。
-- 工具：`search_emails(keywords, sender, date_from, date_to, account, limit)`（FTS5 全文检索，
-  跨全部历史，不限 90 天）；`read_emails(ids)`（返回全文，单次上限 20 封）。
-- 最终输出 JSON `{"answer_md": "...", "citations": [email_id, ...]}`。
-  前端把 citations 渲染为可点击邮件引用。
+- 服务端无状态：聊天记录只在前端内存，每轮把截断后的历史整包发上来（前端最多 12 条、助理单条截到 4000 字；
+  后端上限 20 条、user 2000 字、assistant 8000 字，最后一条必须是 user）。
+- 系统提示 = 人设段（`app/persona.py`，百夜米迦尔；只体现在口吻，不主动自称，被直接问到才承认）+ 工作方式
+  （今天日期、星期、本地时刻、时区、账户列表）+ 安全规则（独立于人设）+ 输出格式。
+- 最后一条 user 消息附「邮件索引」：最近 `SEARCH_INDEX_DAYS`（默认 90）天邮件的 `id / 日期 / 发件人 / 主题`，整体过 `wrap_untrusted`。
+- 工具：`search_emails` / `read_emails`（同前）；`list_items(status, category, keyword, limit)`；`create_item(title, category, due_date, reminders)`；
+  `set_item_done(id, done)`；`update_item(id, title, category, due_date, reminders)`。没有删除工具。写工具复用 `items_service`
+  的校验与写入编排、按 user_sub 隔离（越权与不存在同为 not_found）；提醒入参是用户本地墙上时刻，换成带偏移 ISO 后走
+  `validate_reminders`；每轮写操作上限 10 次；写操作不弹确认，前端以回执卡展示。
+- 最终输出 JSON `{"answer_md": "...", "citations": [email_id, ...]}`；接口返回 `{answer_md, citations, actions}`，actions 是本轮成功的
+  写操作回执（created / completed / reopened / updated + 条目快照 + 改动字段）。本轮已有写操作而后续失败时仍回 200（固定文案 + 回执），
+  避免用户不知情重试造成重复写入；没有写操作的失败回 502 `assistant_error`。
+- 限流：每用户 6 次 / 60 秒（429 `rate_limited`）。
 
 ### 4.4 自然语言快速记事（一段话 → 一条或多条条目）
 
@@ -412,7 +418,7 @@ GET  /api/items/{id}/export         导出条目 Markdown 纯文本（AI 见解 
                                     + 关联邮件全文）；手动条目输出标题 + 「## 详情」（summary 原文），
                                     无当前邮件/关联邮件段；纯读、无 LLM 调用、不限流
 GET  /api/emails/{id}               元数据 + text_body + sanitized_html
-POST /api/search                    {"question"} → {"answer_md", "citations":[{email_id, subject, sent_at}]}
+POST /api/assistant/chat            {"messages", "today", "tz"} → {"answer_md", "citations":[{email_id, subject, sent_at}], "actions":[{kind, item, fields}]}
 GET  /api/status                    各账户健康（含 enabled 停用标记）+ 上次同步时间 + LLM 待处理数
 GET  /api/accounts                  → {"accounts":[AccountInfo]}，当前用户全部账户（含已停用），按 id 升序
 POST /api/accounts                  {"name","kind","email","app_password"?,"ms_client_id"?} → 201 AccountInfo
@@ -492,7 +498,7 @@ CalDAV 例外：`/caldav/*` 与 `/.well-known/caldav` 不走上述 Bearer 中间
   high 条目带「重要」Chip 标记。条目 Checkbox 勾选完成；「已完成」在底部折叠区。
 - 条目详情（全屏 Dialog）：AI 详情（通常已预生成；未生成时首开现场生成，加载态）→ 底部「显示原邮件」展开 sandbox iframe
   → iframe 内「显示远程图片」开关。
-- 搜索页：问题输入 → 回答（Markdown 渲染）+ 引用邮件列表，点击打开邮件查看器。
+- 助理页（/assistant，旧 /search 重定向至此）：多轮对话；回复经 SafeMarkdown 渲染，下方挂写操作回执卡（点开对应待办详情）与引用邮件列表；顶栏「新对话」清空当前对话；聊天记录只在内存（换页不丢、刷新丢）。
 - 右下角「+」→ 新建待办（`AiAddDialog`，移动端全屏）。三阶段
   `input → parsing → fields`，阶段过渡用 Collapse/Fade 走 `MOTION` token，
   **不新增 `VtKind`**（新增会连带改 `motion-styles.ts` 的转场契约）：

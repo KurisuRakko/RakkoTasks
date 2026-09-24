@@ -30,21 +30,22 @@ import type { Theme } from '@mui/material/styles';
 import type { SystemStyleObject } from '@mui/system';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import { useTransitionNavigate } from '../lib/motion';
-import { CONTENT_MAX_WIDTH, DRAWER_WIDTH } from '../lib/layout';
+import { BOTTOM_NAV_HEIGHT_PX, CONTENT_MAX_WIDTH, DRAWER_WIDTH } from '../lib/layout';
 import { NAV_ITEMS, navIndexOf } from '../lib/nav';
 import { shellAttr, VT_NAMES } from '../lib/view-transition';
 import { GLASS_NAV_RAIL_LIGHT } from '../rakko-tokens';
 import RouteTransition from './RouteTransition';
 import SyncTitleBar from './SyncTitleBar';
+import NewChatButton from './NewChatButton';
 import TasksPage from '../pages/TasksPage';
-import SearchPage from '../pages/SearchPage';
+import AssistantPage from '../pages/AssistantPage';
 import DonePage from '../pages/DonePage';
 import SettingsPage from '../pages/SettingsPage';
 import SyncStatusPage from '../pages/SyncStatusPage';
 import { AccountDetailPage, AccountNewPage, AccountRemovePage } from '../pages/AccountPages';
 
 /** AppBar 标题：顺序与 NAV_ITEMS 索引对齐；设置组（索引 -1）读末尾一位 */
-const TITLES = ['RakkoTasks', 'AI 搜索', '已完成'] as const;
+const TITLES = ['RakkoTasks', 'AI 助理', '已完成'] as const;
 
 /** 路径以 /settings/accounts 开头即邮箱账户子页（标题 + 返回箭头共用此判断） */
 function isAccountPath(pathname: string): boolean {
@@ -76,7 +77,7 @@ function titleFor(pathname: string): string {
 /** 侧栏 paper 的浅色削白改写（值与理由见 rakko-tokens 的 GLASS_NAV_RAIL_LIGHT）。
  *  改写挂在这一块 paper 上而不是 :root——chrome 档同时是顶栏、侧栏与移动底栏三块表面，
  *  改全局会一起改掉手机端的两块。自定义属性在元素上重声明即可覆盖 :root 的继承值，
- *  这是本仓已有的做法（见 SearchPage / TasksPage 的 --glass-haze-bleed）。
+ *  这是本仓已有的做法（见 AssistantPage / TasksPage 的 --glass-haze-bleed）。
  *  深色主题返回空对象：深底自带暗侧，那套 sheen 振幅已经够低。 */
 const navRailGlassSx: (theme: Theme) => SystemStyleObject<Theme> = (theme) =>
   theme.palette.mode === 'light' ? { ...GLASS_NAV_RAIL_LIGHT } : {};
@@ -159,7 +160,10 @@ export default function AppShell() {
         sx={{
           flexGrow: 1,
           minWidth: 0,
-          pb: { xs: 'calc(64px + env(safe-area-inset-bottom))', md: 0 },
+          pb: {
+            xs: `calc(${BOTTOM_NAV_HEIGHT_PX}px + env(safe-area-inset-bottom))`,
+            md: 0,
+          },
         }}
       >
         {/* AppBar 是换页转场共享元素：只打 data-vt-shell 标记，名字由样式层按转场种类下发 */}
@@ -191,6 +195,8 @@ export default function AppShell() {
                 {titleFor(location.pathname)}
               </Typography>
             )}
+            {/* 助理页的「新对话」：桌面与移动端都放在顶栏右侧（聊天只在内存里，不弹确认） */}
+            {location.pathname === '/assistant' && <NewChatButton />}
             {/* 移动端入口：桌面端（md 起）抽屉左下角已有「设置」项，这里不重复放 */}
             {navIndex !== -1 && !desktop && (
               <IconButton color="inherit" aria-label="设置" onClick={() => go('/settings')}>
@@ -203,7 +209,9 @@ export default function AppShell() {
           <RouteTransition>
             <Routes>
               <Route path="/" element={<TasksPage />} />
-              <Route path="/search" element={<SearchPage />} />
+              {/* 旧书签 /search 兼容：助理页取代了单轮搜索页 */}
+              <Route path="/search" element={<Navigate to="/assistant" replace />} />
+              <Route path="/assistant" element={<AssistantPage />} />
               <Route path="/done" element={<DonePage />} />
               <Route path="/settings" element={<SettingsPage />} />
               {/* 邮箱账户子页（移动端）：添加向导 / 账户详情 / 移除二选一；桌面用 Dialog，页面内重定向 */}

@@ -1,5 +1,6 @@
-"""多用户隔离验收测试：IDOR / 搜索隔离 / 首次登录自动建用户 / 软删除跳过同步。"""
+"""多用户隔离验收测试：IDOR / 助理隔离 / 首次登录自动建用户 / 软删除跳过同步。"""
 import json
+from zoneinfo import ZoneInfo
 
 import httpx
 import respx
@@ -7,10 +8,10 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app.api import create_app
+from app.assistant import run_assistant
 from app.auth import CurrentUser, require_auth
 from app.config import Settings
 from app.models import Account, Email, Item, User
-from app.search import run_search
 from app.sync import run_once
 
 
@@ -123,17 +124,25 @@ class StealLLM:
         }
 
 
-def test_search_isolated_between_users(session_factory):
-    """A 的搜索：喂给模型的索引不含 B 的邮件；read_emails 请求 B 的 id 被静默丢弃；citations 无 B。"""
+def test_assistant_isolated_between_users(session_factory):
+    """A 的对话：喂给模型的索引不含 B 的邮件；read_emails 请求 B 的 id 被静默丢弃；citations 无 B。"""
     ids = _seed_two_users(session_factory)
     with session_factory() as s:
         llm = StealLLM(ids["em_b"])
-        result = run_search("B 的邮件在哪？", s, llm, "user-A")
+        result = run_assistant(
+            [{"role": "user", "content": "B 的邮件在哪？"}],
+            s,
+            llm,
+            _settings(),
+            "user-A",
+            today="2026-09-24",
+            zone=ZoneInfo("Australia/Sydney"),
+        )
 
-    # 首条 user 消息（邮件索引）只含 A 的邮件
-    first_user = llm.messages_seen[0][1]["content"]
-    assert "B 的秘密主题" not in first_user
-    assert "A 的主题" in first_user
+    # 最后一条 user 消息（邮件索引）只含 A 的邮件
+    last_user = llm.messages_seen[0][-1]["content"]
+    assert "B 的秘密主题" not in last_user
+    assert "A 的主题" in last_user
 
     # read_emails 工具结果：不含 B 的正文
     tool_msgs = [m for m in llm.messages_seen[-1] if m["role"] == "tool"]

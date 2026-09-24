@@ -293,6 +293,36 @@ describe('AppShell 顶栏刷新按钮与 /sync 子页', () => {
   });
 });
 
+// 助理页（/assistant）：顶栏标题「AI 助理」+「新对话」按钮；旧书签 /search 只是
+// 重定向到助理页的一帧过渡，不占导航位。
+describe('AppShell 顶栏「新对话」与 /search 重定向', () => {
+  it('移动端 /assistant：标题为「AI 助理」，有「新对话」按钮（无对话时禁用），「设置」按钮仍在', async () => {
+    renderShell([], '/assistant');
+
+    const bar = appBar();
+    expect(await within(bar).findByText('AI 助理')).toBeTruthy();
+    expect(within(bar).getByRole('button', { name: '新对话' })).toBeDisabled();
+    expect(within(bar).getByRole('button', { name: '设置' })).toBeTruthy();
+  });
+
+  it('桌面端 /assistant：顶栏也有「新对话」（抽屉里没有它）', async () => {
+    installDesktopMedia();
+    renderShell([], '/assistant');
+
+    const bar = appBar();
+    expect(await within(bar).findByText('AI 助理')).toBeTruthy();
+    expect(within(bar).getByRole('button', { name: '新对话' })).toBeTruthy();
+  });
+
+  it('进入 /search 被重定向到助理页：标题变「AI 助理」且出现助理输入框', async () => {
+    renderShell([], '/search');
+
+    const bar = appBar();
+    expect(await within(bar).findByText('AI 助理')).toBeTruthy();
+    expect(await screen.findByLabelText('给助理的消息')).toBeTruthy();
+  });
+});
+
 // 壳层与列表行玻璃：内容玻璃板已删，玻璃不再按「壁纸开关 + 固定总数」预算——顶栏 /
 // 侧边栏 / 底栏是常驻 chrome，列表每行自己是一块 data-glass="panel" 玻璃（对上游
 // anti-patterns "A glass surface per list item" 的明知偏离，见 surface.ts 文件头）。

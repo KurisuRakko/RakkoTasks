@@ -28,8 +28,8 @@ hundreds of messages. RakkoTasks digs them out, orders them, and waits for you.
 - **AI details.** When you open a task, the model reads your other emails for background (for
   example earlier notices about the same matter), writes up the details and lists the related
   emails. One tap copies everything as Markdown to paste into an AI chat.
-- **AI search.** Ask questions about your whole mail archive in natural language. Answers cite
-  the emails they came from, backed by SQLite FTS5 full-text search.
+- **AI assistant.** Chat about your whole mail archive and your to-dos in natural language. Answers cite
+  the emails they used (SQLite FTS5 full-text search), and it can create, complete, reopen and edit to-dos, with a receipt for every change.
 - **Calendar subscription.** Each user gets a tokenised iCalendar feed. Open tasks with a due
   date appear as all-day events in your system calendar, vanish when completed, and remind you
   at 10:00 on the due date. On iPhone the feed can be added with one tap via `webcal://`.
@@ -49,7 +49,7 @@ Mailboxes (IMAP) ──► worker (periodic sync) ──► SQLite (WAL + FTS5)
                           ▼                          │
                   LLM filter / distil          FastAPI backend ◄──► React frontend (PWA)
                                                      │
-                                          iCalendar feed / AI search
+                                          iCalendar feed / AI assistant
 ```
 
 - `backend/`: FastAPI application, sync worker, LLM pipeline and the command-line admin tool
