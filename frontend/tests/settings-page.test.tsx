@@ -263,7 +263,7 @@ describe('SettingsPage 玻璃分区与按钮配色', () => {
     });
   }
 
-  it('七个分区（账户状态…关于）都包在 data-glass="panel" 玻璃面板里，按渲染顺序对应', async () => {
+  it('八个分区（账户状态…关于）都包在 data-glass="panel" 玻璃面板里，按渲染顺序对应', async () => {
     vi.stubGlobal('fetch', makeFetchMock());
     render(
       <ThemeModeProvider>
@@ -274,7 +274,8 @@ describe('SettingsPage 玻璃分区与按钮配色', () => {
     );
 
     // 分区标题是静态内容，渲染即可断言；渲染顺序与页面书写顺序一致
-    const titles = ['邮箱账户', '外观', '壁纸', '日历订阅', '提醒事项同步', '账户', '关于'];
+    // （「同步状态」入口在「关于」之前）
+    const titles = ['邮箱账户', '外观', '壁纸', '日历订阅', '提醒事项同步', '账户', '同步状态', '关于'];
     const panels = Array.from(document.querySelectorAll('[data-glass="panel"]'));
     expect(panels).toHaveLength(titles.length);
     panels.forEach((panel, i) => {
