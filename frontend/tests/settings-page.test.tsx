@@ -382,9 +382,8 @@ describe('SettingsPage 壁纸', () => {
     expect(screen.queryByLabelText('壁纸预览')).toBeNull();
   });
 
-  it('壁纸预览块已从页面源码里删除（不是靠样式藏起来）', () => {
+  it('页面源码不写 theme.shape.borderRadius：sx 里的数字圆角是乘数，要写 px 字面量', () => {
     // jsdom 拿不到 emotion 生成样式的计算值，退一步做源码断言
-    expect(settingsPageSource).not.toContain('壁纸预览');
     expect(settingsPageSource).not.toContain('theme.shape.borderRadius');
   });
 
@@ -462,6 +461,28 @@ describe('SettingsPage 壁纸', () => {
       expect(screen.queryByText('裁剪壁纸')).toBeNull();
       expect(revoke).toHaveBeenCalledTimes(1);
       expect(revoke).toHaveBeenCalledWith(OBJECT_URL);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('退场途中再点「设为壁纸」：不重复渲染也不重复写入', async () => {
+    vi.useFakeTimers();
+    try {
+      renderSettings();
+      screen.getByRole('button', { name: '选择图片' });
+      pickImage();
+      await act(async () => {});
+
+      fireEvent.click(screen.getByRole('button', { name: '设为壁纸' }));
+      await act(async () => {
+        vi.advanceTimersByTime(Math.floor(MOTION.largeExit / 2));
+      });
+
+      // 退场还没跑完，按钮仍在 DOM 里可点——这一次不许再走一遍渲染与写入
+      fireEvent.click(screen.getByRole('button', { name: '设为壁纸' }));
+
+      expect(renderWallpaperMock).toHaveBeenCalledTimes(1);
     } finally {
       vi.useRealTimers();
     }

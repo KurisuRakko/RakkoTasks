@@ -85,7 +85,7 @@ export default function SettingsPage() {
   };
 
   /** 关窗：清空来源与 revoke 都在退场跑完（界面层的 onExited）之后做，退场那段时间图
-   *  还得在。cropOpen 兜一层——退场途中重复点按钮不再重复触发。 */
+   *  还得在。cropOpen 兜一层：重复点「取消」或点遮罩不会重复置位。 */
   const closeCrop = () => {
     if (!cropOpen) return;
     setCropOpen(false);
@@ -93,9 +93,11 @@ export default function SettingsPage() {
 
   /** 确认裁剪：先渲染裁剪区域，再持久化。渲染失败与写入失败分开提示；写入失败再按错误
    *  类型分流——超配额才是「图太大」，隐私模式等存储不可用的场景提示换小图是误导。
-   *  无论成败都关窗，失败提示交给 Snackbar。 */
+   *  无论成败都关窗，失败提示交给 Snackbar。
+   *  cropOpen 这一半挡的是重复确认：点过一次后按钮还在退场动画里可点，第二次不许再渲染
+   *  一次、再写一遍 localStorage、再弹一次提示。 */
   const handleCropConfirm = (area: WallpaperArea) => {
-    if (crop === null) return;
+    if (crop === null || !cropOpen) return;
     let dataUrl: string;
     try {
       dataUrl = renderWallpaper(crop.source.image, area);

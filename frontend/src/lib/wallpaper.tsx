@@ -103,7 +103,7 @@ export async function loadWallpaperSource(file: Blob): Promise<WallpaperSource> 
 }
 
 /** 裁剪区域 → JPEG data URL（上限见 MAX_EDGE / JPEG_QUALITY）。
- *  画的是 HTMLImageElement 而不是另解一份位图：裁剪器用 <img> 显示，按
+ *  画的是 HTMLImageElement 而不是 createImageBitmap 另解的位图：裁剪器用 <img> 显示，按
  *  naturalWidth/naturalHeight 算出 area；绘制走同一个 <img> 的解码结果，两边坐标系天然一致。 */
 export function renderWallpaper(image: HTMLImageElement, area: WallpaperArea): string {
   // 只缩不放：裁剪区域最长边不超过 1920 的保持原尺寸

@@ -2,10 +2,10 @@
 // 选中图片后打开。裁剪框锁定为当前视口比例——壁纸承载层是 position: fixed; inset: 0 +
 // background-size: cover，取景即最终所见。手机上双指缩放 / 拖动，桌面用下方缩放条。
 //
-// 入退场固定用 SlideUp，两个方向都由 MUI 自己跑。**不要**换成「支持 View Transitions 就把
-// MUI 过渡压成 0ms」的那套（lib/DialogTransition 的另一个导出）：它只给由容器变换长出来的
-// 对话框用，普通对话框拿了它会在 Chromium 上开关都没动效。组件常驻挂载、open 来自 props：
-// 退场期间还要把上一张图显示完，调用方在 onExited 里才 revoke object URL 并清空来源。
+// 入退场固定用 SlideUp，两个方向都由 MUI 自己跑。**不要**用 dialogTransitionProps()：它只给
+// 由容器变换长出来的对话框用，普通对话框用它会在 Chromium 上开关都没动效。组件常驻挂载、
+// open 来自 props：退场期间还要把上一张图显示完，调用方在 onExited 里才 revoke object URL
+// 并清空来源。
 
 import { useState } from 'react';
 import AppBar from '@mui/material/AppBar';
