@@ -1,9 +1,11 @@
-"""RFC822 解析测试：中文 header、multipart、合成 message_id、折行头展开。"""
+"""RFC822 解析测试：中文 header、multipart、合成 message_id、折行头展开、GB 系编码容错。"""
 import base64
 from datetime import datetime, timezone
 from email.header import Header
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+
+import pytest
 
 from app.imap.parser import parse_message
 
@@ -131,3 +133,76 @@ def test_rfc2231_continuation_filename():
     parsed = parse_message(raw)
 
     assert parsed["attachments"] == ["part1part2.pdf"]
+
+
+# ── gb2312 声明但内容含 GBK/GB18030 专有字符（QQ 等国内邮件常见） ────────
+
+# 「镕」「喆」不在 gb2312 里，只在 gbk/gb18030 里——这才是把严格解码逼到抛异常的字符
+GBK_ONLY = "镕喆"
+
+
+def _gbk_encoded_word(text: str, charset: str = "gb2312") -> str:
+    """声明成 charset、实际用 gbk 编码的 encoded-word（真实邮件的错标就是这样）。"""
+    return f"=?{charset}?B?" + base64.b64encode(text.encode("gbk")).decode() + "?="
+
+
+def test_gbk_only_chars_are_not_gb2312():
+    """前提校验：这两个字确实编不进 gb2312，否则下面的用例就不再是回归守卫。"""
+    with pytest.raises(UnicodeEncodeError):
+        GBK_ONLY.encode("gb2312")
+    assert GBK_ONLY.encode("gbk")
+
+
+def test_declared_gb2312_subject_with_gbk_only_chars_decodes():
+    """声明 gb2312 却含 GBK 专有字符的 Subject 要正常解码，不能退化成 encoded-word 乱码。"""
+    parsed = parse_message(_folded_subject_raw(_gbk_encoded_word(f"{GBK_ONLY}会议通知")))
+
+    assert parsed["subject"] == f"{GBK_ONLY}会议通知"
+
+
+def test_declared_gb2312_sender_with_gbk_only_chars_decodes():
+    """From 的显示名同理：encoded-word 与 <地址> 之间保留原有空格。"""
+    raw = (
+        f"From: {_gbk_encoded_word(GBK_ONLY + '张三')} <zhangsan@qq.com>\r\n"
+        "Date: Tue, 26 Aug 2026 10:00:00 +0800\r\n"
+        "Subject: x\r\n"
+        "MIME-Version: 1.0\r\n"
+        'Content-Type: text/plain; charset="utf-8"\r\n'
+        "\r\n"
+        "正文\r\n"
+    ).encode("utf-8")
+
+    sender = parse_message(raw)["sender"]
+
+    assert sender == f"{GBK_ONLY}张三 <zhangsan@qq.com>"
+
+
+def test_declared_gb2312_body_with_gbk_only_chars_decodes():
+    """正文同理：Content-Type 声明 gb2312、内容含 GBK 专有字符时要按 gb18030 解出来。"""
+    body = f"{GBK_ONLY}测试正文：会议室 3 号。"
+    raw = (
+        "From: a@example.com\r\n"
+        "Date: Tue, 26 Aug 2026 10:00:00 +0800\r\n"
+        "Subject: gbk body\r\n"
+        "MIME-Version: 1.0\r\n"
+        'Content-Type: text/plain; charset="gb2312"\r\n'
+        "Content-Transfer-Encoding: base64\r\n"
+        "\r\n" + base64.b64encode(body.encode("gbk")).decode() + "\r\n"
+    ).encode("ascii")
+
+    assert parse_message(raw)["text_body"] == body
+
+
+def test_declared_gbk_charset_variants_decode():
+    """gbk / x-gbk 等别名声明同样按 gb18030 解。"""
+    for charset in ("gbk", "x-gbk", "GB2312"):
+        parsed = parse_message(_folded_subject_raw(_gbk_encoded_word(f"{GBK_ONLY}通知", charset)))
+
+        assert parsed["subject"] == f"{GBK_ONLY}通知", charset
+
+
+def test_unknown_declared_charset_falls_back_to_utf8():
+    """声明了不存在的 charset（畸形邮件）也不能退化成 encoded-word 原样乱码。"""
+    word = "=?nosuch-charset?B?" + base64.b64encode("会议通知".encode()).decode() + "?="
+
+    assert parse_message(_folded_subject_raw(word))["subject"] == "会议通知"

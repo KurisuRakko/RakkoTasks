@@ -37,7 +37,7 @@ class Account(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_sub: Mapped[str] = mapped_column(ForeignKey("users.sub"), nullable=False, index=True)  # 归属用户
     name: Mapped[str] = mapped_column(String(128), nullable=False)
-    kind: Mapped[str] = mapped_column(String(16), nullable=False)  # gmail | microsoft
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)  # gmail | qq | microsoft
     email: Mapped[str] = mapped_column(String(256), nullable=False)
     ms_client_id: Mapped[str | None] = mapped_column(String(64))
     app_password: Mapped[str | None] = mapped_column(Text)  # Gmail 应用专用密码，明文，仅服务端 IMAP 使用

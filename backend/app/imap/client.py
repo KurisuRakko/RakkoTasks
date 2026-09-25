@@ -1,4 +1,4 @@
-"""IMAP 连接与按 UID 增量抓取：Gmail LOGIN / 微软 XOAUTH2。
+"""IMAP 连接与按 UID 增量抓取：Gmail / QQ LOGIN、微软 XOAUTH2。
 
 协议交互封装在 ImapClient（duck-typing 协议类），测试注入 FakeImap。
 """
@@ -11,7 +11,10 @@ from datetime import datetime, timedelta
 
 from app.config import Settings, get_settings
 
-GMAIL_IMAP_HOST = "imap.gmail.com"
+# 密码登录类 kind（IMAP LOGIN）→ 主机。这是「哪些 kind 用密码登录、连哪台主机」的
+# 唯一来源：connect_account 与 accounts 的凭据判断都以它为准，避免两处各写一遍。
+# foxmail.com / vip.qq.com 地址同样走 imap.qq.com。
+PASSWORD_IMAP_HOSTS = {"gmail": "imap.gmail.com", "qq": "imap.qq.com"}
 MS_IMAP_HOST = "outlook.office365.com"
 IMAP_PORT = 993
 
@@ -96,7 +99,7 @@ class ImapClient:
 
     # ---- 认证 ----
 
-    def login_gmail(self, email: str, password: str) -> None:
+    def login_password(self, email: str, password: str) -> None:
         self.conn.login(email, password)
 
     def login_xoauth2(self, email: str, token: str) -> None:
@@ -204,21 +207,23 @@ def build_search_criteria(last_uid: int, backfill_days: int) -> str:
 def connect_account(account, settings: Settings | None = None):
     """连接并登录账户，返回 (ImapClient, access_token)；失败时抛异常由调用方标记。
 
-    Gmail 凭据来自账户的 app_password（CLI 录入）；微软走 msal 静默取 token。
+    密码登录类账户（Gmail / QQ）凭据来自账户的 app_password（CLI 或网页录入，
+    QQ 是 16 位授权码而非 QQ 密码）；微软走 msal 静默取 token。
     """
     from app.imap import mstoken  # 延迟导入避免循环依赖
 
     settings = settings or get_settings()
     # 标准库默认上下文（ssl._create_stdlib_context）不校验证书也不核对主机名，
-    # 中间人可截走 Gmail 应用密码与微软 access token；必须显式传入
+    # 中间人可截走应用密码/授权码与微软 access token；必须显式传入
     # create_default_context()（CERT_REQUIRED + check_hostname）。
     tls_ctx = ssl.create_default_context()
-    if account.kind == "gmail":
+    host = PASSWORD_IMAP_HOSTS.get(account.kind)
+    if host:
         if not account.app_password:
-            raise RuntimeError("该 Gmail 账户未设置应用专用密码，请用 accounts set-password 录入")
-        conn = imaplib.IMAP4_SSL(GMAIL_IMAP_HOST, IMAP_PORT, ssl_context=tls_ctx)
+            raise RuntimeError("该账户未设置密码/授权码，请在设置页重新录入")
+        conn = imaplib.IMAP4_SSL(host, IMAP_PORT, ssl_context=tls_ctx)
         client = ImapClient(conn)
-        client.login_gmail(account.email, account.app_password)
+        client.login_password(account.email, account.app_password)
         return client, None
     if account.kind == "microsoft":
         token = mstoken.acquire_token_silent(account, settings)
