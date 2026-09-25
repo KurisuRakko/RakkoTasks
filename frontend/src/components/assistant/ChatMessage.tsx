@@ -56,15 +56,16 @@ export default function ChatMessage({
 
   return (
     <Box sx={{ alignSelf: 'stretch' }}>
-      {/* 整块回答挂一团雾（上游 .glass-review__note 档）：多行长文本只给整块挂，
-          note 档用 max-width: 72ch 占住可读行宽，bleed 取 0.4 × GLASS.hazeBleed。
+      {/* 整块回答挂一团雾：多行长文本只给整块挂，max-width: 72ch 占住可读行宽。
+          bleed 取满档 GLASS.hazeBleed——上游 note 档的 0.4 倍（约 11px）压在壁纸上显得太小，
+          长回答四角会露在云团实心核心之外。
           cloud 是默认形态，不写 data-haze——只有切 veil 才写该属性。 */}
       <Box
         data-glass="haze"
         sx={{
           typography: 'body1',
           maxWidth: '72ch',
-          '--glass-haze-bleed': `calc(0.4 * ${GLASS.hazeBleed})`,
+          '--glass-haze-bleed': GLASS.hazeBleed,
         }}
       >
         <SafeMarkdown breaks>{turn.content}</SafeMarkdown>
@@ -97,7 +98,7 @@ export default function ChatMessage({
             data-glass="haze"
             sx={{
               width: 'max-content',
-              '--glass-haze-bleed': `calc(0.3 * ${GLASS.hazeBleed})`,
+              '--glass-haze-bleed': `calc(0.6 * ${GLASS.hazeBleed})`,
             }}
           >
             引用邮件（{turn.citations.length}）
