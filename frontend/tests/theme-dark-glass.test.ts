@@ -133,6 +133,7 @@ describe('D1 深色纸色：暖的近黑，与中性色阶分家', () => {
 
   it('纸色是"近黑"不是中调：三个通道都在 0x18 以下，亮度低于深色 n1', () => {
     // 「近黑」是纸色的定义之一：它要能当页面地板的实体色，太亮会在深色界面里浮起来。
+    // 这里说的是色值本身，不牵连玻璃纸底与压暗层（那是 D3 / D8 的事）。
     // 顺带锁住它与深色 n1 的亮度关系（#1a1814 比 #141414 只亮 1.2 个点）。
     for (const [name, hex] of [
       ['PAPER.dark', PAPER.dark],
@@ -155,17 +156,18 @@ describe('D1 深色纸色：暖的近黑，与中性色阶分家', () => {
 });
 
 describe('D2 深色玻璃去雾：白层收敛，暗向保留', () => {
-  it('深色白层逐项钉死：rim .10 / lip .10 / lip-under .04 / side .04 / sheen-1 .06 / sheen-2 .02', () => {
-    expect(GLASS_AERO.dark.rim).toBe('rgba(255, 255, 255, 0.1)');
-    expect(GLASS_AERO.dark.lip).toBe('rgba(255, 255, 255, 0.1)');
-    expect(GLASS_AERO.dark.lipUnder).toBe('rgba(255, 255, 255, 0.04)');
-    expect(GLASS_AERO.dark.side).toBe('rgba(255, 255, 255, 0.04)');
-    expect(GLASS_AERO.dark.sheen1).toBe('rgba(255, 255, 255, 0.06)');
-    expect(GLASS_AERO.dark.sheen2).toBe('rgba(255, 255, 255, 0.02)');
+  it('深色白层逐项钉死：rim .14 / lip .16 / lip-under .06 / side .06 / sheen-1 .09 / sheen-2 .03', () => {
+    expect(GLASS_AERO.dark.rim).toBe('rgba(255, 255, 255, 0.14)');
+    expect(GLASS_AERO.dark.lip).toBe('rgba(255, 255, 255, 0.16)');
+    expect(GLASS_AERO.dark.lipUnder).toBe('rgba(255, 255, 255, 0.06)');
+    expect(GLASS_AERO.dark.side).toBe('rgba(255, 255, 255, 0.06)');
+    expect(GLASS_AERO.dark.sheen1).toBe('rgba(255, 255, 255, 0.09)');
+    expect(GLASS_AERO.dark.sheen2).toBe('rgba(255, 255, 255, 0.03)');
   });
 
-  it('深色 bloom 归零（透明写法而不是删键：配方的 box-shadow 层序不动）', () => {
-    expect(alphaOf(GLASS_AERO.dark.bloom)).toBe(0);
+  it('深色 bloom 是 3%（看得见但不成雾；写法保留，配方 box-shadow 层序不动）', () => {
+    expect(GLASS_AERO.dark.bloom).toBe('rgba(255, 255, 255, 0.03)');
+    expect(alphaOf(GLASS_AERO.dark.bloom)).toBeGreaterThan(0);
     expect(Object.keys(GLASS_AERO.dark)).toContain('bloom');
   });
 
@@ -211,10 +213,10 @@ describe('D2 深色玻璃去雾：白层收敛，暗向保留', () => {
 });
 
 describe('D3 深色玻璃更深：三档纸底只许上调', () => {
-  it('深色三档取值钉死：surface 58% / panel 72% / haze 66%', () => {
-    expect(GLASS_DARK.surfaceOpacity).toBe('58%');
-    expect(GLASS_DARK.panelOpacity).toBe('72%');
-    expect(GLASS_DARK.hazeOpacity).toBe('66%');
+  it('深色三档取值钉死：surface 52% / panel 60% / haze 55%', () => {
+    expect(GLASS_DARK.surfaceOpacity).toBe('52%');
+    expect(GLASS_DARK.panelOpacity).toBe('60%');
+    expect(GLASS_DARK.hazeOpacity).toBe('55%');
   });
 
   it('深色三档都严格高于浅色同名档，且不低于浅色地板 58/52/55', () => {
@@ -234,11 +236,12 @@ describe('D3 深色玻璃更深：三档纸底只许上调', () => {
     }
   });
 
-  it('三档的相对关系保留：chrome 最透 < haze < panel 最实', () => {
+  it('三档的相对关系保留：chrome 最透 = haze，两者都低于 panel 最实', () => {
     const surface = parseFloat(GLASS_DARK.surfaceOpacity);
     const haze = parseFloat(GLASS_DARK.hazeOpacity);
     const panel = parseFloat(GLASS_DARK.panelOpacity);
-    expect(surface).toBeLessThan(haze);
+    // surface 与 haze 同档（52 / 55 回调后 surface 压到地板，与 haze 只差 3 个点）
+    expect(surface).toBeLessThanOrEqual(haze);
     expect(haze).toBeLessThan(panel);
   });
 
@@ -266,14 +269,14 @@ describe('D3 深色玻璃更深：三档纸底只许上调', () => {
 });
 
 describe('D4 深色壁纸压暗：只有深色叠，浅色一层都不叠', () => {
-  it('压暗层是 35% 纯黑的实心渐变（<image> 而不是 <color>）', () => {
+  it('压暗层是 12% 纯黑的实心渐变（<image> 而不是 <color>）', () => {
     expect(WALLPAPER_SHADE_DARK).toBe(
-      'linear-gradient(rgba(0, 0, 0, 0.35), rgba(0, 0, 0, 0.35))',
+      'linear-gradient(rgba(0, 0, 0, 0.12), rgba(0, 0, 0, 0.12))',
     );
-    // 两端同色即实心：这是「一层 35% 纯黑」的合法写法
+    // 两端同色即实心：这是「一层 12% 纯黑」的合法写法
     expect([...WALLPAPER_SHADE_DARK.matchAll(/rgba\(0, 0, 0, ([\d.]+)\)/g)].map((m) => m[1])).toEqual([
-      '0.35',
-      '0.35',
+      '0.12',
+      '0.12',
     ]);
   });
 
@@ -417,7 +420,7 @@ describe('D4 深色壁纸压暗：只有深色叠，浅色一层都不叠', () =
     expect(stops, '压暗层应有两个同色色标').toHaveLength(2);
     for (const [rr, gg, bb, alpha] of stops) {
       expect([rr, gg, bb], '压暗色必须是纯黑').toEqual([0, 0, 0]);
-      expect(alpha).toBeCloseTo(0.35, 5);
+      expect(alpha).toBeCloseTo(0.12, 5);
     }
     expect(WALLPAPER_SHADE_DARK, '不得出现亮色通道（白压上去是漂白）').not.toContain('255');
     expect(rootVars('light')[WALLPAPER_SHADE_VAR], '浅色不得有可见压暗').toBe('none');
@@ -446,11 +449,79 @@ describe('D4 深色壁纸压暗：只有深色叠，浅色一层都不叠', () =
   });
 });
 
-describe('D5 深色文字光晕保持黑色、强度减半', () => {
-  it('深色光晕是黑色且 alpha 恰为浅色的一半', () => {
+describe('D8 深色不许压成黑板：壁纸的透出量有下限', () => {
+  // 上一轮把「72% 纸底 + 35% 压暗」一起上，两个乘子叠成约 1/18 的透出量，壁纸几乎看不见，
+  // 整屏读作一块黑板。观感是主观的，但它的成因可算：壁纸图层的黑色叠层与玻璃的纸底会
+  // **相乘**成同一个量，所以这一条把这个乘积钉出下限——太暗就是黑板，而下限之上的
+  // 具体档位由观感定（`太亮染脏黑纸` 那一侧是压暗层存在的理由，由「不加压暗会更亮」这一条反向钉住）。
+  const alphaOfLayer = (layer: string): number => {
+    const m = layer.match(/rgba\(0, 0, 0, ([\d.]+)\)/);
+    expect(m, `${layer} 应是纯黑 alpha 层`).not.toBeNull();
+    return parseFloat(m![1]);
+  };
+  /** '60%' → 0.6。必须显式解析：JS 的 '60%' / 100 是 NaN（TS 也不报错），
+   *  直接把百分比串丢进算术会静默算出 NaN，断言只会报 "expected NaN"。 */
+  const percentOf = (opacity: string): number => {
+    const m = opacity.match(/^([\d.]+)%$/);
+    expect(m, `${opacity} 应是百分比串`).not.toBeNull();
+    return parseFloat(m![1]) / 100;
+  };
+  /** 最上层黑叠层的 alpha 合成：out = mix(a, b)，顺序不影响结果 */
+  const stack = (...alphas: number[]): number => {
+    for (const a of alphas) expect(Number.isFinite(a), `alpha 应是有限数，收到 ${a}`).toBe(true);
+    return alphas.reduce((acc, a) => acc + a * (1 - acc), 0);
+  };
+  const shadeAlpha = alphaOfLayer(WALLPAPER_SHADE_DARK);
+  /** 玻璃压在壁纸上的透出量：壁纸可见比例（纸底与压暗相乘） */
+  const throughPanel = (opacity: string, shade: number): number =>
+    1 - stack(percentOf(opacity), shade);
+
+  it('panel 下的壁纸透出量 >= 0.3：看得见壁纸（回调后的实际值 0.352）', () => {
+    const value = throughPanel(GLASS_DARK.panelOpacity, shadeAlpha);
+    expect(value).toBeGreaterThanOrEqual(0.3);
+    // 上限只钉"玻璃本身仍要让壁纸透过来"：超过一半就不是深色玻璃了
+    expect(value).toBeLessThan(0.5);
+  });
+
+  it('对照物：上一轮的 72% + 35% 与更暗的档位都要低于下限（守卫不是空转的）', () => {
+    expect(throughPanel('72%', 0.35), '上一轮那套就是黑板').toBeLessThan(0.3);
+    expect(throughPanel('72%', 0.5)).toBeLessThan(0.3);
+    expect(throughPanel('90%', 0.6)).toBeLessThan(0.3);
+    expect(throughPanel('60%', 0.35), '不过压暗、只把纸底调回来也过不了').toBeLessThan(0.3);
+  });
+
+  it('压暗层确实在起作用：去掉它透出量会更高（这是压暗存在的理由）', () => {
+    // 反向对照——不是"越透越好"：不叠压暗的话 panel 只挡掉 60% 纸底，亮壁纸会明显透上来
+    const withoutShade = throughPanel(GLASS_DARK.panelOpacity, 0);
+    expect(withoutShade).toBeCloseTo(0.4, 3);
+    expect(withoutShade).toBeGreaterThan(throughPanel(GLASS_DARK.panelOpacity, shadeAlpha));
+    // 压暗必须轻于玻璃自己的纸底：压暗比纸底还重时，深色感就全由压暗层扛，壁纸先没了
+    expect(shadeAlpha).toBeLessThan(percentOf(GLASS_DARK.panelOpacity));
+  });
+
+  it('chrome / haze 档的透出量同样在下限之上（三档一起看）', () => {
+    for (const [name, opacity] of [
+      ['surface', GLASS_DARK.surfaceOpacity],
+      ['haze', GLASS_DARK.hazeOpacity],
+      ['panel', GLASS_DARK.panelOpacity],
+    ] as const) {
+      expect(throughPanel(opacity, shadeAlpha), `${name} 档不该压成黑板`).toBeGreaterThanOrEqual(0.3);
+    }
+  });
+
+  it('两个乘子都被钉在回调后的取值上（改任何一个都会让上面的区间失守）', () => {
+    expect(GLASS_DARK.panelOpacity).toBe('60%');
+    expect(shadeAlpha).toBeCloseTo(0.12, 5);
+    // 面板下 0.6 纸底 + 0.12 压暗 → 合成 0.648，透出量 0.352
+    expect(throughPanel(GLASS_DARK.panelOpacity, shadeAlpha)).toBeCloseTo(0.352, 3);
+  });
+});
+
+describe('D5 深色文字光晕保持黑色', () => {
+  it('深色光晕是黑色，两段都是 0.4（浅色的 80%）', () => {
     expect(GLASS_AERO.dark.textGlow).toMatch(/rgba\(0, 0, 0/);
     expect(GLASS_AERO.light.textGlow).toContain('255, 255, 255');
-    // 两段（近距 + 远距）都要减半：只改一段会让光晕出现两个强度层
+    // 两段（近距 + 远距）都要取同一个强度：只改一段会让光晕出现两个强度层
     const darkAlphas = [...GLASS_AERO.dark.textGlow.matchAll(/rgba\(0, 0, 0, ([\d.]+)\)/g)].map(
       (m) => parseFloat(m[1]),
     );
@@ -460,9 +531,10 @@ describe('D5 深色文字光晕保持黑色、强度减半', () => {
     expect(darkAlphas).toHaveLength(2);
     expect(lightAlphas).toHaveLength(2);
     darkAlphas.forEach((a, i) => {
-      // 逐段比：浅色两段都是 0.5 → 深色两段都必须是 0.25
-      expect(a, `深色光晕第 ${i + 1} 段应是浅色对应段的一半`).toBeCloseTo(lightAlphas[i] / 2, 5);
+      // 逐段比：浅色两段都是 0.5，深色是它的 80%
+      expect(a, `深色光晕第 ${i + 1} 段应是浅色对应段的 80%`).toBeCloseTo(lightAlphas[i] * 0.8, 5);
     });
+    expect(darkAlphas[0]).toBeCloseTo(0.4, 5);
     expect(rootVars('dark')['--glass-text-glow']).toBe(GLASS_AERO.dark.textGlow);
     expect(rootVars('light')['--glass-text-glow']).toBe(GLASS_AERO.light.textGlow);
   });

@@ -407,8 +407,9 @@ describe('玻璃可读性契约', () => {
         alphaOf(GLASS_AERO.light[key]),
       );
     }
-    // bloom 是内发光：它在黑纸上是唯一的纯雾源，深色必须归零而不是留一点
-    expect(alphaOf(GLASS_AERO.dark.bloom)).toBe(0);
+    // bloom 是内发光：它在黑纸上是最容易过量的一层，深色必须收到很低的量级（具体取值钉在
+    // tests/theme-dark-glass.test.ts），但不再归零——归零会让面板中心失去透镜感
+    expect(alphaOf(GLASS_AERO.dark.bloom), '深色 bloom 应远低于浅色').toBeLessThanOrEqual(0.05);
     // 白层清单之外，深色的 rim-inner（暗向）必须比浅色更深：厚度边的另一半靠它
     expect(alphaOf(GLASS_AERO.dark.rimInner)).toBeGreaterThan(alphaOf(GLASS_AERO.light.rimInner));
   });
