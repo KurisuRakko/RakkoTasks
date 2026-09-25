@@ -69,23 +69,20 @@ interface Props {
   onDeleted?: (id: number) => void;
 }
 
-// 详情对话框纸面：与右键菜单同档的 panel 玻璃（配置也是同一形状——只挂 data-glass
-// 与共享名，不下发任何材质）。提成模块级常量与 RowContextMenu 的 MENU_PAPER_PROPS 同理：
-// MUI 的 slotProps 类型对行内字面量做 excess property check，data-* 属性不在其类型里，
-// 常量赋值可绕过该检查。
+// 详情对话框纸面：与右键菜单同档的 panel 玻璃（只挂 data-glass 与共享名，不下发任何
+// 材质）。提成模块级常量与 RowContextMenu 的 MENU_PAPER_PROPS 同理：slotProps 的类型
+// 对行内字面量做 excess property check，data-* 不在其类型里，常量赋值可绕过该检查。
 //
-// 任何 background / border / boxShadow 都不许出现在这个 sx 里——写了会盖掉 rakko-glass.css
-// 的配方（App.tsx 的 injectFirst 把 emotion 插在 <head> 最前，同特异性下后插入的配方赢）。
-// 真要覆盖配方时必须写成 &[data-glass="panel"] 的嵌套选择器抬到 (0,2,0)，且 box-shadow 是
-// 整条替换——只写自己那一段会把配方的内唇高光一起抹掉（AppShell 的底栏就是这条教训）。
+// injectFirst 把 emotion 插在 <head> 最前，同特异性下 rakko-glass.css 的配方赢；要覆盖
+// 配方必须写成 &[data-glass="panel"] 抬到 (0,2,0)，且 box-shadow 是整条替换——只写自己
+// 那一段会把配方的内唇高光一起抹掉。所以这里的 sx 只放共享名。
 const DIALOG_PAPER_PROPS = {
   'data-glass': 'panel',
   sx: { viewTransitionName: VT_NAMES.sheet },
 };
 
-// 段与段之间只有一种分隔：MUI 的 Divider（颜色取 theme.palette.divider，MuiDivider 默认
-// 就是它，这里不重写色号）。间距也只有一个数——CHEATSHEET §Spacing 的 gap-4
-// （theme.spacing(2) = 16px）；三段共用同一个常量，不许某一段自己写一个 my。
+// 段与段之间只有一种分隔：MUI 的 Divider（颜色默认取 theme.palette.divider，不重写）。
+// 间距也只有一个数——CHEATSHEET §Spacing 的 gap-4（theme.spacing(2) = 16px）。
 const SECTION_DIVIDER_SX = { my: 2 } as const;
 
 export default function ItemDialog({ item, onClose, onChanged, onDeleted }: Props) {
@@ -222,8 +219,7 @@ export default function ItemDialog({ item, onClose, onChanged, onDeleted }: Prop
             任务详情
           </Typography>
           {/* 编辑：任何条目都能改字段与提醒；删除：仅手动条目（邮件条目后端仍拒删）。
-              删除是「进入危险流程的入口」，按按钮层级规则用 error 色（最终确认在下面的
-              确认框里，那个才是 contained error）；关闭与编辑是常规图标操作，色走 inherit。 */}
+              删除是进入危险流程的入口，色取 error；最终确认在下面的确认框里。 */}
           <IconButton color="inherit" aria-label="编辑" onClick={() => setEditorOpen(true)}>
             <EditIcon />
           </IconButton>
@@ -418,9 +414,7 @@ export default function ItemDialog({ item, onClose, onChanged, onDeleted }: Prop
           onClose={() => setEditorOpen(false)}
         />
       )}
-      {/* 删除确认框（仅手动条目会打开）。按钮层级按全站规则：三级/取消 = text + inherit，
-          危险的最终确认 = contained + error；DialogActions 本身就是右对齐的一行，
-          取消在左、确认在右，顺序由 JSX 保证。 */}
+      {/* 删除确认框（仅手动条目会打开）：取消在左、确认在右，都在 DialogActions 这一行里 */}
       <Dialog
         open={confirmDelete}
         onClose={deleting ? undefined : () => setConfirmDelete(false)}
@@ -445,8 +439,7 @@ export default function ItemDialog({ item, onClose, onChanged, onDeleted }: Prop
       </Dialog>
       <Snackbar
         open={snack !== null}
-        // 自动关闭时长由主题层 MuiSnackbar.defaultProps.autoHideDuration 统一给，
-        // 调用点不再各写一份（原先这里是 3000）
+        // 自动关闭时长由主题层 MuiSnackbar.defaultProps 统一给
         onClose={() => setSnack(null)}
         message={snack}
       />

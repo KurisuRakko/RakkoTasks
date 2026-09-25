@@ -17,9 +17,15 @@ import chipsSource from '../src/components/CategoryChips.tsx?raw';
 import tasksSource from '../src/pages/TasksPage.tsx?raw';
 import { resetLists } from '../src/lib/list-cache';
 import { LEAVE_DURATION } from '../src/lib/motion';
-import { ROW_CHIP_HEIGHT_PX, cardRowSx } from '../src/lib/surface';
+import {
+  ROW_CHIP_HEIGHT_PX,
+  cardRowSx,
+  rowGlassPaperSx,
+  rowStateLayerSx,
+} from '../src/lib/surface';
 import { MOTION, NEUTRAL_LIGHT, RADIUS } from '../src/rakko-tokens';
 import { DUE_SOON_DAYS } from '../src/lib/grouping';
+import { CATEGORIES } from '../src/types';
 import type { AccountInfo, Item } from '../src/types';
 import {
   allStyleText,
@@ -695,14 +701,59 @@ describe('列表行布局（chip 恒横排在标题首行右侧，且不挤压�
     expect(rule, '11px 不在契约字阶上，不许回退').not.toContain('font-size:0.6875rem');
   });
 
-  it('行体三档状态层按 motion 契约：hover / pressed / focus-visible + primary 描边环', async () => {
-    // jsdom 求不出 :hover/:active 的实际值，但 emotion 把选择器与声明原样插进 <style>，
-    // 可以逐字断言（同本文件其余样式断言的做法）。状态层住在嵌套规则块里
-    // （`.<行体类名>:hover{…}`），ownRules 只到第一个嵌套块结束，所以这里改按
-    // 「以本元素自己的类名开头 + 伪类」直接定位到那一条规则——只认本元素的类，
-    // 别的元素恰好也写了 outline 之类的假通过可以排除。
-    // 用应用真实主题渲染（renderWithAppTheme）：描边色取的是 theme.palette.primary.main，
-    // 默认主题下那是 MUI 的蓝（#1976d2），只有真主题才验得到 Rakko 的梅色
+  it('状态层是叠在纸面之上的一层：三个状态块都不带 background(-color)', () => {
+    // 状态层直接写 backgroundColor 会替换玻璃配方那层 58% 纸色（配方在 [data-glass='panel']
+    // 是 (0,1,0)，行内 sx 的 :hover 是 (0,2,0)）——纸色地板会被抹掉。所以状态层改成
+    // ::after 覆盖层，靠 opacity 表达。这里直接对产出的 sx 对象断结构，不依赖 CSS 文本。
+    const blocks = Object.entries(rowStateLayerSx() ?? {});
+    const keys = blocks.map(([k]) => k);
+    const bodyOf = (sel: string): string => {
+      const hit = blocks.find(([k]) => k === sel);
+      expect(hit, `rowStateLayerSx 缺少 ${sel} 规则`).toBeDefined();
+      return JSON.stringify(hit![1]);
+    };
+
+    // 覆盖层本身
+    expect(keys, '状态层必须画在 ::after 覆盖层上').toContain('&::after');
+    const overlay = bodyOf('&::after');
+    expect(overlay, '覆盖层不吃点击').toContain('pointerEvents');
+    expect(overlay, '覆盖层默认不可见').toContain('opacity');
+    expect(overlay, '覆盖层不占布局').toContain('absolute');
+
+    // 三档状态块：只调 opacity，一个背景声明都不许有
+    for (const sel of ['&:hover::after', '&:active::after', '&.Mui-focusVisible::after']) {
+      const body = bodyOf(sel);
+      expect(body, `${sel} 不许替换背景`).not.toMatch(/background/i);
+      expect(body, `${sel} 用 opacity 表达状态层`).toContain('opacity');
+    }
+    // 焦点描边环挂在行体本身
+    expect(bodyOf('&.Mui-focusVisible'), 'focus-visible 用 primary 描边环').toContain('outline');
+  });
+
+  it('行玻璃纸色的重申抬到 (0,3,0)，值就是配方表达式：MUI 自带 hover 抹不掉纸色', () => {
+    // MUI 的 ListItemButton 根样式自带 `&:hover`/`&.Mui-focusVisible` 的 background-color
+    // （(0,2,0)），高于配方 [data-glass='panel'] 的 (0,1,0)。不钉回来的话悬停/聚焦时
+    // 58% 纸色会被换成 4%/8% 的近透明色。
+    const entries = Object.entries(rowGlassPaperSx() ?? {});
+    expect(entries).toHaveLength(2);
+    for (const [sel, value] of entries) {
+      // 选择器必须是「本元素 + 属性限定」：类 + [data-glass] + 伪类 = (0,3,0)
+      expect(sel, '纸色重申必须带 data-glass 属性限定才压得住 MUI').toContain(
+        '[data-glass="panel"]',
+      );
+      // 值必须是配方同一条表达式（同两个 CSS 变量），不许写死纸色数值
+      expect(JSON.stringify(value), '值取配方表达式，不写死数值').toContain(
+        'color-mix(in srgb, var(--color-paper) var(--glass-panel-opacity), transparent)',
+      );
+    }
+    const sels = entries.map(([k]) => k).join(' ');
+    expect(sels, '悬停态要钉').toContain(':hover');
+    expect(sels, '焦点态要钉').toContain('.Mui-focusVisible');
+  });
+
+  it('行体三档状态层落到真实样式表：::after 覆盖层与纸色重申都在', async () => {
+    // jsdom 求不出 :hover 的实际值，改钉交付物：渲染后行体的规则里必须有 ::after 覆盖层
+    // （pointer-events: none 让它不吃点击），且 (0,3,0) 的纸色重申进了样式表。
     vi.stubGlobal('fetch', vi.fn(async () => json({ items: ITEMS })));
     renderWithAppTheme(
       <MemoryRouter useTransitions={false}>
@@ -715,45 +766,29 @@ describe('列表行布局（chip 恒横排在标题首行右侧，且不挤压�
       '.MuiListItemButton-root',
     ) as HTMLElement;
     const classes = Array.from(rowBtn.classList).filter((c) => c.startsWith('css-'));
-    expect(classes, '行体没挂 emotion 局部类，下面的断言会空转').not.toHaveLength(0);
+    expect(classes, '行体没挂 emotion 局部类，断言会空转').not.toHaveLength(0);
     const css = allStyleText();
 
-    // 三档状态层：MUI 的 ListItemButton 只有 hover 与 focus，pressed（12%）要自己补。
-    // 逐个状态都要求「行体自己的类名带出该伪类」，别的元素顺带写的选择器不算数。
-    for (const [label, suffix] of [
-      ['hover 状态层', ':hover'],
-      ['pressed 状态层（MUI 没有这一档）', ':active'],
-      ['focus-visible 状态层', '.Mui-focusVisible'],
-    ] as const) {
-      const own = classes.map((cls) => `.${cls}${suffix}`);
-      expect(
-        own.some((sel) => css.includes(sel)),
-        `${label}：需要行体自己的类名带出 ${suffix}`,
-      ).toBe(true);
-    }
+    const ownAfter = classes.map((cls) => `.${cls}::after`);
+    const afterRule = css
+      .split('}\n')
+      .find((chunk) => ownAfter.some((sel) => chunk.includes(sel)));
+    expect(afterRule, '行体没有 ::after 覆盖层规则').toBeDefined();
+    expect(afterRule!, '覆盖层不吃点击').toContain('pointer-events:none');
+    expect(afterRule!, '覆盖层铺满行体').toContain('inset:0');
 
-    // 某个伪类下的全部声明：emotion 会把同一条规则拆进多个 style 标签（MUI 根样式与
-    // sx 各插一份），所以要按「以本元素的类名 + 伪类开头」把所有片段收起来再断言，
-    // 不能只取第一次出现的那段——第一段可能只有底色、没有描边。
-    const declsFor = (suffix: string): string =>
-      css
-        .split('}\n')
-        .filter((chunk) =>
-          classes.some((cls) => chunk.includes(`.${cls}${suffix}`)),
-        )
-        .join(' ');
-    const hoverDecls = declsFor(':hover');
-    expect(hoverDecls, 'hover 状态层没读到').not.toBe('');
-    expect(hoverDecls, 'hover 状态层必须有底色').toContain('background-color');
-    // 键盘焦点用 primary 描边环，不能只靠 MUI 的涟漪（涟漪只在按下时出现）
-    const focusDecls = declsFor('.Mui-focusVisible');
-    expect(focusDecls, 'focus-visible 规则没读到').not.toBe('');
-    expect(focusDecls, 'focus-visible 用 primary 描边环').toContain('outline:2px solid');
-    expect(focusDecls, '描边的偏移量').toContain('outline-offset:2px');
-    expect(focusDecls, '描边色取主题的 primary.main').toContain('#c56473');
-    // 状态层时长必须来自 motion 契约的 state 档（160ms），不是 MUI 默认的 150ms
-    expect(css, '状态层过渡时长取 motion 契约的 state 档').toContain(
-      'transition:background-color 160ms cubic-bezier(0.4, 0, 0.2, 1)',
+    const ownPin = classes.map((cls) => `.${cls}[data-glass="panel"]:hover`);
+    const pinRule = css
+      .split('}\n')
+      .find((chunk) => ownPin.some((sel) => chunk.includes(sel)));
+    expect(pinRule, '纸色重申没进样式表：MUI 的 hover 会盖掉玻璃纸色').toBeDefined();
+    expect(pinRule!, '纸色重申必须回到配方表达式').toContain(
+      'color-mix(in srgb, var(--color-paper) var(--glass-panel-opacity), transparent)',
+    );
+
+    // 状态层只过渡 opacity，且时长取 motion 契约的 state 档（160ms），不是 MUI 默认 150ms
+    expect(afterRule!, '覆盖层只过渡 opacity').toContain(
+      'transition:opacity 160ms cubic-bezier(0.4, 0, 0.2, 1)',
     );
   });
 });
@@ -866,6 +901,48 @@ describe('TasksPage haze 底衬（分组标题与 chips 行）', () => {
     expect(stackStart).toBeGreaterThan(-1);
     const stackTag = chipsSource.slice(stackStart, chipsSource.indexOf('>', stackStart));
     expect(stackTag).toContain('overflowX');
+  });
+
+  it('分类筛选 chip 的选中/未选中口径与表单里的单选 chip 一致', async () => {
+    // 同一角色（单选 chip）只允许一种样式：选中 = filled primary，未选中 = outlined 中性色。
+    // 未选中的那几枚不是待点的主操作，描 primary 边框会让整行看着像一排主按钮。
+    const fetchMock = vi.fn(async () => json({ items: ITEMS }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(
+      <MemoryRouter useTransitions={false}>
+        <TasksPage />
+      </MemoryRouter>,
+    );
+    await screen.findByText('重要任务');
+
+    const chipFor = (label: string): HTMLElement =>
+      screen.getByText(label).closest('.MuiChip-root') as HTMLElement;
+
+    // 初始 value = null：「全部」选中，其余全未选中
+    const all = chipFor('全部');
+    expect(all.className, '选中的筛选 chip 是实心').toMatch(/MuiChip-filled/);
+    expect(all.className, '选中的筛选 chip 取 primary').toMatch(/MuiChip-colorPrimary/);
+
+    for (const c of CATEGORIES) {
+      const chip = chipFor(c);
+      expect(chip.className, `${c} 未选中应为 outlined`).toMatch(/MuiChip-outlined/);
+      expect(chip.className, `${c} 未选中不许带 primary 色`).not.toMatch(
+        /MuiChip-colorPrimary/,
+      );
+      expect(chip.className, `${c} 未选中应是中性 default 色`).toMatch(
+        /MuiChip-colorDefault/,
+      );
+    }
+
+    // 点一枚分类：「全部」退回未选中，被点的那枚变成实心 primary
+    fireEvent.click(chipFor('工作'));
+    expect(chipFor('工作').className, '被选中的分类取 primary 实心').toMatch(
+      /MuiChip-colorPrimary/,
+    );
+    expect(chipFor('工作').className).toMatch(/MuiChip-filled/);
+    expect(chipFor('全部').className, '「全部」不再是选中态').toMatch(/MuiChip-outlined/);
+    expect(chipFor('全部').className).not.toMatch(/MuiChip-colorPrimary/);
   });
 
   it('分类筛选 chip 的字号锁在契约字阶 label-12（12px），不再是 11px', async () => {

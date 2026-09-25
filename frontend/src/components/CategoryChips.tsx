@@ -12,10 +12,8 @@ interface Props {
   onChange: (value: Category | null) => void;
 }
 
-/** 筛选 chip 的度量：字号锁在契约字阶的 label-12（12px）。行内标签档是 11px 时代
- *  留下的尾巴，12 是字阶上最小的一档，也是全站 chip 的统一字号。
- *  高度、圆角不在这里覆盖：高度 = 字号 + 上下内边距（MUI 按 fontSize 算），
- *  圆角由主题层的 MuiChip.root 统一给 RADIUS.chip，两处都不允许各自写死一份。 */
+/** 筛选 chip 的度量：字号锁在契约字阶的 label-12（12px），与全站 chip 同一字号。
+ *  高度与圆角不在这里覆盖（归字号推出的行高与主题层的 MuiChip.root）。 */
 const FILTER_CHIP_SX = { fontSize: `${TYPE_SCALE['label-12'].size}px` } as const;
 
 export default function CategoryChips({ value, onChange }: Props) {
@@ -53,7 +51,9 @@ export default function CategoryChips({ value, onChange }: Props) {
         label="全部"
         size="small"
         variant={value === null ? 'filled' : 'outlined'}
-        color="primary"
+        // 选中 = filled primary，未选中 = outlined 中性色：未选中的那几枚不是待点的主操作，
+        // 描 primary 边框会让整行看着像一排主按钮（与 ItemFieldsForm 的单选 chip 同一口径）
+        color={value === null ? 'primary' : 'default'}
         sx={FILTER_CHIP_SX}
         onClick={() => onChange(null)}
       />
@@ -63,7 +63,7 @@ export default function CategoryChips({ value, onChange }: Props) {
           label={c}
           size="small"
           variant={value === c ? 'filled' : 'outlined'}
-          color="primary"
+          color={value === c ? 'primary' : 'default'}
           sx={FILTER_CHIP_SX}
           onClick={() => onChange(c)}
         />

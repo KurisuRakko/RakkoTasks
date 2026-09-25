@@ -13,8 +13,8 @@
 // 道理）。这里只补配方不管的圆角。行间距见 ROW_GAP_PX。
 
 import type { Theme } from '@mui/material/styles';
-import type { SxProps, SystemStyleObject } from '@mui/system';
-import { MOTION, RADIUS, TYPE_SCALE } from '../rakko-tokens';
+import type { SystemStyleObject } from '@mui/system';
+import { MOTION, RADIUS, STATE_OPACITY, TYPE_SCALE } from '../rakko-tokens';
 
 /** 列表行玻璃之间的竖向间距（px）。离场折叠时必须跟着归零：
  *  间距做在 ListItem 的 padding 上（见 motion.rowSx），折叠收行高时一并收起。 */
@@ -39,15 +39,8 @@ export function cardRowSx(): SystemStyleObject<Theme> {
  *  中线上，chip 高了低了都会看出一列歪。 */
 export const ROW_CHIP_HEIGHT_PX = 22;
 
-/** 行内小标签（截止日、重要度）的度量：label-12 字阶（12px / 行高 1.5 → 18px）配
- *  ROW_CHIP_HEIGHT_PX 的盒高，横向内边距收到 6px。
- *
- *  为什么不是 MUI 的 size="small"：那是 24px / 13px，比行内的小标签大一整档，横排在标题
- *  首行右侧时会把行撑高。为什么不是 11px（0.6875rem）：11 不在契约字阶上，Rakko Design
- *  的字阶只有 label-12 / copy-13/14/…；行内元信息用最小的那一档 label-12。
- *
- *  单一来源：TasksPage 的「重要」标签与 DueChip 共用本函数——同一角色只允许一种尺寸，
- *  两处各写一份就是两份会各自漂移的数字。 */
+/** 行内小标签的度量：label-12 字阶（12px）+ ROW_CHIP_HEIGHT_PX 盒高 + label 左右 6px。
+ *  TasksPage 的「重要」与 DueChip 共用这一份——同一角色只允许一种尺寸。 */
 export function rowChipSx(): SystemStyleObject<Theme> {
   return {
     height: ROW_CHIP_HEIGHT_PX,
@@ -56,37 +49,43 @@ export function rowChipSx(): SystemStyleObject<Theme> {
   };
 }
 
-/** 列表行的状态层（hover / pressed / focus-visible），按 references/motion.md：
- *  状态层用控件当前的前景色、hover 4% / focus 8% / pressed 12%，时长 --motion-duration-state。
- *
- *  MUI 的 ListItemButton 自带 hover（action.hover = n10 4%）与 focus（action.selected +
- *  action.focusOpacity）；这里显式写死三档的理由有三条：
- *  1. pressed 是 MUI **没有**的一档：ListItemButton 的根样式没有任何 &:active 规则，
- *     按下只有涟漪、没有状态层。12% 的按下反馈要自己补。
- *  2. 色号统一走 theme.palette.action.*（值来自 rakko-tokens 的 STATE_OPACITY），
- *     不写 rgba 字面量，也不依赖 MUI 的根样式是否恰好还是这几个值。
- *  3. focus-visible 用 primary 描边环（同 theme.ts 的 MuiButtonBase），不靠涟漪：
- *     涟漪只在按下时出现，键盘 Tab 过来必须能立刻看见焦点在哪一行。
- *
- *  transition 只列 background-color（不是 transition: all）：状态层只承诺一件事——底色，
- *  顺带过渡别的属性会让行看起来不稳定（contract 的 anti-patterns 明列 transition: all）。
- *  outline 是瞬变属性，不进 transition。 */
+/** 列表行的状态层：叠在纸面之上的一层（::after + opacity），不替换任何背景。
+ *  hover/focus/pressed 取 STATE_OPACITY，层色取控件前景色，时长取 motion 的 state 档。
+ *  焦点另加 primary 描边环——涟漪只在按下时出现，键盘 Tab 必须立刻看得见焦点在哪一行。 */
 export function rowStateLayerSx(): SystemStyleObject<Theme> {
-  const stateTransition = `background-color ${MOTION.state}ms ${MOTION.easeStandard}`;
   return {
-    transition: stateTransition,
-    '&:hover': {
-      backgroundColor: (theme: Theme) => theme.palette.action.hover,
-      transition: stateTransition,
+    // ButtonBase 自带 position: relative；这里重申一次，保证 ::after 的包含块就是行本身
+    position: 'relative',
+    '&::after': {
+      content: '""',
+      position: 'absolute',
+      inset: 0,
+      borderRadius: 'inherit',
+      pointerEvents: 'none',
+      backgroundColor: (theme: Theme) => theme.palette.text.primary,
+      opacity: 0,
+      transition: `opacity ${MOTION.state}ms ${MOTION.easeStandard}`,
     },
-    '&:active': {
-      backgroundColor: (theme: Theme) => theme.palette.action.selected,
-    },
+    '&:hover::after': { opacity: STATE_OPACITY.hover },
+    '&.Mui-focusVisible::after': { opacity: STATE_OPACITY.focus },
+    '&:active::after': { opacity: STATE_OPACITY.pressed },
     '&.Mui-focusVisible': {
-      backgroundColor: (theme: Theme) => theme.palette.action.focus,
       outline: (theme: Theme) => `2px solid ${theme.palette.primary.main}`,
       outlineOffset: '2px',
     },
+  };
+}
+
+/** 行玻璃纸色的重申，抬到 (0,3,0) 才压得住 MUI：ListItemButton 根样式自带 `&:hover`
+ *  与 `&.Mui-focusVisible` 的 background-color（(0,2,0)），高于配方 [data-glass='panel']
+ *  的 (0,1,0)，悬停/聚焦会把 58% 纸色换成 4%/8% 的近透明色。值钉回配方同一表达式
+ *  （同两个 CSS 变量，不写死数值），纸色地板在任何状态下都不下调。 */
+export function rowGlassPaperSx(): SystemStyleObject<Theme> {
+  const paper =
+    'color-mix(in srgb, var(--color-paper) var(--glass-panel-opacity), transparent)';
+  return {
+    '&[data-glass="panel"]:hover': { backgroundColor: paper },
+    '&[data-glass="panel"].Mui-focusVisible': { backgroundColor: paper },
   };
 }
 
@@ -125,18 +124,4 @@ export function hitSlopSx(size = HIT_SLOP_MIN_PX): SystemStyleObject<Theme> {
       height: size,
     },
   };
-}
-
-/** 本模块的 sx 片段都是**叠进数组**用的（`sx={[a, b, c]}`），而 MUI 的 sx 数组元素类型
- *  里没有 T | null：把 SystemStyleObject 与调用方传进来的 SxProps（内部含 null 与嵌套
- *  数组）直接塞进字面量数组，字面量的推断类型会宽到匹配不上 Chip / ListItemButton 的
- *  sx 重载。本函数就是这个数组的类型出口：
- *  `sx={stackSx([cardRowSx(), rowStateLayerSx(), { … }])}`。
- *
- *  为什么不用 `[a, ...(extra ? [extra] : [])]` 手写：那条表达式里 `extra` 是 SxProps、
- *  含嵌套数组与 null，展开后的推断类型比 SxProps 更宽，标注会直接报错（实测）。
- *  `readonly unknown[]` 收参、内部一次断言成 SxProps——断言是这里唯一的转义点，
- *  也只断言「这些片段本来就是合法的 sx」。 */
-export function stackSx(parts: readonly unknown[]): SxProps<Theme> {
-  return parts as SxProps<Theme>;
 }

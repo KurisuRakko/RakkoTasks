@@ -30,6 +30,7 @@ import ListSubheader from '@mui/material/ListSubheader';
 import Snackbar from '@mui/material/Snackbar';
 import Stack from '@mui/material/Stack';
 import Typography from '@mui/material/Typography';
+import type { SxProps, Theme } from '@mui/material/styles';
 import AddIcon from '@mui/icons-material/Add';
 import { createItem, fetchItems, fetchStatus, parseTask, patchItem, quickAddTask } from '../lib/api';
 import { groupItems, isNewToday } from '../lib/grouping';
@@ -43,7 +44,13 @@ import {
 } from '../lib/motion';
 import { useLongPress } from '../lib/long-press';
 import { useNavigateTo } from '../lib/nav';
-import { cardRowSx, hitSlopSx, rowChipSx, rowStateLayerSx, stackSx } from '../lib/surface';
+import {
+  cardRowSx,
+  hitSlopSx,
+  rowChipSx,
+  rowGlassPaperSx,
+  rowStateLayerSx,
+} from '../lib/surface';
 import { todayIso } from '../lib/time';
 import { GLASS, MOTION, TYPE_SCALE } from '../rakko-tokens';
 import type { Category, Item, ItemFields } from '../types';
@@ -73,13 +80,11 @@ type Snack = { text: string; item: Item | null };
 type Point = { x: number; y: number };
 
 /** 行内元信息标签：与 DueChip 同源（lib/surface 的 rowChipSx）——label-12 字阶 +
- *  22px 盒高，横排在标题首行右侧时不超过 TITLE_LINE_H（22），与今日点、勾选框共用
- *  同一条中线，不会把行撑高。chip 圆角由主题层的 MuiChip.root 统一给 RADIUS.chip。
- *  这里不再是自己的一份数字：同一角色的标签只允许一种尺寸，两处各写一份必然漂移。 */
+ *  22px 盒高，与今日点、勾选框共用标题首行中线；chip 圆角由主题层的 MuiChip.root 给。 */
 const META_CHIP_SX = rowChipSx();
 
-// 间距取 Rakko Design CHEATSHEET §Spacing & radius 的 gap-1（4px，inline icon ↔ text）：
-// 同一行内相邻小元素就该用这一档；3px 不在任何间距梯度上，是随手写下的数。
+// 间距取 Rakko Design CHEATSHEET §Spacing & radius 的 gap-1（4px，inline icon ↔ text）；
+// 3px 不在任何间距梯度上，是随手写下的数。
 const META_CHIP_GAP = '4px';
 
 /** 标题首行的行盒高度：行左侧的今日点与勾选框都以它为中线基准。与 theme 的
@@ -117,15 +122,12 @@ function TaskRow({
   // 长按 500ms 弹菜单（touch 路径与桌面 contextmenu 分开，理由见 lib/long-press.ts）；
   // 触发点坐标给菜单定位。长按与点击各自独立：长按不吞行点击，弹菜单后由菜单项接手
   const longPress = useLongPress((point) => onMenuOpen(item, point));
-  // 行体三段 sx 的静态部分（圆角 / 状态层 / 网格布局）。三段都是 SystemStyleObject /
-  // SxProps 混叠，要经 stackSx 收成 SxProps 才匹配得上 ButtonBase 的 sx 重载
-  // （机制见 lib/surface 的 stackSx）。
-  const buttonSx = stackSx([
+  // 行体 sx 的静态部分：圆角 / 纸色重申 / 状态层 / 网格布局（机制见 lib/surface 各函数）
+  const buttonSx: SxProps<Theme> = [
     cardRowSx(),
-    // 状态层（hover 4% / pressed 12% / focus-visible 8% + primary 描边环）按
-    // references/motion.md 写死在行上，不靠 MUI 默认涟漪：涟漪只在按下时出现，
-    // 键盘 Tab 过来必须立刻看得见焦点，pressed 那一档 MUI 根本没有。机制见
-    // lib/surface 的 rowStateLayerSx
+    // MUI 的 ListItemButton 自带 :hover 与 .Mui-focusVisible 的 background-color，
+    // 特异性高于玻璃配方，会把纸色抹掉——先把它钉回纸色，状态层再叠在纸面之上
+    rowGlassPaperSx(),
     rowStateLayerSx(),
     {
       // 行内是四列单行 grid：今日点(12px) / 勾选(auto) / 标题+摘要(可收缩 1fr) /
@@ -155,15 +157,12 @@ function TaskRow({
       columnGap: '8px',
       // 长按行体时 iOS 会弹系统文本选择菜单（触摸保持 500ms 即触发），行内文字
       // 也不是可选中文本——userSelect 与 WebkitTouchCallout 一并关掉，长按只走
-      // 我们自己的手势（合并进 cardRowSx 的 sx 数组，surface.ts 不动）
+      // 我们自己的手势。
       WebkitTouchCallout: 'none',
       userSelect: 'none',
-      // 竖向内边距不再覆盖：ListItemButton 的 MUI 默认值就是 8px，正好落在 8px
-      // 网格上。此前压到 6px 是想把行压矮，可行高现在由 ROW_MIN_HEIGHT_PX 决定，
-      // 6px 只对**带摘要的多行行**有效——而那恰恰是最需要留白的行，删掉。
-      // （6px 本身也不在任何间距梯度上。）
+      // 竖向内边距不覆盖：ListItemButton 的 MUI 默认值 8px 正好落在 8px 网格上
     },
-  ]);
+  ];
   return (
     <ListItem
       disablePadding
@@ -698,8 +697,7 @@ export default function TasksPage() {
       />
       <Snackbar
         open={snack !== null}
-        // 自动关闭时长由主题层 MuiSnackbar.defaultProps.autoHideDuration 统一给，
-        // 调用点不再各写一份（原先这里是 3000，与别处不一致）
+        // 自动关闭时长由主题层 MuiSnackbar.defaultProps 统一给
         onClose={() => setSnack(null)}
         message={snack ? snack.text : null}
         action={
