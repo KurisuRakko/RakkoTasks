@@ -181,7 +181,6 @@ describe('玻璃材质变量下发与让位', () => {
       '--glass-surface-opacity': GLASS.surfaceOpacity,
       '--glass-panel-opacity': GLASS.panelOpacity,
       '--glass-scrim-opacity': GLASS.scrimOpacity,
-      '--glass-highlight': GLASS.highlight,
       '--glass-haze-opacity': GLASS.hazeOpacity,
       '--glass-haze-bleed': GLASS.hazeBleed,
     };
@@ -190,6 +189,17 @@ describe('玻璃材质变量下发与让位', () => {
       for (const [cssVar, tokenValue] of Object.entries(expected)) {
         expect(vars[cssVar], `${mode} ${cssVar}`).toBe(tokenValue);
       }
+    }
+  });
+
+  it('5a2. GLASS 里没有 highlight，:root 也不下发 --glass-highlight', () => {
+    // 镜面高光是「左上透镜」配方的角色；本套玻璃的光泽全部由 --glass-sheen-1..3 与
+    // --glass-rim / --glass-lip 出，没有任何规则读这个变量。留着只会让测试替一个死键护航。
+    expect(Object.keys(GLASS)).not.toContain('highlight');
+    for (const mode of ['light', 'dark'] as const) {
+      expect(rootVars(mode), `${mode} 不该再下发 --glass-highlight`).not.toHaveProperty(
+        '--glass-highlight',
+      );
     }
   });
 
@@ -216,7 +226,7 @@ describe('玻璃材质变量下发与让位', () => {
       const bg = layer!.backgroundImage;
       expect(typeof bg).toBe('string');
       expect(bg as string).toContain('var(--rtk-wallpaper');
-      // 驯化层已移除：不再有纸色 color-mix 叠加层，壁纸显示用户原图
+      // 壁纸层不带纸色 color-mix 叠加：壁纸显示用户原图
       expect(bg as string).not.toContain('color-mix');
     }
   });
@@ -294,12 +304,12 @@ describe('玻璃材质变量下发与让位', () => {
     expect(rootStyles.backgroundColor).toBe('transparent');
   });
 
-  it('5j. 壁纸层由 #rtk-wallpaper 真实 DOM 节点承载：body 不再带背景，承载层 fixed / inset 0 / z-index -1 / pointer-events none，且无 backgroundAttachment', () => {
+  it('5j. 壁纸层由 #rtk-wallpaper 真实 DOM 节点承载：body 不带背景，承载层 fixed / inset 0 / z-index -1 / pointer-events none，且无 backgroundAttachment', () => {
     for (const mode of ['light', 'dark'] as const) {
       const styles = globalStyles(mode);
       const body = styles.body as Record<string, unknown>;
-      // 背景已挪进真实 DOM 承载层，body 只剩排版属性；backgroundAttachment: fixed 整条删除——
-      // 固定由 position: fixed 提供，留着是死代码
+      // 背景在真实 DOM 承载层上，body 只剩排版属性；backgroundAttachment 不设——
+      // 固定由 position: fixed 提供，写了是死代码
       expect(body['&::before']).toBeUndefined();
       expect(body.backgroundImage).toBeUndefined();
       expect(body.backgroundAttachment).toBeUndefined();
@@ -342,9 +352,8 @@ describe('玻璃材质变量下发与让位', () => {
   });
 });
 
-describe('玻璃高光恒为一档（不再按有没有壁纸分流）', () => {
-  // 「没有壁纸」已不是一种状态：用户没设时背景是默认壁纸，玻璃身后永远有图像可透，
-  // 因此主题层不再下发任何按图源分流 --glass-highlight 的选择器。
+describe('玻璃高光不按图源分流，也不下发', () => {
+  // 「没有壁纸」不是一种状态：用户没设时背景是默认壁纸，玻璃身后永远有图像可透。
   it('6a. 两个模式都不存在按图源分流的高光改写块', () => {
     for (const mode of ['light', 'dark'] as const) {
       const keys = Object.keys(globalStyles(mode));
@@ -355,8 +364,8 @@ describe('玻璃高光恒为一档（不再按有没有壁纸分流）', () => {
     }
   });
 
-  it('6b. :root 块高光恒为 GLASS.highlight', () => {
-    expect(rootVars('light')['--glass-highlight']).toBe(GLASS.highlight);
-    expect(rootVars('dark')['--glass-highlight']).toBe(GLASS.highlight);
+  it('6b. 两个模式的 :root 都不含 --glass-highlight', () => {
+    expect(rootVars('light')).not.toHaveProperty('--glass-highlight');
+    expect(rootVars('dark')).not.toHaveProperty('--glass-highlight');
   });
 });

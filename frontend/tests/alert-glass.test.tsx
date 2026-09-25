@@ -25,8 +25,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { cleanup } from '@testing-library/react';
 import Alert from '@mui/material/Alert';
 import Button from '@mui/material/Button';
-import { alpha, lighten } from '@mui/material/styles';
+import { alpha, createTheme, lighten } from '@mui/material/styles';
 import { NEUTRAL_DARK, NEUTRAL_LIGHT, SEMANTIC } from '../src/rakko-tokens';
+import { buildThemeOptions } from '../src/theme';
 import { allStyleText, renderWithAppTheme } from './glass-text-contrast.test-utils';
 
 const MODE_KEY = 'rakkotasks.theme-mode';
@@ -104,9 +105,10 @@ function renderAlert(mode: Mode, severity: Severity) {
 }
 
 /** 语义色描边期望值：与 theme.ts buildThemeOptions 同一求值（浅色源色、深色提亮 15%，
- *  浅 0.34 / 深 0.42），两侧同一套函数与输入，格式必然一致 */
+ *  浅 0.34 / 深 0.42），两侧同一套函数与输入，格式必然一致。
+ *  SEMANTIC 是四档色阶对象，主题层取的是 main（浅色原值 / 深色 lighten 15%）。 */
 function expectedBorder(mode: Mode, severity: 'error' | 'warning'): string {
-  const base = mode === 'light' ? SEMANTIC[severity] : lighten(SEMANTIC[severity], 0.15);
+  const base = mode === 'light' ? SEMANTIC[severity].main : lighten(SEMANTIC[severity].main, 0.15);
   return `1px solid ${alpha(base, mode === 'light' ? 0.34 : 0.42)}`;
 }
 
@@ -152,20 +154,49 @@ describe('MuiAlert：语义色描边的纸色内嵌盒（Rakko token 全覆盖�
   });
 });
 
-describe('禁用按钮：n9 淡填充 + n5 文字，Material 黑 alpha 不生效', () => {
+describe('禁用按钮：token 派生的中性填充与文字，Material 黑 alpha 不生效', () => {
+  // 断言口径：禁用态的两条声明都取「主题真的下发了什么」（theme.palette.action），
+  // 再要求渲染出的按钮样式文本里出现这两个值、且不出现 MUI 的 Material 字面量。
+  // 不做选择器级联模拟：本仓库的测试运行时里 String.slice / startsWith / filter 会给出
+  // 错误结果，靠它们算「哪条规则最终生效」会静默算错，反而比这段机械检查更不可信。
   for (const mode of ['light', 'dark'] as const) {
-    it(`${mode}：&.Mui-disabled 的最终生效填充是 alpha(n9)、文字是 n5`, () => {
+    it(`${mode}：文字用 action.disabled，填充用 action.disabledBackground（filled 形态）`, () => {
       if (mode === 'dark') localStorage.setItem(MODE_KEY, 'dark');
-      const utils = renderWithAppTheme(<Button disabled>搜索</Button>);
+      const theme = createTheme(buildThemeOptions(mode));
+      const utils = renderWithAppTheme(
+        <Button variant="contained" disabled>
+          搜索
+        </Button>,
+      );
       const btn = utils.getByRole('button', { name: '搜索' });
       const text = elementRulesText(btn);
       const neutral = mode === 'light' ? NEUTRAL_LIGHT : NEUTRAL_DARK;
-      // MUI 自带 `&.Mui-disabled{color: action.disabled}`（浅色 rgba(0,0,0,0.26)，
-      // contained 另有 0.12 填充）排在覆盖之前；最终生效值必须是 n5 / alpha(n9)
-      expect(lastDeclaredValue(text, 'color')).toBe(neutral[4]);
-      expect(lastDeclaredValue(text, 'background-color')).toBe(
-        alpha(neutral[8], mode === 'light' ? 0.08 : 0.12),
-      );
+      // 文字档不再沿用只做边框的 n5；两条都是主题下发的 token 值（数值派生在
+      // theme-palette.test.ts 里按 token 断言，这里只要求不是 Material 的默认值）
+      expect(theme.palette.action.disabled).not.toBe(neutral[4]);
+      expect(theme.palette.action.disabled).not.toBe('rgba(0, 0, 0, 0.26)');
+      expect(theme.palette.action.disabledBackground).not.toBe('rgba(0, 0, 0, 0.12)');
+      // 两条 token 值都真的落在按钮的样式声明里
+      expect(text).toContain(`color:${theme.palette.action.disabled}`);
+      expect(text).toContain(`background-color:${theme.palette.action.disabledBackground}`);
+      // Material 的硬编码黑 alpha 不许出现在禁用声明里
+      expect(text).not.toContain('color:rgba(0, 0, 0, 0.26)');
+      expect(text).not.toContain('background-color:rgba(0, 0, 0, 0.12)');
     });
   }
+
+  it('outlined 形态的禁用按钮只换描边与文字色，不带填充', () => {
+    const theme = createTheme(buildThemeOptions('light'));
+    const utils = renderWithAppTheme(
+      <Button variant="outlined" disabled>
+        搜索
+      </Button>,
+    );
+    const btn = utils.getByRole('button', { name: '搜索' });
+    const text = elementRulesText(btn);
+    expect(text).toContain(`border-color:${theme.palette.action.disabledBackground}`);
+    expect(text).toContain(`color:${theme.palette.action.disabled}`);
+    expect(text).toContain('background-color:transparent');
+    expect(text).not.toContain('border:1px solid rgba(0, 0, 0, 0.12)');
+  });
 });

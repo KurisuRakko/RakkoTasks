@@ -1,5 +1,6 @@
 // 玻璃材质契约守卫（纯文本断言，不渲染任何组件）：
-// rakko-glass.css 是上游 design-system/src/glass.css 的逐字镜像，全项目 backdrop-filter
+// rakko-glass.css 是 design-system/src/glass.css 的**本地 Aero 定制版**（基线为上游 main，
+// 光泽与厚度边在本地改过，偏离记录见该文件头），全项目 backdrop-filter
 // 的唯一合法宿主。本文件守住：四档配方、两条退化路径、滚动渐显规则都在位；
 // 「-webkit- 前缀写法不得与无前缀 backdrop-filter 声明并列在同一规则块，前缀兜底
 // 独立在 @supports 块里」；「backdrop-filter 只允许出现在一个样式表里」；以及
@@ -154,11 +155,12 @@ describe('变量下发守卫', () => {
   it('4e. rakko-glass.css 消费的每个 CSS 变量都能在 theme.ts 里找到下发', async () => {
     const glassCss = (await loadFs()).readFileSync('src/rakko-glass.css', 'utf-8');
 
-    // 任务书 3a 的 :root 下发清单（原 14 键）+ Aero 化新增的 11 个（--glass-rim …
-    // --glass-text-glow，--glass-sheen-4 已随三段光泽改版删除），共 25 键，逐字断言。
-    // css 实际消费的非 --rk- 变量为 22 个；--glass-scrim-opacity（主题层 MuiBackdrop 消费）、
-    // --glass-highlight（新配方已不消费，主题层仍下发）与 --shadow-whisper（haze 等场景仍用）
-    // 不在玻璃样式表里，故总下发数比 css 消费数多 3。
+    // :root 的下发清单，逐字断言，共 24 键：--color-* 四键 + --glass-* 十八键 + --shadow-whisper。
+    // 不含 --glass-highlight：镜面高光那一档由 sheen 承担，本文件没有任何规则读它，
+    // 下发就是死键（下方动态守卫只看 css 里 var() 真正消费到的变量，本来也扫不到它）。
+    // css 实际消费的非 --rk- 变量为 22 个：--glass-scrim-opacity（主题层 MuiBackdrop
+    // 消费）与 --shadow-whisper（haze 等场景仍用）不在玻璃样式表里，
+    // 故总下发数比 css 消费数多 2。
     const providedByTheme = [
       '--color-paper',
       '--color-border',
@@ -170,7 +172,6 @@ describe('变量下发守卫', () => {
       '--glass-surface-opacity',
       '--glass-panel-opacity',
       '--glass-scrim-opacity',
-      '--glass-highlight',
       '--glass-haze-opacity',
       '--glass-haze-bleed',
       '--glass-rim',
@@ -214,17 +215,17 @@ describe('Aero 玻璃配方契约（新材质接线）', () => {
     for (const v of ['--glass-rim', '--glass-lip', '--glass-bloom', '--glass-lift', '--glass-text-glow']) {
       expect(panel, `panel 配方应含 ${v}`).toContain(v);
     }
-    // 旧「左上透镜」radial 已被 sheen 光泽取代：不得残留为第二层，否则上半部过曝
+    // 不得残留「左上透镜」radial 作第二层：它与 sheen 叠起来上半部会过曝
     expect(panel).not.toContain('120% 90% at 18% 0%');
     expect(panel).not.toContain('--glass-highlight');
   });
 
-  it('5b. chrome 与 panel 共用同一线性光泽，chrome 不再用 radial 弧光', async () => {
+  it('5b. chrome 与 panel 共用同一线性光泽，chrome 不用 radial 弧光', async () => {
     const glassCss = (await loadFs()).readFileSync('src/rakko-glass.css', 'utf-8');
     const chrome = blockOf(glassCss, "[data-glass='chrome'] {");
     const panel = blockOf(glassCss, "[data-glass='panel'] {");
-    // 高光改版：chrome 从左上角 radial 弧光换成与 panel 同款的线性光泽（横贯整条顶栏），
-    // 两档共用同一表达式——都消费 --glass-sheen-1/2/3
+    // chrome 与 panel 共用同一份线性光泽（横贯整条顶栏），都消费 --glass-sheen-1/2/3：
+    // 共用一份表达式，顶栏与浮层在壁纸上才是同一种材质
     for (const [name, block] of [
       ['chrome', chrome],
       ['panel', panel],

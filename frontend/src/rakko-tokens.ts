@@ -39,12 +39,44 @@ export const ACCENT = {
   dark: '#e095a4',
 } as const;
 
-/** 语义色（和色体系）；深色主题下各提亮约 15%（MUI lighten(c, 0.15)） */
+/** 语义四色的完整 MUI 色阶：每档 { light, main, dark, contrastText } 都是显式 token，
+ * 四档齐全，组件层不会拿到 MUI 用 grey/orange 兜出的默认值（缺档的漏值对照断言在
+ * tests/theme-palette.test.ts）。
+ * 依据：references/tokens.md:62-73 每个语义色只定义**一个**基础 hex，它是浅色主题的
+ * main，也是另外两档的派生种子；`consumer app theme layer` 在深色把整个色阶上提约
+ * 15%（tokens.md:71「lifts each one ~15% in dark mode」）。main 之外的两档契约没给，
+ * 按同一条 ±15% 亮度档从 main 派生：light 提亮 15%、dark 压暗 15%（与真实 hex 的
+ * 对应关系写在每个值后面）。深色主题自己的取值由 theme.ts 用 lighten(main, 0.15)
+ * 求值（先例：theme.test.ts 的「深色语义色较浅色提亮」用例），那里只换 main 及其
+ * 派生档的相对关系不变。
+ * contrastText 取 pairings 的实测对比度（tokens.md:56-60 的「填充 + 白字」配对）：
+ * 两个深色墨底给 #fff，两个中等亮度底给 #000（小字与常规字都过 WCAG AA）。
+ * 四色同为状态色（tokens.md:73 不得当装饰色），不自造第五个语义色。 */
 export const SEMANTIC = {
-  info: '#3d6896', // 縹 hanada
-  success: '#5e9f7e', // 若竹 wakatake
-  warning: '#a87a3d', // 朽葉 kuchiba
-  error: '#a64953', // 蘇芳 suoh
+  info: {
+    light: '#5a7ea5', // lighten(#3d6896, 15%)
+    main: '#3d6896', // 縹 hanada（tokens.md:66）
+    dark: '#33587f', // darken(#3d6896, 15%)
+    contrastText: '#fff', // 6.90:1
+  },
+  success: {
+    light: '#76ad91', // lighten(#5e9f7e, 15%)
+    main: '#5e9f7e', // 若竹 wakatake（tokens.md:67）
+    dark: '#4f876b', // darken(#5e9f7e, 15%)
+    contrastText: '#000', // 7.16:1
+  },
+  warning: {
+    light: '#b58d5a', // lighten(#a87a3d, 15%)
+    main: '#a87a3d', // 朽葉 kuchiba（tokens.md:68）
+    dark: '#8e6733', // darken(#a87a3d, 15%)
+    contrastText: '#000', // 5.87:1
+  },
+  error: {
+    light: '#b3646c', // lighten(#a64953, 15%)
+    main: '#a64953', // 蘇芳 suoh（tokens.md:69）
+    dark: '#8d3e46', // darken(#a64953, 15%)
+    contrastText: '#fff', // 6.62:1
+  },
 } as const;
 
 /** 默认边框：浅色 rgba(24,24,27,0.1)；深色用白色 12%。
@@ -115,25 +147,52 @@ export const STATE_OPACITY = {
   pressed: 0.12,
 } as const;
 
+/** 反相面（Tooltip / Snackbar）的墨底色与面上文字色。
+ *  Tooltip 契约是「保持 n-10 实底（对比度优先、面积小、存活短）」
+ *  （references/components.md:20），Snackbar 契约是「n-10 底、n-1 字」
+ *  （rakko-glass.css 的 inverse 档定义）。
+ *  这里取**浅色**中性档而不是当前主题的 n10/n1：深色主题的 n-1 是近黑、n-10 是近白，
+ *  照当前主题直接取会得到一块近白的高亮气泡，既不是「墨色实底」也不是反向强调。
+ *  浅色 n1 落在浅色 n10 上是 17.35:1，主题无关地恒成立。（PWA <meta name="theme-color">
+ *  的深浅取值见 theme.ts / lib/theme-mode.tsx，是另一回事。） */
+export const SEMANTIC_INVERSE_SURFACE = {
+  bg: NEUTRAL_LIGHT[9], // 浅色 n10
+  fg: NEUTRAL_LIGHT[0], // 浅色 n1
+} as const;
+
+/** 共享间距档（px）：与 Tailwind 默认档对齐（tokens.md:127-132 的四基准）
+ *  4 / 8 / 12 / 16 / 24；组件主题层只消费这几档，不写裸数字。 */
+export const SPACING = {
+  xs: 4,
+  sm: 8,
+  md: 12,
+  lg: 16,
+  xl: 24,
+} as const;
+
 /** whisper 阴影：禁硬阴影（阴影只允许此档，其余用 1px 边框分层） */
 export const WHISPER_SHADOW = '0 1px 2px rgba(20, 19, 18, 0.06)';
 
-/** 玻璃材质数值（镜像自上游 tokens.css 的 --glass-*）。配方本身在 rakko-glass.css，
- * 是 design-system/src/glass.css 的逐字镜像；这里只放它消费的值，由主题层下发到 :root。 */
+/** 玻璃材质数值（取自上游 tokens.css 的 --glass-*）。配方本身在 rakko-glass.css，
+ * 是 design-system/src/glass.css 的**本地 Aero 定制版**（基于上游改过光泽与厚度边，
+ * 偏离记录见该文件头部）；这里放它消费的值，由主题层下发到 :root。 */
 export const GLASS = {
   blur: '3px',
   saturate: '193%',
   // chrome 是四档里最透的，压在它上面的是 12px/500 的底栏导航标签。实测（真实中文字形 +
   // 反相光晕，文字色 n9，取最差点）：浅色主题下 45% 时三张实测壁纸有两张够不到 AA 4.5，
   // 彩色天空只有 3.80；52% 是全部过线的最小值（4.62–5.45），且 45% 与 52% 的顶栏通透度
-  // 截图对比无可见差别（与上游 Rakko Design 同步，原 45%）。
+  // 截图对比无可见差别。
   surfaceOpacity: '52%',
   panelOpacity: '58%',
   scrimOpacity: '34%',
-  highlight: 'rgba(255, 255, 255, 0.59)',
-  // haze 纸色 55%（与上游 Rakko Design 同步，原 51%）：12px/600 的分组标题压在 haze 上，
-  // 51% 时在三张实测壁纸中最低只有 3.96（彩色天空），够不到 WCAG AA 4.5；55% 是全部过线
-  // 的最小值（4.53–4.98），且 51% 与 55% 的雾浓淡在真实版面上无可见差别。
+  // 这里不放 highlight：上游 CHEATSHEET.md:154 / tokens.md:160 的 --glass-highlight 是
+  // 「左上透镜」配方的镜面高光，本套玻璃（chrome / panel / inverse）的光泽全部由
+  // --glass-sheen-1..3 + --glass-rim / --glass-lip 出，没有规则读它，下发也只是个死键。
+  //
+  // haze 纸色 55%：12px/600 的分组标题压在 haze 上，51% 时三张实测壁纸中最低只有 3.96
+  // （彩色天空），够不到 WCAG AA 4.5；55% 是全部过线的最小值（4.53–4.98），且 51% 与 55%
+  // 的雾浓淡在真实版面上无可见差别。不许下调。
   hazeOpacity: '55%',
   hazeBleed: '28px',
 } as const;
@@ -142,8 +201,8 @@ export const GLASS = {
  * 键名 camelCase，与 CSS 变量一一对应：rim→--glass-rim、rimInner→--glass-rim-inner、
  * lip→--glass-lip、lipUnder→--glass-lip-under、side→--glass-side、bloom→--glass-bloom、
  * sheen1…sheen3→--glass-sheen-1…3、lift→--glass-lift、textGlow→--glass-text-glow。
- * 旧光泽的尾段键已删除（两个主题都删）：光泽改版后是上白下暗的三段（sheen-1 → sheen-2 45% →
- * sheen-3 100%），sheen-3 的语义是「底部的暗」——取代了旧版 46/47% 的陡变 + 四段尾键。
+ * 光泽是上白下暗的三段（sheen-1 → sheen-2 45% → sheen-3 100%），sheen-3 的语义是
+ * 「底部的暗」：止点必须落在 45% / 100% 这两个结构边界上，中间不许再出现陡变止点。
  * 浅色必须显式给暗：浅色是白纸底 + 白高光（rim/lip/side/bloom 全白）+ 白光泽（sheen-1/2），
  * 三层全白时通篇没有暗的一侧，卡片边界会溶进亮壁纸；所以 sheen-3 与 rim-inner 的暗段是浅色
  * 立体感的来源，写成白色就退回「无暗侧」的老问题。
@@ -190,7 +249,7 @@ export const GLASS_AERO = {
  *
  *  取值：sheen-1 34% → 12%，顶端白覆盖度 68.3% → 57.8%，顶→中落差 11.5 点 → 3.4 点，
  *  白纱振幅削掉约七成而「上亮下暗」的方向仍在；sheen-2 10% → 5%，让中段只比纸色地板高
- *  2.4 点，接进 sheen-3 的暗端时是连续过渡、45% 那道止点不再看得出来。
+ *  2.4 点，接进 sheen-3 的暗端时是连续过渡、45% 那道止点看不出来。
  *  lip 60% → 22%：22% 是浅色 lipUnder 的现值，直接复用而不是再造一个白常数；侧栏顶边与
  *  顶栏顶边在屏幕上缘首尾相接，两条 60% 的白发丝线会连成一道通白线，弱化成 22% 后它回到
  *  「一道倒角」而不是「一条亮边」。
