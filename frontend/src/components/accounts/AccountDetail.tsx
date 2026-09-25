@@ -32,6 +32,7 @@ import {
   usesPassword,
 } from './meta';
 import MicrosoftAuthGuide from './MicrosoftAuthGuide';
+import CredentialsGuideHint from './CredentialsGuideHint';
 import type { AccountInfo, AccountKind } from '../../types';
 
 interface Props {
@@ -225,24 +226,7 @@ export default function AccountDetail({ account, onChanged, onRemove }: Props) {
                 }
                 inputProps={{ autoComplete: 'off' }}
               />
-              {guide && (
-                <>
-                  <Typography variant="body2" color="text.secondary">
-                    {guide.text}
-                  </Typography>
-                  <Button
-                    variant="text"
-                    size="small"
-                    component="a"
-                    href={guide.href}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    sx={{ alignSelf: 'flex-start' }}
-                  >
-                    {guide.linkText}
-                  </Button>
-                </>
-              )}
+              {guide && <CredentialsGuideHint guide={guide} />}
               <Button
                 variant="outlined"
                 onClick={handleSavePassword}

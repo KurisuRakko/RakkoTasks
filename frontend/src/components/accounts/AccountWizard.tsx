@@ -27,6 +27,7 @@ import { useTheme } from '@mui/material/styles';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import { createAccount } from '../../lib/api';
 import { apiErrorFields, defaultNameFor, kindAvatar, credentialsGuide, passwordLabel, usesPassword } from './meta';
+import CredentialsGuideHint from './CredentialsGuideHint';
 import MicrosoftAuthGuide from './MicrosoftAuthGuide';
 import type { AccountInfo, AccountKind } from '../../types';
 
@@ -39,16 +40,6 @@ interface Props {
 interface KindOption {
   title: string;
   subtitle?: string;
-  /**
-   * 这个类型要不要用户填密码类凭据（Gmail / QQ 邮箱要，微软走 OAuth 不要）。
-   * 为真时 label 与获取指引都从 meta 取——文案只在 meta 里写一份，向导与详情页共用。
-   */
-  needsPassword: boolean;
-}
-
-/** 第 1 步的类型卡片数据；要不要凭据由 meta 说了算，这里不重写一遍 */
-function kindOption(kind: AccountKind, title: string, subtitle?: string): KindOption {
-  return { title, subtitle, needsPassword: usesPassword(kind) };
 }
 
 /**
@@ -56,13 +47,12 @@ function kindOption(kind: AccountKind, title: string, subtitle?: string): KindOp
  * 补卡片时编译期就报错，find 只会安静地给 undefined，界面上表现为第 1 步少一张卡片。
  */
 const KIND_OPTIONS: Record<AccountKind, KindOption> = {
-  gmail: kindOption('gmail', 'Gmail'),
-  qq: kindOption('qq', 'QQ 邮箱', 'foxmail.com、vip.qq.com 地址也选这个'),
-  microsoft: kindOption(
-    'microsoft',
-    'Outlook · Microsoft 365',
-    '个人 Outlook、学校与公司邮箱都选这个',
-  ),
+  gmail: { title: 'Gmail' },
+  qq: { title: 'QQ 邮箱', subtitle: 'foxmail.com、vip.qq.com 地址也选这个' },
+  microsoft: {
+    title: 'Outlook · Microsoft 365',
+    subtitle: '个人 Outlook、学校与公司邮箱都选这个',
+  },
 };
 
 /** 第 1 步的类型卡片顺序（QQ 邮箱放在 Gmail 与 Outlook 之间） */
@@ -129,11 +119,11 @@ export default function AccountWizard({ onDone, onCancel }: Props) {
   const [error, setError] = useState<string | null>(null);
 
   const microsoft = kind === 'microsoft';
-  // 当前类型要不要用户填密码类凭据：决定第 2 步有没有密码框、创建请求带不带 app_password
-  const needsPassword = kind !== null && KIND_OPTIONS[kind].needsPassword;
-  // 凭据叫法与获取指引都来自 meta（Gmail 应用专用密码 / QQ 邮箱授权码），本文件不复述文案
-  const pwdLabel = kind !== null && needsPassword ? passwordLabel(kind) : '';
-  const guide = kind !== null && needsPassword ? credentialsGuide(kind) : undefined;
+  // 要不要用户填密码类凭据由 meta 说了算（Gmail / QQ 邮箱要，微软走 OAuth 不要）：
+  // 决定第 2 步有没有密码框、创建请求带不带 app_password
+  const needsPassword = kind !== null && usesPassword(kind);
+  const pwdLabel = kind !== null ? passwordLabel(kind) : '';
+  const guide = kind !== null ? credentialsGuide(kind) : undefined;
   // 步骤条随类型伸缩：微软多一段「微软授权」；activeStep 的语义由 created/kind 推导
   const stepLabels = microsoft
     ? (['账户类型', '基本信息', '微软授权', '完成'] as const)
@@ -301,25 +291,7 @@ export default function AccountWizard({ onDone, onCancel }: Props) {
                   helperText={touched.password && passwordMissing ? `请填写${pwdLabel}` : undefined}
                   inputProps={{ autoComplete: 'off' }}
                 />
-                {/* 指引文案与跳转按钮都随类型换（Gmail / QQ 邮箱），呈现结构与旁边几个字段一致 */}
-                {guide && (
-                  <>
-                    <Typography variant="body2" color="text.secondary">
-                      {guide.text}
-                    </Typography>
-                    <Button
-                      variant="text"
-                      size="small"
-                      component="a"
-                      href={guide.href}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      sx={{ alignSelf: 'flex-start' }}
-                    >
-                      {guide.linkText}
-                    </Button>
-                  </>
-                )}
+                {guide && <CredentialsGuideHint guide={guide} />}
               </>
             ) : (
               <>

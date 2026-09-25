@@ -1,6 +1,6 @@
-// 账户展示元信息单一来源：kind 中文 / 默认名 / 头像字母 / 是否用密码类凭据及其叫法与
-// 获取指引 / 状态 Chip 的文案与颜色。设置页分区、详情、添加向导共用，
-// 避免各处各写一份映射（同一句指引在向导和详情里各写一遍，改一处就会漏另一处）。
+// 账户展示元信息单一来源：kind 中文 / 默认名 / 头像字母 / 密码类凭据及其叫法与获取指引 /
+// 状态 Chip 的文案与颜色。设置页分区、详情、添加向导共用，避免各处各写一份映射
+// （同一句指引在向导和详情里各写一遍，改一处就会漏另一处）。
 // 所有按 kind 取值的地方都走下面这张表或 switch：漏了新 kind 时 TS 会直接报错。
 
 import type { AccountInfo, AccountKind } from '../../types';
@@ -10,30 +10,25 @@ import type { AccountInfo, AccountKind } from '../../types';
  * 向导第 2 步与「账户详情」的更换折叠区共用同一份，两边呈现结构一致。
  */
 export interface CredentialsGuide {
-  /** 一步步怎么拿到的说明 */
   text: string;
-  /** 跳转按钮文字 */
   linkText: string;
-  /** 跳转目标 */
   href: string;
 }
 
 interface KindMeta {
-  /** 界面上的类型名 */
   label: string;
-  /** 添加向导里按类型预填的名称 */
   defaultName: string;
-  /** 头像里的单个字母 */
   avatar: string;
   /**
-   * 凭据是不是「用户自己去服务商页面生成的密码」：gmail / qq 是（应用专用密码 / 授权码），
-   * 微软不是（走 OAuth 授权）。决定向导要不要密码框、创建请求带不带 app_password。
+   * 凭据是不是「用户自己去服务商页面生成的密码」：有 password 就是（Gmail 应用专用密码 /
+   * QQ 邮箱授权码），没有就不是（微软走 OAuth 授权）。决定向导要不要密码框、
+   * 创建请求带不带 app_password；label 与 guide 同属这份凭据，所以收成一个子对象，
+   * 不留「用不到但要填个空串」的字段。
    */
-  usesPassword: boolean;
-  /** 上面那种凭据在这个类型下的叫法；usesPassword 为 false 时无意义 */
-  passwordLabel: string;
-  /** 上面那种凭据怎么拿；usesPassword 为 false 时无意义 */
-  credentialsGuide?: CredentialsGuide;
+  password?: {
+    label: string;
+    guide: CredentialsGuide;
+  };
 }
 
 const KIND_META: Record<AccountKind, KindMeta> = {
@@ -41,35 +36,35 @@ const KIND_META: Record<AccountKind, KindMeta> = {
     label: 'Gmail',
     defaultName: 'Gmail',
     avatar: 'G',
-    usesPassword: true,
-    passwordLabel: '应用专用密码',
-    credentialsGuide: {
-      text: 'Google 账号 → 安全性 → 开启两步验证 → 应用专用密码 → 生成 16 位密码。',
-      linkText: '打开 Google 应用专用密码页面',
-      href: 'https://myaccount.google.com/apppasswords',
+    password: {
+      label: '应用专用密码',
+      guide: {
+        text: 'Google 账号 → 安全性 → 开启两步验证 → 应用专用密码 → 生成 16 位密码。',
+        linkText: '打开 Google 应用专用密码页面',
+        href: 'https://myaccount.google.com/apppasswords',
+      },
     },
   },
   qq: {
     label: 'QQ 邮箱',
     defaultName: 'QQ 邮箱',
     avatar: 'Q',
-    usesPassword: true,
-    passwordLabel: '授权码',
-    credentialsGuide: {
-      text:
-        '用电脑浏览器登录 QQ 邮箱网页版 → 设置 → 账号与安全 → 安全设置 → 开启' +
-        '「IMAP/SMTP 服务」→ 按提示验证后生成 16 位授权码，填的是这串授权码、不是 QQ 密码' +
-        '（IMAP 服务器后端内置，不用填）。',
-      linkText: '打开 QQ 邮箱',
-      href: 'https://mail.qq.com',
+    password: {
+      label: '授权码',
+      guide: {
+        text:
+          '用电脑浏览器登录 QQ 邮箱网页版 → 设置 → 账号与安全 → 安全设置 → 开启' +
+          '「IMAP/SMTP 服务」→ 按提示验证后生成 16 位授权码，填的是这串授权码、不是 QQ 密码' +
+          '（IMAP 服务器后端内置，不用填）。',
+        linkText: '打开 QQ 邮箱',
+        href: 'https://mail.qq.com',
+      },
     },
   },
   microsoft: {
     label: 'Outlook',
     defaultName: 'Outlook',
     avatar: 'O',
-    usesPassword: false,
-    passwordLabel: '',
   },
 };
 
@@ -82,24 +77,28 @@ export function defaultNameFor(kind: AccountKind): string {
   return KIND_META[kind].defaultName;
 }
 
-/** 头像里的字母：不用真实品牌图标（各自一个字母已足够区分类型） */
+/** 头像字母：不用真实品牌图标，一个字母已足够区分类型 */
 export function kindAvatar(kind: AccountKind): string {
   return KIND_META[kind].avatar;
 }
 
-/** 这个类型的凭据是不是用户填的密码类凭据（见 KindMeta.usesPassword） */
+/** 这个类型的凭据是不是用户填的密码类凭据（见 KindMeta.password） */
 export function usesPassword(kind: AccountKind): boolean {
-  return KIND_META[kind].usesPassword;
+  return KIND_META[kind].password !== undefined;
 }
 
-/** 密码类凭据在该类型下的叫法（Gmail「应用专用密码」/ QQ「授权码」），用于 label 与提示文案 */
+/**
+ * 密码类凭据在该类型下的叫法（Gmail「应用专用密码」/ QQ「授权码」）。
+ * 不要凭据的类型没有叫法，返回空串——调用方都先过 usesPassword（或向导里的 needsPassword），
+ * 不会把它显示出来；这里给空串只是省掉调用点一层 undefined 兜底。
+ */
 export function passwordLabel(kind: AccountKind): string {
-  return KIND_META[kind].passwordLabel;
+  return KIND_META[kind].password?.label ?? '';
 }
 
 /** 密码类凭据的获取指引；不要凭据的类型（微软）为 undefined */
 export function credentialsGuide(kind: AccountKind): CredentialsGuide | undefined {
-  return KIND_META[kind].credentialsGuide;
+  return KIND_META[kind].password?.guide;
 }
 
 /** 状态 Chip 的文案与颜色：已停用优先于状态；pending 按是否有凭据区分「待授权 / 等待首次同步」 */
