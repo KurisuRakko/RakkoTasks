@@ -42,10 +42,13 @@ export const SCRIM_COLOR = 'rgb(0 0 0 / var(--glass-scrim-opacity))';
  *  合成层结构，玻璃会连壁纸一起读丢。 */
 export const WALLPAPER_SHADE_VAR = '--rtk-wallpaper-shade';
 
-/** 深色壁纸压暗层的值：一层 35% 纯黑的**实心线性渐变**。
+/** 深色壁纸压暗层的值：一层 12% 纯黑的**实心线性渐变**。
  *  必须写成渐变，不能写成 rgba() 色值：这个变量是 background-image 的**第一层**，而
  *  background-image 只接受 <image>，rgba(0,0,0,.35) 是 <color> 不是 <image>——整条
  *  background-image 声明会在计算值阶段失效，连后面的壁纸 url 一起丢掉（壁纸整张消失）。
  *  linear-gradient 两端同色即实心填充，等效于一层纯色像，且是合法 <image>。
- *  颜色用纯黑不用 n-10 墨色——它在深色主题是近白，压上去是漂白（同遮罩层的取舍）。 */
-export const WALLPAPER_SHADE_DARK = 'linear-gradient(rgba(0, 0, 0, 0.35), rgba(0, 0, 0, 0.35))';
+ *  颜色用纯黑不用 n-10 墨色——它在深色主题是近白，压上去是漂白（同遮罩层的取舍）。
+ *  12% 是「壁纸要看得见」这条约束的上限侧取值：压暗与玻璃纸底会相乘成同一个量
+ *  （面板下 12% 压暗 + 60% 纸底 → 壁纸只剩约 1/8 的相对亮度），压暗再重一点壁纸就没了，
+ *  整屏读作一块黑板。tests/theme-dark-glass.test.ts 的 D8 用这个乘积守住它。 */
+export const WALLPAPER_SHADE_DARK = 'linear-gradient(rgba(0, 0, 0, 0.12), rgba(0, 0, 0, 0.12))';
