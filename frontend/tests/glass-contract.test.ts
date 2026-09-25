@@ -155,13 +155,11 @@ describe('变量下发守卫', () => {
   it('4e. rakko-glass.css 消费的每个 CSS 变量都能在 theme.ts 里找到下发', async () => {
     const glassCss = (await loadFs()).readFileSync('src/rakko-glass.css', 'utf-8');
 
-    // 任务书 3a 的 :root 下发清单（原 14 键）+ Aero 化新增的 11 个（--glass-rim …
-    // --glass-text-glow，--glass-sheen-4 已随三段光泽改版删除），原为 25 键，逐字断言。
-    // --glass-highlight 已随 Aero 光泽改版删除：三档配方的光泽全部来自
-    // --glass-sheen-1..3 与 --glass-rim/--glass-lip，没有任何规则再读它，主题层继续
-    // 下发就是个死键（下方动态守卫只看 css 真正 var() 消费的变量，本来也扫不到它）。
-    // 现值 24 键；css 实际消费的非 --rk- 变量为 22 个，--glass-scrim-opacity（主题层
-    // MuiBackdrop 消费）与 --shadow-whisper（haze 等场景仍用）不在玻璃样式表里，
+    // :root 的下发清单，逐字断言，共 24 键：--color-* 四键 + --glass-* 十八键 + --shadow-whisper。
+    // 不含 --glass-highlight：镜面高光那一档由 sheen 承担，本文件没有任何规则读它，
+    // 下发就是死键（下方动态守卫只看 css 里 var() 真正消费到的变量，本来也扫不到它）。
+    // css 实际消费的非 --rk- 变量为 22 个：--glass-scrim-opacity（主题层 MuiBackdrop
+    // 消费）与 --shadow-whisper（haze 等场景仍用）不在玻璃样式表里，
     // 故总下发数比 css 消费数多 2。
     const providedByTheme = [
       '--color-paper',
@@ -217,17 +215,17 @@ describe('Aero 玻璃配方契约（新材质接线）', () => {
     for (const v of ['--glass-rim', '--glass-lip', '--glass-bloom', '--glass-lift', '--glass-text-glow']) {
       expect(panel, `panel 配方应含 ${v}`).toContain(v);
     }
-    // 旧「左上透镜」radial 已被 sheen 光泽取代：不得残留为第二层，否则上半部过曝
+    // 不得残留「左上透镜」radial 作第二层：它与 sheen 叠起来上半部会过曝
     expect(panel).not.toContain('120% 90% at 18% 0%');
     expect(panel).not.toContain('--glass-highlight');
   });
 
-  it('5b. chrome 与 panel 共用同一线性光泽，chrome 不再用 radial 弧光', async () => {
+  it('5b. chrome 与 panel 共用同一线性光泽，chrome 不用 radial 弧光', async () => {
     const glassCss = (await loadFs()).readFileSync('src/rakko-glass.css', 'utf-8');
     const chrome = blockOf(glassCss, "[data-glass='chrome'] {");
     const panel = blockOf(glassCss, "[data-glass='panel'] {");
-    // 高光改版：chrome 从左上角 radial 弧光换成与 panel 同款的线性光泽（横贯整条顶栏），
-    // 两档共用同一表达式——都消费 --glass-sheen-1/2/3
+    // chrome 与 panel 共用同一份线性光泽（横贯整条顶栏），都消费 --glass-sheen-1/2/3：
+    // 共用一份表达式，顶栏与浮层在壁纸上才是同一种材质
     for (const [name, block] of [
       ['chrome', chrome],
       ['panel', panel],

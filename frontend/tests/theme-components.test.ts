@@ -1,4 +1,4 @@
-// A2 的验收：MUI 默认值不再外漏到组件零件上。
+// A2 的验收：MUI 默认值不外漏到组件零件上。
 // 断言口径分两层——能直接从 theme.components 读到的就断言结构；需要证明「真的生效」的
 // 就渲染一次，用规则文本断言（jsdom 算不了级联，但测试环境非 speedy，emotion 把样式规则
 // 以文本节点插入 <style>，可以逐条读；机制说明见 glass-text-contrast.test-utils.tsx）。
@@ -61,6 +61,26 @@ function outlineKeyOf(root: Record<string, unknown>): string | undefined {
   );
 }
 
+/** `#rrggbb` / `rgb(r, g, b)` + 不透明度 → MUI 序列化的 `rgba(r, g, b, a)` */
+function rgbaOf(color: string, opacity: number): string {
+  const hex = color.charAt(0) === '#';
+  let r: number;
+  let g: number;
+  let b: number;
+  if (hex) {
+    const value = parseInt(color.substring(1), 16);
+    r = (value >> 16) & 255;
+    g = (value >> 8) & 255;
+    b = value & 255;
+  } else {
+    const nums = color.replace(/[^0-9.,]/g, '').split(',');
+    r = Number(nums[0]);
+    g = Number(nums[1]);
+    b = Number(nums[2]);
+  }
+  return `rgba(${r}, ${g}, ${b}, ${opacity})`;
+}
+
 afterEach(() => {
   cleanup();
 });
@@ -72,14 +92,80 @@ describe('A2 按钮：四档层级一套度量，四档之外的差异只由 var
     }
   });
 
-  it('root 给出统一高度 / 水平内边距 / 字重 / 圆角', () => {
+  it('root 给字重与圆角，不给统一尺寸', () => {
     for (const mode of MODES) {
       const root = slot(THEMES[mode], 'MuiButton', 'root');
-      expect(root.minHeight, mode).toBe(36);
-      expect(root.padding, mode).toBe(`0 ${SPACING.lg}px`);
       expect(root.fontWeight, mode).toBe(600);
       expect(root.borderRadius, mode).toBe(RADIUS.base);
       expect(root.textTransform, mode).toBe('none');
+      // 统一尺寸会让 size="small" 的按钮被撑到 medium 的高度
+      expect(root.minHeight, mode).toBeUndefined();
+      expect(root.padding, mode).toBeUndefined();
+    }
+  });
+
+  it('small 与 medium 渲染出不同高度（不许出现统一高度把 small 撑胖）', () => {
+    cleanup();
+    const { container } = render(
+      createElement(
+        ThemeProvider,
+        { theme: THEMES.light },
+        createElement(Button, { variant: 'contained', size: 'medium' }, '中等'),
+        createElement(Button, { variant: 'contained', size: 'small' }, '小'),
+      ),
+    );
+    const buttons = container.querySelectorAll('button');
+    expect(buttons).toHaveLength(2);
+    const medium = getComputedStyle(buttons[0] as HTMLElement).minHeight;
+    const small = getComputedStyle(buttons[1] as HTMLElement).minHeight;
+    expect(medium).toBe('36px');
+    expect(small).toBe('30px');
+    expect(small, 'small 必须比 medium 矮，否则就是被统一高度撑胖了').not.toBe(medium);
+  });
+
+  it('两档尺寸：medium 36 高 / 水平 16，small 30 高 / 水平 12（三档 variant 都是）', () => {
+    const expected = {
+      medium: { minHeight: 36, padding: '0 16px' },
+      small: { minHeight: 30, padding: '0 12px' },
+    } as const;
+    for (const mode of MODES) {
+      const root = slot(THEMES[mode], 'MuiButton', 'root');
+      for (const size of ['medium', 'small'] as const) {
+        const keys = Object.keys(root).filter(
+          (k) =>
+            k.indexOf(`MuiButton-size${size === 'medium' ? 'Medium' : 'Small'}`) >= 0 &&
+            k.indexOf('MuiButton-contained') >= 0,
+        );
+        expect(keys.length, `${mode} size=${size} 组合选择器`).toBeGreaterThan(0);
+        for (const key of keys) {
+          expect((root[key] as Record<string, unknown>).minHeight, `${mode} ${key}`).toBe(
+            expected[size].minHeight,
+          );
+          expect((root[key] as Record<string, unknown>).padding, `${mode} ${key}`).toBe(
+            expected[size].padding,
+          );
+        }
+      }
+    }
+    // 生效值：六种 size × variant 组合各渲染一次
+    for (const size of ['medium', 'small'] as const) {
+      for (const variant of ['contained', 'outlined', 'text'] as const) {
+        cleanup();
+        const { container } = render(
+          createElement(
+            ThemeProvider,
+            { theme: THEMES.light },
+            createElement(Button, { variant, size }, '操作'),
+          ),
+        );
+        const btn = container.querySelector('button') as HTMLElement;
+        const cs = getComputedStyle(btn);
+        expect(cs.minHeight, `${variant} ${size}`).toBe(`${expected[size].minHeight}px`);
+        expect(cs.paddingLeft, `${variant} ${size} 水平内边距`).toBe(
+          `${size === 'medium' ? 16 : 12}px`,
+        );
+        expect(cs.paddingTop, `${variant} ${size} 竖向内边距`).toBe('0px');
+      }
     }
   });
 
@@ -124,9 +210,7 @@ describe('A2 按钮：四档层级一套度量，四档之外的差异只由 var
       expect(btn, variant).not.toBeNull();
       expect(btn!.className, variant).toContain('MuiButton-disableElevation');
     }
-    // 三档共用一条 root 覆盖声明：样式文本里只能有一处 minHeight:36px 的来源
-    const css = allStyleText();
-    expect(css).toContain('min-height:36px');
+    expect(allStyleText()).toContain('min-height:36px');
   });
 });
 
@@ -139,27 +223,56 @@ describe('A2 芯片：12px/500 标签字、chip 圆角、中性档底色', () =>
     }
   });
 
-  it('root 用 chip 圆角与一档高度', () => {
+  it('root 只给 chip 圆角，不给统一高度（高度交回 MUI 的 size 体系）', () => {
     for (const mode of MODES) {
       const root = slot(THEMES[mode], 'MuiChip', 'root');
       expect(root.borderRadius, mode).toBe(RADIUS.chip);
-      expect(root.height, mode).toBe(30);
+      // root 上一旦写死高度，size="small" 的 24px 状态芯片会被一律撑胖
+      expect(root.height, mode).toBeUndefined();
+      expect(root.minHeight, mode).toBeUndefined();
     }
   });
 
-  it('color="default" 的 filled / outlined 都改走中性 token', () => {
+  it('两档尺寸各自保留 MUI 的高度：medium 32 / small 24', () => {
+    for (const [size, expected] of [['medium', 32], ['small', 24]] as const) {
+      cleanup();
+      const { container } = render(
+        createElement(
+          ThemeProvider,
+          { theme: THEMES.light },
+          createElement(Chip, { label: '标签', size }),
+        ),
+      );
+      const chip = container.querySelector('.MuiChip-root') as HTMLElement;
+      expect(chip, size).not.toBeNull();
+      expect(getComputedStyle(chip).height, size).toBe(`${expected}px`);
+    }
+  });
+
+  it('color="default" 的 filled 背景是中性浅填充，不是不透明纸色', () => {
     for (const mode of MODES) {
       const theme = THEMES[mode];
       const root = slot(theme, 'MuiChip', 'root');
       const colorDefault = root['&.MuiChip-colorDefault'] as Record<string, Record<string, unknown>>;
       expect(colorDefault, mode).toBeDefined();
       expect(colorDefault['&.MuiChip-filled'].backgroundColor, mode).toBe(
+        theme.palette.action.disabledBackground,
+      );
+      expect(colorDefault['&.MuiChip-filled'].backgroundColor, mode).not.toBe(
         theme.palette.background.paper,
       );
       expect(colorDefault['&.MuiChip-filled'].color, mode).toBe(theme.palette.text.primary);
       expect(colorDefault['&.MuiChip-outlined'].borderColor, mode).toBe(theme.palette.divider);
       expect(colorDefault['&.MuiChip-outlined'].color, mode).toBe(theme.palette.text.primary);
     }
+    // 渲染一次读生效值：压在玻璃行上的 chip 是一层可透的淡填充，不是实心纸色
+    const { container } = render(
+      createElement(ThemeProvider, { theme: THEMES.light }, createElement(Chip, { label: '标签' })),
+    );
+    const chip = container.querySelector('.MuiChip-root') as HTMLElement;
+    const bg = getComputedStyle(chip).backgroundColor;
+    expect(bg).toBe(THEMES.light.palette.action.disabledBackground);
+    expect(bg).not.toBe(THEMES.light.palette.background.paper);
   });
 
   it('渲染出的 default Chip 字号是 12px（规则文本里没有 13px 的 label 声明）', () => {
@@ -240,29 +353,60 @@ describe('A2 输入框：静止 / hover / focus 三态描边', () => {
 });
 
 describe('A2 其余零件：图标按钮 / Snackbar / Tooltip / Switch / 对话框操作区 / 分割线', () => {
-  it('IconButton 两档尺寸统一，hover 与按下走状态层', () => {
+  it('两档尺寸统一（默认 36 / small 30）', () => {
     for (const mode of MODES) {
-      const theme = THEMES[mode];
-      const root = slot(theme, 'MuiIconButton', 'root');
-      const small = slot(theme, 'MuiIconButton', 'sizeSmall');
+      const root = slot(THEMES[mode], 'MuiIconButton', 'root');
+      const small = slot(THEMES[mode], 'MuiIconButton', 'sizeSmall');
       expect(root.width, mode).toBe(36);
       expect(root.height, mode).toBe(36);
       expect(small.width, mode).toBe(30);
       expect(small.height, mode).toBe(30);
-      expect((root['&:hover'] as Record<string, unknown>).backgroundColor, mode).toBe(
-        theme.palette.action.hover,
-      );
-      expect((root['&:active'] as Record<string, unknown>).backgroundColor, mode).toBe(
-        theme.palette.action.selected,
-      );
-      expect(theme.palette.action.hoverOpacity, mode).toBe(STATE_OPACITY.hover);
     }
-    // 渲染一次确认真落到样式表（主题数据对 + 规则文本对）
     const { container } = render(
       createElement(ThemeProvider, { theme: THEMES.light }, createElement(IconButton, { 'aria-label': '更多' })),
     );
     expect(container.querySelector('.MuiIconButton-root')).not.toBeNull();
     expect(allStyleText()).toContain('width:36px');
+  });
+
+  it('中性状态层只给 default / inherit，带色 IconButton 保留 palette 自己的淡底', () => {
+    for (const mode of MODES) {
+      const theme = THEMES[mode];
+      const root = slot(theme, 'MuiIconButton', 'root');
+      // 根上不许有裸的 &:hover / &:active 背景覆盖——那会盖掉 MUI 按 color 算出的
+      // 同色淡底（color="error" 的删除图标 hover 会从 error 淡色变成中性色）
+      expect(root['&:hover'], mode).toBeUndefined();
+      expect(root['&:active'], mode).toBeUndefined();
+      const neutral = root['&.MuiIconButton-colorDefault, &.MuiIconButton-colorInherit'] as Record<
+        string,
+        Record<string, unknown>
+      >;
+      expect(neutral, mode).toBeDefined();
+      expect(neutral['&:hover'].backgroundColor, mode).toBe(theme.palette.action.hover);
+      expect(neutral['&:active'].backgroundColor, mode).toBe(theme.palette.action.selected);
+      expect(theme.palette.action.hoverOpacity, mode).toBe(STATE_OPACITY.hover);
+    }
+    // 生效值：中性色按钮走状态层，语义色按钮走 MUI 按 palette 算出的同色淡底
+    const expectedByColor: Record<string, string> = {
+      error: rgbaOf(THEMES.light.palette.error.main, STATE_OPACITY.hover),
+      primary: rgbaOf(THEMES.light.palette.primary.main, STATE_OPACITY.hover),
+    };
+    for (const color of ['error', 'primary'] as const) {
+      cleanup();
+      const { container } = render(
+        createElement(
+          ThemeProvider,
+          { theme: THEMES.light },
+          createElement(IconButton, { color, 'aria-label': '删除' }),
+        ),
+      );
+      const btn = container.querySelector('.MuiIconButton-root') as HTMLElement;
+      const hoverBg = getComputedStyle(btn).getPropertyValue('--IconButton-hoverBg').trim();
+      expect(hoverBg, color).toBe(expectedByColor[color]);
+      expect(hoverBg, `${color} 不该被中性状态层盖掉`).not.toBe(
+        rgbaOf(THEMES.light.palette.action.hover, 1),
+      );
+    }
   });
 
   it('Avatar 用中性档填充 + n9 文字（不是 accent 底）', () => {

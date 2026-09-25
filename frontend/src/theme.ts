@@ -38,10 +38,19 @@ import { DEFAULT_WALLPAPER_URL, SCRIM_COLOR, WALLPAPER_LAYER_ID, WALLPAPER_VAR }
 
 type Mode = 'light' | 'dark';
 
-/** 按钮三档共用的度量：36px 高、水平 16px（contract 的 components.md 未给按钮规格，
- *  取 Apple HIG 的 44pt 触摸目标在桌面端收敛后的常用值 36px；同一高度让同一行里的
- *  按钮、输入框、芯片不参差）。 */
-const BUTTON_HEIGHT = 36;
+/** 按钮两档度量（px）：medium 36 高 / 水平 16，small 30 高 / 水平 12。
+ *  contract 的 components.md 未给按钮规格，取 Apple HIG 的 44pt 触摸目标在桌面端
+ *  收敛后的常用值；同一行里的按钮高度一致，不参差。 */
+const BUTTON_METRICS = {
+  medium: { minHeight: 36, paddingInline: SPACING.lg },
+  small: { minHeight: 30, paddingInline: SPACING.md },
+} as const;
+
+/** 中性浅填充的不透明度（芯片默认填充 / 按钮禁用填充共用一套口径）：
+ *  纸底上叠一层中性墨色，浅色 8% 读起来是"纸上一档灰"、深色 12% 才分得出边界。
+ *  不用 background.paper 这类不透明纸色：芯片压在玻璃行上会变成一颗实心药丸，
+ *  浅色主题下又和卡片同色、只剩文字。 */
+const NEUTRAL_TINT_ALPHA = { light: 0.08, dark: 0.12 } as const;
 
 /** MUI 的"加深/变浅一档"用前景墨色 alpha 表达，不引入新的 hex：
  *  hover 描边 = 边框 token 再叠 20% 墨色，浅色变深、深色变亮，方向都正确
@@ -67,8 +76,9 @@ export function buildThemeOptions(mode: Mode): ThemeOptions {
   const accentDark = mode === 'light' ? darken(accent, 0.15) : accent;
   // 语义四色的每个档都是显式 token（SEMANTIC 的注释说明派生规则）；深色主题按契约
   // （tokens.md:71）把整个色阶上提 15%——只换 main，light/dark 的相对关系不变。
-  // 深色 warning 曾在这里漏成 MUI 深色色板的 orange[400]，锁它的用例见
-  // theme-palette.test.ts（那边逐字写了 Material 的值，是「不许等于」的对照物）。
+  // 四个语义色都必须是完整色阶：缺哪一档，MUI 就会用自己的默认色板补上
+  // （深色 warning 会变成 MUI 深色色板的 orange[400]）。对照断言见
+  // theme-palette.test.ts。
   const lift = (c: string) => lighten(c, 0.15);
   const semanticOf = (s: (typeof SEMANTIC)[keyof typeof SEMANTIC]): PaletteColorOptions =>
     mode === 'dark'
@@ -110,8 +120,8 @@ export function buildThemeOptions(mode: Mode): ThemeOptions {
         // 「这里有字」；不用 MUI 默认那支 Material 黑 alpha（深浅主题同一支，深色主题下
         // 会几乎看不见）。
         disabled: alpha(n6, 0.7),
-        // 禁用填充：纸底上一档中性墨色，浅色 10% 让按钮读起来"灰下去"、深色 16% 才看得出来
-        disabledBackground: alpha(n9, mode === 'light' ? 0.1 : 0.16),
+        // 禁用填充与芯片默认填充同一档（见 NEUTRAL_TINT_ALPHA）
+        disabledBackground: alpha(n9, NEUTRAL_TINT_ALPHA[mode]),
         // 对应 *Opacity：MUI 用它们去 alpha(action.*) 派生状态层，这里直接对齐状态层 token
         hoverOpacity: STATE_OPACITY.hover,
         selectedOpacity: STATE_OPACITY.pressed,
@@ -120,7 +130,7 @@ export function buildThemeOptions(mode: Mode): ThemeOptions {
       },
       // 灰阶整体换成 Rakko 中性色阶（n1..n9 按亮度就近一一对应），MUI 内部按 grey[300] /
       // grey[700] / grey.A100 取色的地方（Avatar 兜底、Chip 图标色、inherit 按钮 hover、
-      // outlined 按钮的描边……）就都落在 Rakko 的中性色上，不再露出 Material 灰。
+      // outlined 按钮的描边……）都落在 Rakko 的中性色上，不出现 Material 灰。
       // A100/A200/A400/A700 必须显式给：MUI 的 createTheme 只会用 grey 的 50..900 递归
       // deepmerge，A* 四条会原样保留 Material 默认值（Material 的 A400 是中灰，
       // 与本项目的中性色阶对不上；对照物写在 theme-palette.test.ts 里）。
@@ -227,9 +237,9 @@ export function buildThemeOptions(mode: Mode): ThemeOptions {
             '--glass-text-glow': GLASS_AERO[mode].textGlow,
             '--shadow-whisper': GLASS_SHADOW_WHISPER[mode],
           },
-          // 注：--glass-highlight 已删除。它是旧「左上透镜」配方的镜面高光，Aero 改版后
-          // chrome / panel / inverse 三档的光泽全部由 --glass-sheen-1..3 与
-          // --glass-rim / --glass-lip 承担，没有任何规则再读它——继续下发只是个死键。
+          // 不下发 --glass-highlight：chrome / panel / inverse 三档的光泽全部由
+          // --glass-sheen-1..3 与 --glass-rim / --glass-lip 承担，没有任何规则读它
+          // （上游 tokens.css 仍列着这个契约 token，本地不消费就不下发）。
           // body 只留排版属性：地板整体在下面的壁纸承载层里。
           body: {
             letterSpacing: '0.01em',
@@ -334,8 +344,8 @@ export function buildThemeOptions(mode: Mode): ThemeOptions {
           root: { '&:not([data-glass])': { backgroundImage: 'none' } },
         },
       },
-      // Avatar 是身份标记，不是状态：中性色填充 + n9 文字，不再让 MUI 顺 palette.primary
-      // 出一块 accent 底（accent 覆盖面 ≤5%，头像成排时会顶破）。
+      // Avatar 是身份标记，不是状态：中性色填充 + n9 文字。交给 MUI 默认会顺
+      // palette.primary 出一块 accent 底，头像成排时顶破 accent 覆盖面 ≤5% 的纪律。
       MuiAvatar: {
         styleOverrides: {
           root: ({ theme }) => ({
@@ -354,19 +364,21 @@ export function buildThemeOptions(mode: Mode): ThemeOptions {
           paper: { borderRadius: RADIUS.dialog },
         },
       },
-      // 芯片只有一种零件：12px/500 的标签字（label-12）、RADIUS.chip 的克制圆角、
-      // 一档高度 30px。收在 label 插槽而不是 root，是为了连带压平 MUI 给 small(12) /
-      // medium(13) / large(14) 三档不同字号带来的"同一个芯片在不同页面大小不一"。
-      // color="default" 是中性档：filled 走 n2 纸面，outlined 走 BORDER 描边——
+      // 芯片只有一种零件：12px/500 的标签字（label-12）与 RADIUS.chip 的克制圆角。
+      // 字号收在 label 插槽而不是 root，是为了压平 MUI 给 small(12) / medium(13) /
+      // large(14) 三档不同字号带来的「同一个芯片在不同页面大小不一」。
+      // 高度不给：交回 MUI 的 size 体系（medium 32 / small 24），调用点的 size="small"
+      // 状态芯片要保持自己的小尺寸，统一高度会把它们撑胖。
+      // color="default" 是中性档：filled 走纸上一档中性浅填充（与禁用按钮同一口径，
+      // 而不是不透明纸色——压在玻璃行上会变成一颗实心药丸），outlined 走 BORDER 描边；
       // MUI 默认的 action.selected 填充与 currentColor 描边都会带上 Material 的灰。
       MuiChip: {
         styleOverrides: {
           root: ({ theme }) => ({
             borderRadius: RADIUS.chip,
-            height: 30,
             '&.MuiChip-colorDefault': {
               '&.MuiChip-filled': {
-                backgroundColor: theme.palette.background.paper,
+                backgroundColor: theme.palette.action.disabledBackground,
                 color: theme.palette.text.primary,
               },
               '&.MuiChip-outlined': {
@@ -378,21 +390,31 @@ export function buildThemeOptions(mode: Mode): ThemeOptions {
           label: { ...typeStyle('label-12'), fontWeight: 500 },
         },
       },
-      // 按钮只有四档层级（contained 主 / outlined 次 / text 三级 / error 危险），
-      // 三档共用一套度量：36px 高、水平 16px、字重 600、RADIUS.base。
+      // 按钮只有四档层级（contained 主 / outlined 次 / text 三级 / error 危险）；
+      // 同一档之内所有 variant 共用一套度量与圆角，差异只由 variant 表达。
       // disableElevation 默认开：禁硬阴影纪律下 elevation 只会带来 Material 的浮起感。
-      // 度量与圆角写在 root（含回调版本）里而不是按 variant 分插槽，是因为 root 的覆盖
-      // 片段排在 variant 之后：同一元素上的同名声明后者生效，只需一处就能压住 MUI 给
-      // text(6px 8px) / outlined(5px 15px) 的各自内边距。
+      // 尺寸分两档（见 BUTTON_METRICS），写进 size × variant 的组合选择器而不是只写
+      // sizeXxx：MUI 对每个 variant 另有一条 `padding: <variant>Size<Size>` 规则，
+      // 与 sizeXxx 同特异性、写在后面，只写 sizeXxx 的话它会把内边距盖回去。
       MuiButton: {
         defaultProps: { disableElevation: true },
         styleOverrides: {
           root: ({ theme }) => ({
             borderRadius: RADIUS.base,
             textTransform: 'none',
-            minHeight: BUTTON_HEIGHT,
-            padding: `0 ${SPACING.lg}px`,
             fontWeight: 600,
+            [`&.MuiButton-sizeMedium.MuiButton-contained,
+             &.MuiButton-sizeMedium.MuiButton-outlined,
+             &.MuiButton-sizeMedium.MuiButton-text`]: {
+              minHeight: BUTTON_METRICS.medium.minHeight,
+              padding: `0 ${BUTTON_METRICS.medium.paddingInline}px`,
+            },
+            [`&.MuiButton-sizeSmall.MuiButton-contained,
+             &.MuiButton-sizeSmall.MuiButton-outlined,
+             &.MuiButton-sizeSmall.MuiButton-text`]: {
+              minHeight: BUTTON_METRICS.small.minHeight,
+              padding: `0 ${BUTTON_METRICS.small.paddingInline}px`,
+            },
             // 禁用态换 Rakko 中性色：MUI 默认的填充与文字是 Material 硬编码的黑 alpha
             // （深浅主题都一样），对不上 Rakko 的中性色阶。填充取
             // action.disabledBackground，文字取 action.disabled（都由 token 派生，
@@ -436,21 +458,25 @@ export function buildThemeOptions(mode: Mode): ThemeOptions {
           }),
         },
       },
-      // IconButton 收在两档尺寸里（默认 36 / small 30），hover 与按下都走状态层，
-      // 不再用 MUI 的 action.active（Material 黑 54%）去 alpha。
+      // IconButton 收在两档尺寸里（默认 36 / small 30）。
+      // hover / pressed 的中性状态层只给 default 与 inherit 两种 color：带语义色的
+      // IconButton（如 color="error" 的删除按钮）由 MUI 按 palette 算出的同色淡底，
+      // 那是它自己的语义，不该被中性色盖掉。
       MuiIconButton: {
         styleOverrides: {
           root: ({ theme }) => ({
-            width: BUTTON_HEIGHT,
-            height: BUTTON_HEIGHT,
+            width: BUTTON_METRICS.medium.minHeight,
+            height: BUTTON_METRICS.medium.minHeight,
             borderRadius: RADIUS.base,
             transition: theme.transitions.create('background-color'),
-            '&:hover': { backgroundColor: theme.palette.action.hover },
-            '&:active': { backgroundColor: theme.palette.action.selected },
+            '&.MuiIconButton-colorDefault, &.MuiIconButton-colorInherit': {
+              '&:hover': { backgroundColor: theme.palette.action.hover },
+              '&:active': { backgroundColor: theme.palette.action.selected },
+            },
           }),
           sizeSmall: {
-            width: 30,
-            height: 30,
+            width: BUTTON_METRICS.small.minHeight,
+            height: BUTTON_METRICS.small.minHeight,
           },
         },
       },
@@ -539,7 +565,7 @@ export function buildThemeOptions(mode: Mode): ThemeOptions {
         },
       },
       // 短提示的时长由主题统一给：Rakko 契约是「4 秒自动关闭，hover / focus 时暂停」
-      // （motion.md:83），调用点不再各自写死 3000。
+      // （motion.md:83）。调用点不得再各自传自己的时长。
       MuiSnackbar: {
         defaultProps: { autoHideDuration: 4000 },
       },
@@ -590,7 +616,7 @@ export function buildThemeOptions(mode: Mode): ThemeOptions {
         },
       },
       // 底栏玻璃底色改由外层 Paper 的 data-glass="chrome" 提供（本地 Aero 版的 chrome 配方
-      // 自带纸底与发丝线，不再是本组件兜底的半透明纸底），内层必须保持透明，
+      // 自带纸底与发丝线），内层必须保持透明，
       // 否则会挡住玻璃。
       MuiBottomNavigation: {
         styleOverrides: {

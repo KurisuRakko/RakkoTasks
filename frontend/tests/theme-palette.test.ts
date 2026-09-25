@@ -3,8 +3,8 @@
 // 「主题真的下发了什么」，不是测试里手抄的颜色。
 //
 // 三条最重要的锁：
-//  1. 深色 warning.main 曾经漏成 MUI 深色色板的 orange[400]；
-//  2. 灰阶曾经漏成 Material 的 grey[400] / grey[600]（对照物见下面的 MUI_GREY_DEFAULTS）；
+//  1. 深色 warning.main 不许等于 MUI 深色色板的 orange[400]（缺档时 MUI 会兜到它）；
+//  2. 灰阶不许等于 Material 的 grey[400] / grey[600]（对照物见下面的 MUI_GREY_DEFAULTS）；
 //  3. 语义四色必须是完整色阶（main/light/dark/contrastText 四项齐全），
 //     缺一项 MUI 就会用 grey/自身算法兜底。
 
@@ -36,7 +36,7 @@ const THEMES: Record<Mode, Theme> = {
 const MUI_GREY_DEFAULTS = [grey[100], grey[200], grey[300], grey[400], grey[600]];
 
 describe('A1 语义色：四档齐全，深浅两套都不来自 MUI 默认', () => {
-  it('warning.main 不是 MUI 深色色板的 orange[400]（曾漏成那一个）', () => {
+  it('warning.main 不是 MUI 深色色板的 orange[400]', () => {
     // 对照物是 MUI 自己的 orange 色板：深色漏值时 warning.main 会等于 orange[400]
     for (const mode of MODES) {
       expect(THEMES[mode].palette.warning.main, mode).not.toBe(orange[400]);
@@ -86,7 +86,7 @@ describe('A1 语义色：四档齐全，深浅两套都不来自 MUI 默认', ()
   });
 });
 
-describe('A1 灰阶：n1..n9 一一映射，Material 灰不再露头', () => {
+describe('A1 灰阶：n1..n9 一一映射，不露 Material 灰', () => {
   it('grey[400] / grey[600] 不是 MUI 灰阶的对应档', () => {
     for (const mode of MODES) {
       expect(THEMES[mode].palette.grey[400], mode).not.toBe(grey[400]);

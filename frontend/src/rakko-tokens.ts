@@ -40,8 +40,8 @@ export const ACCENT = {
 } as const;
 
 /** 语义四色的完整 MUI 色阶：每档 { light, main, dark, contrastText } 都是显式 token，
- * 组件层不再拿到 MUI 用 grey/orange 兜出的默认值（深色 warning 曾漏成 MUI 深色色板的
- * orange[400]；对照物与「不许等于」的断言在 tests/theme-palette.test.ts）。
+ * 四档齐全，组件层不会拿到 MUI 用 grey/orange 兜出的默认值（缺档的漏值对照断言在
+ * tests/theme-palette.test.ts）。
  * 依据：references/tokens.md:62-73 每个语义色只定义**一个**基础 hex，它是浅色主题的
  * main，也是另外两档的派生种子；`consumer app theme layer` 在深色把整个色阶上提约
  * 15%（tokens.md:71「lifts each one ~15% in dark mode」）。main 之外的两档契约没给，
@@ -182,18 +182,17 @@ export const GLASS = {
   // chrome 是四档里最透的，压在它上面的是 12px/500 的底栏导航标签。实测（真实中文字形 +
   // 反相光晕，文字色 n9，取最差点）：浅色主题下 45% 时三张实测壁纸有两张够不到 AA 4.5，
   // 彩色天空只有 3.80；52% 是全部过线的最小值（4.62–5.45），且 45% 与 52% 的顶栏通透度
-  // 截图对比无可见差别（与上游 Rakko Design 同步，原 45%）。
+  // 截图对比无可见差别。
   surfaceOpacity: '52%',
   panelOpacity: '58%',
   scrimOpacity: '34%',
-  // highlight 一条已删除：上游 CHEATSHEET.md:154 / tokens.md:160 的 --glass-highlight 是
-  // 旧「左上透镜」配方的镜面高光，Aero 改版后整套玻璃（chrome / panel / inverse）都由
-  // --glass-sheen-1..3 + --glass-rim / --glass-lip 出光泽，没有任何规则再读它——
-  // 主题层继续下发就是个没人消费的键，测试却按「必须下发」锁着它。这里连同下发与
-  // 断言一起删掉，将来要回旧配方时先改上游再补回来。
-  // haze 纸色 55%（与上游 Rakko Design 同步，原 51%）：12px/600 的分组标题压在 haze 上，
-  // 51% 时在三张实测壁纸中最低只有 3.96（彩色天空），够不到 WCAG AA 4.5；55% 是全部过线
-  // 的最小值（4.53–4.98），且 51% 与 55% 的雾浓淡在真实版面上无可见差别。
+  // 这里不放 highlight：上游 CHEATSHEET.md:154 / tokens.md:160 的 --glass-highlight 是
+  // 「左上透镜」配方的镜面高光，本套玻璃（chrome / panel / inverse）的光泽全部由
+  // --glass-sheen-1..3 + --glass-rim / --glass-lip 出，没有规则读它，下发也只是个死键。
+  //
+  // haze 纸色 55%：12px/600 的分组标题压在 haze 上，51% 时三张实测壁纸中最低只有 3.96
+  // （彩色天空），够不到 WCAG AA 4.5；55% 是全部过线的最小值（4.53–4.98），且 51% 与 55%
+  // 的雾浓淡在真实版面上无可见差别。不许下调。
   hazeOpacity: '55%',
   hazeBleed: '28px',
 } as const;
@@ -202,8 +201,8 @@ export const GLASS = {
  * 键名 camelCase，与 CSS 变量一一对应：rim→--glass-rim、rimInner→--glass-rim-inner、
  * lip→--glass-lip、lipUnder→--glass-lip-under、side→--glass-side、bloom→--glass-bloom、
  * sheen1…sheen3→--glass-sheen-1…3、lift→--glass-lift、textGlow→--glass-text-glow。
- * 旧光泽的尾段键已删除（两个主题都删）：光泽改版后是上白下暗的三段（sheen-1 → sheen-2 45% →
- * sheen-3 100%），sheen-3 的语义是「底部的暗」——取代了旧版 46/47% 的陡变 + 四段尾键。
+ * 光泽是上白下暗的三段（sheen-1 → sheen-2 45% → sheen-3 100%），sheen-3 的语义是
+ * 「底部的暗」：止点必须落在 45% / 100% 这两个结构边界上，中间不许再出现陡变止点。
  * 浅色必须显式给暗：浅色是白纸底 + 白高光（rim/lip/side/bloom 全白）+ 白光泽（sheen-1/2），
  * 三层全白时通篇没有暗的一侧，卡片边界会溶进亮壁纸；所以 sheen-3 与 rim-inner 的暗段是浅色
  * 立体感的来源，写成白色就退回「无暗侧」的老问题。
@@ -250,7 +249,7 @@ export const GLASS_AERO = {
  *
  *  取值：sheen-1 34% → 12%，顶端白覆盖度 68.3% → 57.8%，顶→中落差 11.5 点 → 3.4 点，
  *  白纱振幅削掉约七成而「上亮下暗」的方向仍在；sheen-2 10% → 5%，让中段只比纸色地板高
- *  2.4 点，接进 sheen-3 的暗端时是连续过渡、45% 那道止点不再看得出来。
+ *  2.4 点，接进 sheen-3 的暗端时是连续过渡、45% 那道止点看不出来。
  *  lip 60% → 22%：22% 是浅色 lipUnder 的现值，直接复用而不是再造一个白常数；侧栏顶边与
  *  顶栏顶边在屏幕上缘首尾相接，两条 60% 的白发丝线会连成一道通白线，弱化成 22% 后它回到
  *  「一道倒角」而不是「一条亮边」。

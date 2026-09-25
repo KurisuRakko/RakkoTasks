@@ -56,7 +56,7 @@ describe('A3 PWA 状态栏底色随模式改写', () => {
     expect(meta.getAttribute('content')).toBe(NEUTRAL_LIGHT[0]);
   });
 
-  it('深色模式写深色 n1（不再停在浅色横条）', () => {
+  it('深色模式写深色 n1（状态栏与深色页面同底）', () => {
     localStorage.setItem(MODE_KEY, 'dark');
     const meta = installMeta();
     renderProvider();

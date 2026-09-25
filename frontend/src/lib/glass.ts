@@ -3,11 +3,11 @@
 // 本文件只剩壁纸接线——图源变量名（WALLPAPER_VAR）与默认图地址（DEFAULT_WALLPAPER_URL）；
 // 此外还放着 Dialog 遮罩与壁纸裁剪框外遮罩共用的颜色（SCRIM_COLOR），它与壁纸无关，
 // 是两处遮罩的同一个色值来源。
-// 驯化层纸色叠加已随产品决定移除：壁纸显示用户原图，不再垫纸色。
+// 壁纸显示用户原图，不叠纸色。
 //
 // 现存的玻璃表面：三块 chrome（顶栏 / 桌面侧边栏 / 移动端底栏）加每个可见列表行一块
-// panel。列表行自身就是 data-glass="panel" 的玻璃，直接压在壁纸上；盖住内容列的整块
-// 玻璃底板已删除，不再有第三个 fixed 壳层。
+// panel。列表行自身就是 data-glass="panel" 的玻璃，直接压在壁纸上；不存在盖住内容列
+// 的玻璃底板，也没有第三个 fixed 壳层。
 //
 // 「每个列表行一块玻璃」是对上游 references/anti-patterns.md 中 "A glass surface per
 // list item" 的明知偏离。玻璃的预算口径是「同时可见的 backdrop 表面个数」：上游实测
