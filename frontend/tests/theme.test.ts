@@ -181,7 +181,6 @@ describe('玻璃材质变量下发与让位', () => {
       '--glass-surface-opacity': GLASS.surfaceOpacity,
       '--glass-panel-opacity': GLASS.panelOpacity,
       '--glass-scrim-opacity': GLASS.scrimOpacity,
-      '--glass-highlight': GLASS.highlight,
       '--glass-haze-opacity': GLASS.hazeOpacity,
       '--glass-haze-bleed': GLASS.hazeBleed,
     };
@@ -190,6 +189,17 @@ describe('玻璃材质变量下发与让位', () => {
       for (const [cssVar, tokenValue] of Object.entries(expected)) {
         expect(vars[cssVar], `${mode} ${cssVar}`).toBe(tokenValue);
       }
+    }
+  });
+
+  it('5a2. --glass-highlight 已删除：GLASS 里没有这一条，:root 也不再下发', () => {
+    // 旧「左上透镜」配方的镜面高光；Aero 改版后三档光泽都由 --glass-sheen-1..3 与
+    // --glass-rim / --glass-lip 出，没有任何规则再读它。留着只会让测试替一个死键护航。
+    expect(Object.keys(GLASS)).not.toContain('highlight');
+    for (const mode of ['light', 'dark'] as const) {
+      expect(rootVars(mode), `${mode} 不该再下发 --glass-highlight`).not.toHaveProperty(
+        '--glass-highlight',
+      );
     }
   });
 
@@ -342,9 +352,10 @@ describe('玻璃材质变量下发与让位', () => {
   });
 });
 
-describe('玻璃高光恒为一档（不再按有没有壁纸分流）', () => {
-  // 「没有壁纸」已不是一种状态：用户没设时背景是默认壁纸，玻璃身后永远有图像可透，
-  // 因此主题层不再下发任何按图源分流 --glass-highlight 的选择器。
+describe('玻璃高光已不再下发（Aero 光泽取代旧镜面高光）', () => {
+  // 「没有壁纸」已不是一种状态：用户没设时背景是默认壁纸，玻璃身后永远有图像可透。
+  // 旧配方按图源分流 --glass-highlight 的选择器早已不存在，Aero 改版后连这条变量
+  // 本身（连同 GLASS.highlight 与 :root 下发）都已删除，见 5a2。
   it('6a. 两个模式都不存在按图源分流的高光改写块', () => {
     for (const mode of ['light', 'dark'] as const) {
       const keys = Object.keys(globalStyles(mode));
@@ -355,8 +366,8 @@ describe('玻璃高光恒为一档（不再按有没有壁纸分流）', () => {
     }
   });
 
-  it('6b. :root 块高光恒为 GLASS.highlight', () => {
-    expect(rootVars('light')['--glass-highlight']).toBe(GLASS.highlight);
-    expect(rootVars('dark')['--glass-highlight']).toBe(GLASS.highlight);
+  it('6b. 两个模式的 :root 都不含 --glass-highlight', () => {
+    expect(rootVars('light')).not.toHaveProperty('--glass-highlight');
+    expect(rootVars('dark')).not.toHaveProperty('--glass-highlight');
   });
 });

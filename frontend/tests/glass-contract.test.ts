@@ -1,5 +1,6 @@
 // 玻璃材质契约守卫（纯文本断言，不渲染任何组件）：
-// rakko-glass.css 是上游 design-system/src/glass.css 的逐字镜像，全项目 backdrop-filter
+// rakko-glass.css 是 design-system/src/glass.css 的**本地 Aero 定制版**（基线为上游 main，
+// 光泽与厚度边在本地改过，偏离记录见该文件头），全项目 backdrop-filter
 // 的唯一合法宿主。本文件守住：四档配方、两条退化路径、滚动渐显规则都在位；
 // 「-webkit- 前缀写法不得与无前缀 backdrop-filter 声明并列在同一规则块，前缀兜底
 // 独立在 @supports 块里」；「backdrop-filter 只允许出现在一个样式表里」；以及
@@ -155,10 +156,13 @@ describe('变量下发守卫', () => {
     const glassCss = (await loadFs()).readFileSync('src/rakko-glass.css', 'utf-8');
 
     // 任务书 3a 的 :root 下发清单（原 14 键）+ Aero 化新增的 11 个（--glass-rim …
-    // --glass-text-glow，--glass-sheen-4 已随三段光泽改版删除），共 25 键，逐字断言。
-    // css 实际消费的非 --rk- 变量为 22 个；--glass-scrim-opacity（主题层 MuiBackdrop 消费）、
-    // --glass-highlight（新配方已不消费，主题层仍下发）与 --shadow-whisper（haze 等场景仍用）
-    // 不在玻璃样式表里，故总下发数比 css 消费数多 3。
+    // --glass-text-glow，--glass-sheen-4 已随三段光泽改版删除），原为 25 键，逐字断言。
+    // --glass-highlight 已随 Aero 光泽改版删除：三档配方的光泽全部来自
+    // --glass-sheen-1..3 与 --glass-rim/--glass-lip，没有任何规则再读它，主题层继续
+    // 下发就是个死键（下方动态守卫只看 css 真正 var() 消费的变量，本来也扫不到它）。
+    // 现值 24 键；css 实际消费的非 --rk- 变量为 22 个，--glass-scrim-opacity（主题层
+    // MuiBackdrop 消费）与 --shadow-whisper（haze 等场景仍用）不在玻璃样式表里，
+    // 故总下发数比 css 消费数多 2。
     const providedByTheme = [
       '--color-paper',
       '--color-border',
@@ -170,7 +174,6 @@ describe('变量下发守卫', () => {
       '--glass-surface-opacity',
       '--glass-panel-opacity',
       '--glass-scrim-opacity',
-      '--glass-highlight',
       '--glass-haze-opacity',
       '--glass-haze-bleed',
       '--glass-rim',

@@ -39,12 +39,44 @@ export const ACCENT = {
   dark: '#e095a4',
 } as const;
 
-/** 语义色（和色体系）；深色主题下各提亮约 15%（MUI lighten(c, 0.15)） */
+/** 语义四色的完整 MUI 色阶：每档 { light, main, dark, contrastText } 都是显式 token，
+ * 组件层不再拿到 MUI 用 grey/orange 兜出的默认值（深色 warning 曾漏成 MUI 深色色板的
+ * orange[400]；对照物与「不许等于」的断言在 tests/theme-palette.test.ts）。
+ * 依据：references/tokens.md:62-73 每个语义色只定义**一个**基础 hex，它是浅色主题的
+ * main，也是另外两档的派生种子；`consumer app theme layer` 在深色把整个色阶上提约
+ * 15%（tokens.md:71「lifts each one ~15% in dark mode」）。main 之外的两档契约没给，
+ * 按同一条 ±15% 亮度档从 main 派生：light 提亮 15%、dark 压暗 15%（与真实 hex 的
+ * 对应关系写在每个值后面）。深色主题自己的取值由 theme.ts 用 lighten(main, 0.15)
+ * 求值（先例：theme.test.ts 的「深色语义色较浅色提亮」用例），那里只换 main 及其
+ * 派生档的相对关系不变。
+ * contrastText 取 pairings 的实测对比度（tokens.md:56-60 的「填充 + 白字」配对）：
+ * 两个深色墨底给 #fff，两个中等亮度底给 #000（小字与常规字都过 WCAG AA）。
+ * 四色同为状态色（tokens.md:73 不得当装饰色），不自造第五个语义色。 */
 export const SEMANTIC = {
-  info: '#3d6896', // 縹 hanada
-  success: '#5e9f7e', // 若竹 wakatake
-  warning: '#a87a3d', // 朽葉 kuchiba
-  error: '#a64953', // 蘇芳 suoh
+  info: {
+    light: '#5a7ea5', // lighten(#3d6896, 15%)
+    main: '#3d6896', // 縹 hanada（tokens.md:66）
+    dark: '#33587f', // darken(#3d6896, 15%)
+    contrastText: '#fff', // 6.90:1
+  },
+  success: {
+    light: '#76ad91', // lighten(#5e9f7e, 15%)
+    main: '#5e9f7e', // 若竹 wakatake（tokens.md:67）
+    dark: '#4f876b', // darken(#5e9f7e, 15%)
+    contrastText: '#000', // 7.16:1
+  },
+  warning: {
+    light: '#b58d5a', // lighten(#a87a3d, 15%)
+    main: '#a87a3d', // 朽葉 kuchiba（tokens.md:68）
+    dark: '#8e6733', // darken(#a87a3d, 15%)
+    contrastText: '#000', // 5.87:1
+  },
+  error: {
+    light: '#b3646c', // lighten(#a64953, 15%)
+    main: '#a64953', // 蘇芳 suoh（tokens.md:69）
+    dark: '#8d3e46', // darken(#a64953, 15%)
+    contrastText: '#fff', // 6.62:1
+  },
 } as const;
 
 /** 默认边框：浅色 rgba(24,24,27,0.1)；深色用白色 12%。
@@ -115,11 +147,35 @@ export const STATE_OPACITY = {
   pressed: 0.12,
 } as const;
 
+/** 反相面（Tooltip / Snackbar）的墨底色与面上文字色。
+ *  Tooltip 契约是「保持 n-10 实底（对比度优先、面积小、存活短）」
+ *  （references/components.md:20），Snackbar 契约是「n-10 底、n-1 字」
+ *  （rakko-glass.css 的 inverse 档定义）。
+ *  这里取**浅色**中性档而不是当前主题的 n10/n1：深色主题的 n-1 是近黑、n-10 是近白，
+ *  照当前主题直接取会得到一块近白的高亮气泡，既不是「墨色实底」也不是反向强调。
+ *  浅色 n1 落在浅色 n10 上是 17.35:1，主题无关地恒成立。（PWA <meta name="theme-color">
+ *  的深浅取值见 theme.ts / lib/theme-mode.tsx，是另一回事。） */
+export const SEMANTIC_INVERSE_SURFACE = {
+  bg: NEUTRAL_LIGHT[9], // 浅色 n10
+  fg: NEUTRAL_LIGHT[0], // 浅色 n1
+} as const;
+
+/** 共享间距档（px）：与 Tailwind 默认档对齐（tokens.md:127-132 的四基准）
+ *  4 / 8 / 12 / 16 / 24；组件主题层只消费这几档，不写裸数字。 */
+export const SPACING = {
+  xs: 4,
+  sm: 8,
+  md: 12,
+  lg: 16,
+  xl: 24,
+} as const;
+
 /** whisper 阴影：禁硬阴影（阴影只允许此档，其余用 1px 边框分层） */
 export const WHISPER_SHADOW = '0 1px 2px rgba(20, 19, 18, 0.06)';
 
-/** 玻璃材质数值（镜像自上游 tokens.css 的 --glass-*）。配方本身在 rakko-glass.css，
- * 是 design-system/src/glass.css 的逐字镜像；这里只放它消费的值，由主题层下发到 :root。 */
+/** 玻璃材质数值（取自上游 tokens.css 的 --glass-*）。配方本身在 rakko-glass.css，
+ * 是 design-system/src/glass.css 的**本地 Aero 定制版**（基于上游改过光泽与厚度边，
+ * 偏离记录见该文件头部）；这里放它消费的值，由主题层下发到 :root。 */
 export const GLASS = {
   blur: '3px',
   saturate: '193%',
@@ -130,7 +186,11 @@ export const GLASS = {
   surfaceOpacity: '52%',
   panelOpacity: '58%',
   scrimOpacity: '34%',
-  highlight: 'rgba(255, 255, 255, 0.59)',
+  // highlight 一条已删除：上游 CHEATSHEET.md:154 / tokens.md:160 的 --glass-highlight 是
+  // 旧「左上透镜」配方的镜面高光，Aero 改版后整套玻璃（chrome / panel / inverse）都由
+  // --glass-sheen-1..3 + --glass-rim / --glass-lip 出光泽，没有任何规则再读它——
+  // 主题层继续下发就是个没人消费的键，测试却按「必须下发」锁着它。这里连同下发与
+  // 断言一起删掉，将来要回旧配方时先改上游再补回来。
   // haze 纸色 55%（与上游 Rakko Design 同步，原 51%）：12px/600 的分组标题压在 haze 上，
   // 51% 时在三张实测壁纸中最低只有 3.96（彩色天空），够不到 WCAG AA 4.5；55% 是全部过线
   // 的最小值（4.53–4.98），且 51% 与 55% 的雾浓淡在真实版面上无可见差别。

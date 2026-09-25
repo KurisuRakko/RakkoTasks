@@ -1,4 +1,5 @@
-// 玻璃接线层：材质配方来自 rakko-glass.css（design-system/src/glass.css 的逐字镜像），
+// 玻璃接线层：材质配方来自 rakko-glass.css（design-system/src/glass.css 的本地 Aero
+// 定制版，基线是上游 main、光泽与厚度边在本地改过，偏离记录见该文件头），
 // 本文件只剩壁纸接线——图源变量名（WALLPAPER_VAR）与默认图地址（DEFAULT_WALLPAPER_URL）；
 // 此外还放着 Dialog 遮罩与壁纸裁剪框外遮罩共用的颜色（SCRIM_COLOR），它与壁纸无关，
 // 是两处遮罩的同一个色值来源。
