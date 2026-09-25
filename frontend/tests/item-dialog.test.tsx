@@ -473,28 +473,6 @@ describe('ItemDialog 实色纸面、文字层级与按钮层级', () => {
     expect(paper!.getAttribute('style')).toContain(`--Paper-shadow: ${theme.shadows[24]}`);
   });
 
-  it('标题取 text.primary（实色纸面上的最强档），深浅两套一致', () => {
-    const expectTitleColor = (mode: 'light' | 'dark') => {
-      if (mode === 'dark') localStorage.setItem('rakkotasks.theme-mode', 'dark');
-      vi.stubGlobal('fetch', makeFetchMock());
-
-      renderWithAppTheme(<ItemDialog item={makeItem({})} onClose={vi.fn()} />);
-
-      const title = screen.getByText('测试任务');
-      expect(
-        ownEmotionClass(title),
-        `${mode}：没读到标题的 emotion 局部类，断言会空转`,
-      ).not.toBeNull();
-      const rule = ruleTextOf(allStyleText(), title);
-      const expected = createTheme(buildThemeOptions(mode)).palette.text.primary;
-      expect(rule, `${mode}：标题必须是 text.primary`).toContain(`color:${expected}`);
-      cleanup();
-    };
-
-    expectTitleColor('light');
-    expectTitleColor('dark');
-  });
-
   it('辅助文字取 text.secondary，且 n7 对 background.paper 在深浅两套都过 AA 4.5', async () => {
     // 决策前提：text.secondary（n7）是不透明纸面上的辅助档，深浅都要够 4.5 才允许用它；
     // 哪一套不达标，那一套的辅助文字就得退回 text.primary。

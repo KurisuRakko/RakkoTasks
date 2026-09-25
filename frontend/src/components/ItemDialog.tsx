@@ -238,8 +238,7 @@ export default function ItemDialog({ item, onClose, onChanged, onDeleted }: Prop
         </Toolbar>
       </AppBar>
       <Box sx={DIALOG_BODY_SX}>
-        {/* 实色纸面上的层级：标题是最强档 text.primary */}
-        <Typography variant="h6" gutterBottom sx={{ color: 'text.primary' }}>
+        <Typography variant="h6" gutterBottom>
           {current.title}
         </Typography>
         <Stack direction="row" spacing={1} sx={{ mb: 1.5 }}>
@@ -292,7 +291,6 @@ export default function ItemDialog({ item, onClose, onChanged, onDeleted }: Prop
           </>
         ) : (
           <>
-            {/* 实色纸面上的辅助文字：来源账户是元信息，取次级档 text.secondary */}
             <Typography variant="body2" gutterBottom sx={{ color: 'text.secondary' }}>
               来源账户：{accountName ?? '…'}
             </Typography>
@@ -358,9 +356,7 @@ export default function ItemDialog({ item, onClose, onChanged, onDeleted }: Prop
                             secondary={[r.sent_at ? r.sent_at.slice(0, 10) : '', r.reason]
                               .filter(Boolean)
                               .join(' · ')}
-                            // 这一行在实色纸面上：日期/原因是次级信息，取 MUI 默认的
-                            // text.secondary（n7）——n7 压在 background.paper 上浅色
-                            // 6.01、深色 10.01，都过 AA 正文的 4.5。层级由字号/字重承担
+                            // 日期/原因是次级信息，实色纸面上取默认 text.secondary
                           />
                         </ListItemButton>
                         {open && (
