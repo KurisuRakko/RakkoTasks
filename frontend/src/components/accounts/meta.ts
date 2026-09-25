@@ -12,10 +12,15 @@ export function defaultNameFor(kind: AccountKind): string {
   return kind === 'gmail' ? 'Gmail' : 'Outlook';
 }
 
-/** 状态 Chip 的文案与颜色：已停用优先于状态；pending 按是否有凭据区分「待授权 / 等待首次同步」 */
+/** 状态 Chip 的文案与语义色：已停用优先于状态；pending 按是否有凭据区分「待授权 / 等待首次同步」。
+ *
+ *  语义色映射（五态一一对应，不再用中性色兜住「等首次同步」）：
+ *  正常 success / 出错 error / 等首次同步 info / 待授权 warning / 已停用 default（中性）。
+ *  颜色一律用 MUI 的语义色名，实际色值与描边浓淡由主题层给（Chip 是全局共享零件，
+ *  它的描边属于主题层决定，不在调用点复述）。 */
 export function statusChipMeta(
   account: AccountInfo,
-): { label: string; color: 'success' | 'error' | 'warning' | 'default' } {
+): { label: string; color: 'success' | 'error' | 'info' | 'warning' | 'default' } {
   if (!account.enabled) return { label: '已停用', color: 'default' };
   switch (account.status) {
     case 'ok':
@@ -24,7 +29,7 @@ export function statusChipMeta(
       return { label: '出错', color: 'error' };
     case 'pending':
       return account.has_credentials
-        ? { label: '等待首次同步', color: 'default' }
+        ? { label: '等待首次同步', color: 'info' }
         : { label: '待授权', color: 'warning' };
   }
 }

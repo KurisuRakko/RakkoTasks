@@ -174,9 +174,9 @@ describe('AccountWizard 微软路径', () => {
     fireEvent.click(generate);
     await waitFor(() => expect(api.requestMsAuthUrlMock).toHaveBeenCalledWith(2));
 
-    // 链接拿到后出现「新标签打开」与「复制链接」，并出现粘贴框与完成按钮
+    // 链接拿到后出现「新标签打开」与「复制」（全站唯一的复制零件），并出现粘贴框与完成按钮
     expect(screen.getByRole('button', { name: '在新标签页打开微软登录' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: '复制链接' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '复制' })).toBeTruthy();
     const paste = screen.getByLabelText('把地址栏的完整地址粘贴到这里') as HTMLInputElement;
     fireEvent.change(paste, { target: { value: `  ${authUri}  ` } });
     fireEvent.click(screen.getByRole('button', { name: '完成授权' }));
@@ -322,6 +322,34 @@ describe('AccountWizard 新错误码映射', () => {
     expect(await screen.findByText(message)).toBeTruthy();
     // 留在原步，用户能直接改
     expect(screen.getByLabelText('邮箱')).toBeTruthy();
+  });
+});
+
+describe('AccountWizard 按钮层级', () => {
+  it('取消只有一种变体：text + inherit；「下一步」是主操作 contained', async () => {
+    renderWizard();
+
+    const cancel = screen.getByRole('button', { name: '取消' });
+    expect(cancel.className).toMatch(/MuiButton-text/);
+    expect(cancel.className).toMatch(/MuiButton-colorInherit/);
+    expect(cancel.className).not.toMatch(/MuiButton-outlined/);
+
+    const next = screen.getByRole('button', { name: '下一步' });
+    expect(next.className).toMatch(/MuiButton-contained/);
+  });
+
+  it('折叠入口（高级）是三级动作：text + inherit', async () => {
+    renderWizard();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Gmail' }));
+    fireEvent.click(screen.getByRole('button', { name: '下一步' }));
+    fireEvent.click(screen.getByRole('button', { name: '上一步' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Outlook · Microsoft 365' }));
+    fireEvent.click(screen.getByRole('button', { name: '下一步' }));
+
+    const advanced = screen.getByRole('button', { name: /高级/ });
+    expect(advanced.className).toMatch(/MuiButton-text/);
+    expect(advanced.className).toMatch(/MuiButton-colorInherit/);
   });
 });
 

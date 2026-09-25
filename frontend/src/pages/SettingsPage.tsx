@@ -1,31 +1,31 @@
-// 设置页：邮箱账户 / 外观 / 日历订阅 / 提醒事项同步 / 账户 / 关于 纵向分区。
+// 设置页：邮箱账户 / 外观 / 壁纸 / 日历订阅 / 提醒事项同步 / 账户 / 同步 / 关于 纵向分区。
 // 账户分区的全部展示逻辑（fetchStatus、卡片、Chip、空态）迁去了
 // components/accounts/AccountsSection.tsx，本页只负责放行与其余分区。
+//
+// 结构：页外壳 + 8 块 data-glass="panel" 玻璃面板（分区数量与顺序不动），每个面板内是
+// 「一个分区标题 + 若干设置行」。行零件在 components/accounts/SettingsRow.tsx：统一最小
+// 高度、统一左右内边距、相邻行之间的 inset 发丝线，本页不再各分区自己写 sx。
+// 玻璃上的文字一律 text.primary（n9），层级靠字阶（标签 13px / 说明 12px）拉开。
 
 import { useEffect, useRef, useState } from 'react';
 import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
+import ButtonBase from '@mui/material/ButtonBase';
 import Dialog from '@mui/material/Dialog';
 import DialogActions from '@mui/material/DialogActions';
 import DialogContent from '@mui/material/DialogContent';
 import DialogContentText from '@mui/material/DialogContentText';
 import DialogTitle from '@mui/material/DialogTitle';
-import IconButton from '@mui/material/IconButton';
-import List from '@mui/material/List';
-import ListItem from '@mui/material/ListItem';
-import ListItemButton from '@mui/material/ListItemButton';
-import ListItemText from '@mui/material/ListItemText';
 import ChevronRightIcon from '@mui/icons-material/ChevronRight';
-import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import Skeleton from '@mui/material/Skeleton';
 import Snackbar from '@mui/material/Snackbar';
 import Stack from '@mui/material/Stack';
 import TextField from '@mui/material/TextField';
-import ToggleButton from '@mui/material/ToggleButton';
-import ToggleButtonGroup from '@mui/material/ToggleButtonGroup';
 import Typography from '@mui/material/Typography';
 import AccountsSection from '../components/accounts/AccountsSection';
+import CopyButton from '../components/accounts/CopyButton';
+import SettingsRow, { HINT_SX } from '../components/accounts/SettingsRow';
 import WallpaperCropDialog from '../components/WallpaperCropDialog';
 import {
   caldavTarget,
@@ -35,19 +35,164 @@ import {
   generateCaldavPassword,
   rotateCalendarToken,
 } from '../lib/api';
-import { copyText } from '../lib/clipboard';
 import { API_BASE_URL, PHAINON_API_BASE } from '../lib/env';
 import { PAGE_SX, PANEL_SX } from '../lib/layout';
 import { useNavigateTo } from '../lib/nav';
 import { logout, startLogin } from '../lib/phainon';
 import { checkForUpdate } from '../lib/pwa-update';
 import { useSession } from '../lib/session';
-import { hitSlopSx, ROW_GAP_PX } from '../lib/surface';
+import { ROW_GAP_PX } from '../lib/surface';
+import { RADIUS } from '../rakko-tokens';
 import { syncLastSummary, useSyncStatus } from '../lib/sync-status';
 import { useThemeMode } from '../lib/theme-mode';
 import { loadWallpaperSource, renderWallpaper, setWallpaper, useWallpaper } from '../lib/wallpaper';
 import type { WallpaperArea, WallpaperSource } from '../lib/wallpaper';
+import type { ThemeMode } from '../lib/theme-mode';
+import type { KeyboardEvent } from 'react';
 import type { CaldavInfo } from '../types';
+
+/** 分区标题：全站只有这一种（theme 的 overline 字阶），位置固定在面板内顶部。
+ *  color 取 inherit —— overline 的容器是 TextField 的 legend，它自带 n7 那档次级色；
+ *  玻璃上的次级文字 n7 对比度只有 2.4–2.6，标题必须回到正文色 n9。 */
+const SECTION_TITLE_SX = { color: 'inherit', display: 'block', mb: 0.5 } as const;
+
+/** 分段控件与分组按钮组的最小高度：48 与设置行同档（HIG 的 44pt 之上留一档余量） */
+const CONTROL_MIN_HEIGHT_SX = { minHeight: '48px' } as const;
+
+const MODE_OPTIONS: readonly { value: ThemeMode; label: string }[] = [
+  { value: 'system', label: '跟随系统' },
+  { value: 'light', label: '浅色' },
+  { value: 'dark', label: '深色' },
+];
+
+/** 外观三态的一个选项 */
+interface ModeOption {
+  value: ThemeMode;
+  label: string;
+}
+
+/**
+ * 互斥分段控件（外观三态）。
+ *
+ * 为什么不用 MUI 的 ToggleButtonGroup：契约要求互斥分段选择保留 radiogroup / radio 语义，
+ * 而 ToggleButton 出的是 role="group" + aria-pressed，且不给方向键；只往上加属性治不了
+ * 组件内部写死的 aria-pressed，也会造出 role 与属性自相矛盾的控件。所以这里用 ButtonBase
+ * 自绘：语义、方向键与视觉都在一处，也不必再去和 ToggleButtonGroup 的 group-first /
+ * group-last 样式竞争。
+ *
+ * 键盘行为按 ARIA APG 的 radio group：一组里只有一个 tab 停点（选中项 tabIndex 0、
+ * 其余 -1），← / → 与 ↑ / ↓ 切换并同时移动焦点，Home / End 到首尾。
+ *
+ * 选中态同时靠描边、填充与文字颜色三重表达（契约：selected 不能只靠颜色）；颜色全部取自
+ * theme.palette，不在组件里写新的色值字面量。
+ */
+function ModeSegmentedControl({
+  value,
+  options,
+  onChange,
+}: {
+  value: ThemeMode;
+  options: readonly ModeOption[];
+  onChange: (value: ThemeMode) => void;
+}) {
+  // 方向键切换后要把焦点移到新选中项；点击不移动（浏览器已把焦点给被点到的按钮）
+  const [focusPending, setFocusPending] = useState(false);
+  const refs = useRef<(HTMLButtonElement | null)[]>([]);
+
+  useEffect(() => {
+    if (!focusPending) return;
+    const index = options.findIndex((o) => o.value === value);
+    refs.current[index]?.focus();
+    setFocusPending(false);
+  }, [focusPending, options, value]);
+
+  const move = (from: number, delta: number) => {
+    const next = (from + delta + options.length) % options.length;
+    setFocusPending(true);
+    onChange(options[next].value);
+  };
+
+  const handleKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
+    switch (event.key) {
+      case 'ArrowRight':
+      case 'ArrowDown':
+        event.preventDefault();
+        move(index, 1);
+        break;
+      case 'ArrowLeft':
+      case 'ArrowUp':
+        event.preventDefault();
+        move(index, -1);
+        break;
+      case 'Home':
+        event.preventDefault();
+        setFocusPending(true);
+        onChange(options[0].value);
+        break;
+      case 'End':
+        event.preventDefault();
+        setFocusPending(true);
+        onChange(options[options.length - 1].value);
+        break;
+      default:
+        break;
+    }
+  };
+
+  return (
+    <Box
+      role="radiogroup"
+      aria-label="外观"
+      sx={(theme) => ({
+        display: 'flex',
+        minHeight: '48px',
+        border: `1px solid ${theme.palette.divider}`,
+        borderRadius: `${RADIUS.card}px`,
+        // 组不做 overflow: hidden：聚焦圈（MuiButtonBase 的 2px outline + 2px offset）
+        // 会被裁掉。分段之间的分隔线改由相邻选择器的左描边画，同样收在组边框内。
+        '& > * + *': {
+          borderLeft: `1px solid ${theme.palette.divider}`,
+        },
+      })}
+    >
+      {options.map((option, index) => {
+        const selected = option.value === value;
+        return (
+          <ButtonBase
+            key={option.value}
+            ref={(el: HTMLButtonElement | null) => {
+              refs.current[index] = el;
+            }}
+            role="radio"
+            aria-checked={selected}
+            // 单选组里只有选中项进 tab 顺序（APG 的 roving tabindex）
+            tabIndex={selected ? 0 : -1}
+            onClick={() => onChange(option.value)}
+            onKeyDown={(event) => handleKeyDown(event, index)}
+            sx={(theme) => ({
+              flexGrow: 1,
+              flexBasis: 0,
+              minWidth: 0,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              px: 1.5,
+              borderRadius: `${RADIUS.card}px`,
+              color: selected ? theme.palette.primary.main : theme.palette.text.primary,
+              backgroundColor: selected ? theme.palette.action.selected : 'transparent',
+              // 未选中态给一层同色透明描边：选中后换成主色描边时布局不跳
+              border: `1px solid ${selected ? theme.palette.primary.main : 'transparent'}`,
+            })}
+          >
+            <Typography variant="body2" sx={{ fontWeight: selected ? 500 : 400 }}>
+              {option.label}
+            </Typography>
+          </ButtonBase>
+        );
+      })}
+    </Box>
+  );
+}
 
 export default function SettingsPage() {
   // 日历订阅：令牌 + 订阅链接，加载失败降级为 Alert
@@ -169,12 +314,8 @@ export default function SettingsPage() {
 
   const urls = token ? calendarUrls(token) : null;
 
-  const handleCopyLink = () => {
-    if (!urls) return;
-    copyText(() => Promise.resolve(urls.https))
-      .then(() => setSnack('已复制'))
-      .catch(() => setSnack('复制失败'));
-  };
+  /** 复制反馈一律走这一条 Snackbar（全站唯一的复制提示文案） */
+  const reportCopy = (ok: boolean) => setSnack(ok ? '已复制' : '复制失败');
 
   /** 重新生成：旧令牌立即作废，已订阅的日历需要重新添加 */
   const handleRotate = () => {
@@ -193,27 +334,6 @@ export default function SettingsPage() {
   };
 
   const davTarget = dav ? caldavTarget(dav.path) : null;
-
-  const handleCopyServer = () => {
-    if (!davTarget) return;
-    copyText(() => Promise.resolve(davTarget.host))
-      .then(() => setSnack('已复制'))
-      .catch(() => setSnack('复制失败'));
-  };
-
-  const handleCopyUsername = () => {
-    if (!dav) return;
-    copyText(() => Promise.resolve(dav.username))
-      .then(() => setSnack('已复制'))
-      .catch(() => setSnack('复制失败'));
-  };
-
-  const handleCopyPassword = () => {
-    if (!davPassword) return;
-    copyText(() => Promise.resolve(davPassword))
-      .then(() => setSnack('已复制'))
-      .catch(() => setSnack('复制失败'));
-  };
 
   /** 生成（或重新生成）同步密码：成功后只展示一次；后端保证旧密码立即失效 */
   const handleGenerateDavPassword = () => {
@@ -264,40 +384,52 @@ export default function SettingsPage() {
         <AccountsSection />
       </Box>
 
-      {/* 外观：深浅色三态，读写 useThemeMode */}
+      {/* 外观：深浅色三态，读写 useThemeMode。三态是互斥选择，用 radiogroup 语义的分段
+          控件（方向键切换并移动焦点） */}
       <Box data-glass="panel" sx={PANEL_SX}>
-        <Typography variant="overline">外观</Typography>
-        <ToggleButtonGroup
-          exclusive
-          fullWidth
-          size="small"
-          value={mode}
-          onChange={(_e, v) => {
-            if (v === 'system' || v === 'light' || v === 'dark') setMode(v);
-          }}
-        >
-          <ToggleButton value="system">跟随系统</ToggleButton>
-          <ToggleButton value="light">浅色</ToggleButton>
-          <ToggleButton value="dark">深色</ToggleButton>
-        </ToggleButtonGroup>
+        <Typography variant="overline" component="h2" sx={SECTION_TITLE_SX}>
+          外观
+        </Typography>
+        <ModeSegmentedControl value={mode} options={MODE_OPTIONS} onChange={setMode} />
       </Box>
 
       {/* 壁纸：本机背景图，localStorage 持久化（不传后端） */}
       <Box data-glass="panel" sx={PANEL_SX}>
-        <Typography variant="overline">壁纸</Typography>
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-          不设置时使用默认壁纸；自选壁纸只存在本机浏览器里，换设备需要重新设置。
+        <Typography variant="overline" component="h2" sx={SECTION_TITLE_SX}>
+          壁纸
         </Typography>
-        <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap' }}>
-          <Button variant="outlined" onClick={() => fileInputRef.current?.click()}>
-            选择图片
-          </Button>
-          {wallpaper && (
-            <Button variant="outlined" onClick={() => setWallpaper(null)}>
-              恢复默认壁纸
-            </Button>
-          )}
-        </Stack>
+        <SettingsRow
+          label={
+            <>
+              <Typography variant="body2">当前壁纸</Typography>
+              <Typography variant="caption" sx={HINT_SX}>
+                {wallpaper ? '已设置为本机图片，换设备需要重新设置' : '默认壁纸'}
+              </Typography>
+            </>
+          }
+          value={
+            <Stack direction="row" spacing={1}>
+              <Button
+                variant="outlined"
+                size="small"
+                sx={CONTROL_MIN_HEIGHT_SX}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                选择图片
+              </Button>
+              {wallpaper && (
+                <Button
+                  variant="outlined"
+                  size="small"
+                  sx={CONTROL_MIN_HEIGHT_SX}
+                  onClick={() => setWallpaper(null)}
+                >
+                  恢复默认壁纸
+                </Button>
+              )}
+            </Stack>
+          }
+        />
         {/* 隐藏的 file input：「选择图片」按钮触发它的 click；值每次清空，
             同一文件才能再次触发 change */}
         <input
@@ -315,44 +447,67 @@ export default function SettingsPage() {
 
       {/* 日历订阅：只读订阅链接（iCal 公开端点）+ 订阅 / 复制 / 重新生成 */}
       <Box data-glass="panel" sx={PANEL_SX}>
-        <Typography variant="overline">日历订阅</Typography>
+        <Typography variant="overline" component="h2" sx={SECTION_TITLE_SX}>
+          日历订阅
+        </Typography>
         {calLoading ? (
           <Skeleton variant="text" />
         ) : calError ? (
           <Alert severity="error">加载订阅链接失败</Alert>
         ) : token && urls ? (
           <>
-            <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-              有截止日的未完成任务会出现在日历里，完成后自动消失；提醒时间为截止日当天
-              10:00。iPhone 上订阅日历的刷新频率由系统「获取新数据」设置决定。
-            </Typography>
-            <TextField
-              fullWidth
-              size="small"
-              value={urls.https}
-              InputProps={{ readOnly: true }}
-              inputProps={{ 'aria-label': '订阅链接' }}
+            <SettingsRow
+              label={
+                <Typography variant="caption" sx={{ display: 'block' }}>
+                  有截止日的未完成任务会出现在日历里，完成后自动消失；提醒时间为截止日当天
+                  10:00。iPhone 上订阅日历的刷新频率由系统「获取新数据」设置决定。
+                </Typography>
+              }
             />
-            <Stack direction="row" spacing={1} sx={{ mt: 1, flexWrap: 'wrap' }}>
-              <Button variant="contained" component="a" href={urls.webcal}>
-                在 iPhone 上订阅
-              </Button>
-              <Button variant="outlined" onClick={handleCopyLink}>
-                复制链接
-              </Button>
-              <Button variant="outlined" onClick={() => setRotateOpen(true)}>
-                重新生成
-              </Button>
-            </Stack>
+            <SettingsRow
+              label={
+                <TextField
+                  fullWidth
+                  size="small"
+                  value={urls.https}
+                  InputProps={{ readOnly: true }}
+                  inputProps={{ 'aria-label': '订阅链接' }}
+                />
+              }
+              value={<CopyButton getText={() => urls.https} onFeedback={reportCopy} />}
+            />
+            <SettingsRow
+              value={
+                <Stack direction="row" spacing={1} sx={{ width: '100%' }}>
+                  <Button
+                    variant="contained"
+                    sx={{ ...CONTROL_MIN_HEIGHT_SX, flexGrow: 1 }}
+                    component="a"
+                    href={urls.webcal}
+                  >
+                    在 iPhone 上订阅
+                  </Button>
+                  {/* 重新生成 = 进入破坏性流程（旧链接立即失效），入口用 text error，
+                      最终确认在对话框里才是 contained error */}
+                  <Button
+                    variant="text"
+                    color="error"
+                    sx={CONTROL_MIN_HEIGHT_SX}
+                    onClick={() => setRotateOpen(true)}
+                  >
+                    重新生成
+                  </Button>
+                </Stack>
+              }
+            />
           </>
         ) : null}
       </Box>
 
       {/* 提醒事项同步：iPhone「提醒事项」经 CalDAV 同步的开通入口（服务器/用户名 + 一次性密码） */}
       <Box data-glass="panel" sx={PANEL_SX}>
-        <Typography variant="overline">提醒事项同步</Typography>
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-          把任务同步到 iPhone「提醒事项」App：在手机上勾选、新建、修改都会回到这里。手机上新建的任务归入「个人」分类。
+        <Typography variant="overline" component="h2" sx={SECTION_TITLE_SX}>
+          提醒事项同步
         </Typography>
         {davLoading ? (
           <Skeleton variant="text" />
@@ -360,135 +515,169 @@ export default function SettingsPage() {
           <Alert severity="error">加载提醒事项同步配置失败</Alert>
         ) : dav && davTarget ? (
           <>
-            <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
-              <TextField
-                fullWidth
-                size="small"
-                value={davTarget.host}
-                InputProps={{ readOnly: true }}
-                inputProps={{ 'aria-label': '服务器' }}
-              />
-              <IconButton
-                size="small"
-                aria-label="复制服务器"
-                onClick={handleCopyServer}
-                // 命中区补齐到 44×44：按钮自身 30×30，伪元素每边外扩 7px，小于
-                // Stack spacing={1} 的 8px 间隔，不侵入左侧 TextField。
-                sx={hitSlopSx()}
-              >
-                <ContentCopyIcon fontSize="small" />
-              </IconButton>
-            </Stack>
-            <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
-              <TextField
-                fullWidth
-                size="small"
-                value={dav.username}
-                InputProps={{ readOnly: true }}
-                inputProps={{ 'aria-label': '用户名' }}
-              />
-              <IconButton
-                size="small"
-                aria-label="复制用户名"
-                onClick={handleCopyUsername}
-                sx={hitSlopSx()}
-              >
-                <ContentCopyIcon fontSize="small" />
-              </IconButton>
-            </Stack>
-            {dav.configured ? (
-              // 破坏性操作（旧密码立即失效）靠下方确认对话框保护，按钮本身不靠 warning 色喊
-              <Button variant="outlined" onClick={() => setDavRotateOpen(true)}>
-                重新生成密码
-              </Button>
-            ) : !davPassword ? (
-              <Button variant="contained" onClick={handleGenerateDavPassword}>
-                生成同步密码
-              </Button>
-            ) : null}
+            <SettingsRow
+              label={
+                <Typography variant="caption" sx={{ display: 'block' }}>
+                  把任务同步到 iPhone「提醒事项」App：在手机上勾选、新建、修改都会回到这里。
+                  手机上新建的任务归入「个人」分类。
+                </Typography>
+              }
+            />
+            <SettingsRow
+              label={<Typography variant="body2">服务器</Typography>}
+              value={
+                <Stack direction="row" spacing={1} alignItems="center">
+                  <TextField
+                    size="small"
+                    value={davTarget.host}
+                    InputProps={{ readOnly: true }}
+                    inputProps={{ 'aria-label': '服务器' }}
+                    sx={{ width: { xs: 200, sm: 260 } }}
+                  />
+                  <CopyButton getText={() => davTarget.host} onFeedback={reportCopy} />
+                </Stack>
+              }
+            />
+            <SettingsRow
+              label={<Typography variant="body2">用户名</Typography>}
+              value={
+                <Stack direction="row" spacing={1} alignItems="center">
+                  <TextField
+                    size="small"
+                    value={dav.username}
+                    InputProps={{ readOnly: true }}
+                    inputProps={{ 'aria-label': '用户名' }}
+                    sx={{ width: { xs: 200, sm: 260 } }}
+                  />
+                  <CopyButton getText={() => dav.username} onFeedback={reportCopy} />
+                </Stack>
+              }
+            />
+            <SettingsRow
+              value={
+                dav.configured ? (
+                  // 破坏性操作（旧密码立即失效）靠确认对话框保护，入口用 text error
+                  <Button
+                    variant="text"
+                    color="error"
+                    onClick={() => setDavRotateOpen(true)}
+                  >
+                    重新生成密码
+                  </Button>
+                ) : (
+                  <Button variant="contained" onClick={handleGenerateDavPassword}>
+                    生成同步密码
+                  </Button>
+                )
+              }
+            />
             {davPassword && (
               <>
-                <Alert severity="warning" sx={{ mt: 1 }}>
+                <Alert severity="warning" sx={{ my: 1 }}>
                   此密码只显示一次，离开本页后无法再查看；遗失请重新生成。
                 </Alert>
-                <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1 }}>
-                  <TextField
-                    fullWidth
-                    size="small"
-                    value={davPassword}
-                    InputProps={{ readOnly: true }}
-                    inputProps={{ 'aria-label': '同步密码' }}
-                  />
-                  <IconButton
-                    size="small"
-                    aria-label="复制密码"
-                    onClick={handleCopyPassword}
-                    sx={hitSlopSx()}
-                  >
-                    <ContentCopyIcon fontSize="small" />
-                  </IconButton>
-                </Stack>
+                <SettingsRow
+                  label={<Typography variant="body2">同步密码</Typography>}
+                  value={
+                    <Stack direction="row" spacing={1} alignItems="center">
+                      <TextField
+                        size="small"
+                        value={davPassword}
+                        InputProps={{ readOnly: true }}
+                        inputProps={{ 'aria-label': '同步密码' }}
+                        sx={{ width: { xs: 200, sm: 260 } }}
+                      />
+                      <CopyButton
+                        getText={() => davPassword}
+                        onFeedback={reportCopy}
+                      />
+                    </Stack>
+                  }
+                />
               </>
             )}
-            <List dense sx={{ mt: 1 }}>
-              <ListItem sx={{ px: 0 }}>
-                <ListItemText primary="1. 打开 iPhone「设置」→「应用」→「提醒事项」→「提醒事项账户」→「添加账户」→「其他」→「添加 CalDAV 账户」" />
-              </ListItem>
-              <ListItem sx={{ px: 0 }}>
-                <ListItemText primary="2. 服务器填上面的「服务器」，用户名、密码填上面的值，描述随意，点「下一步」并存储。" />
-              </ListItem>
-              <ListItem sx={{ px: 0 }}>
-                <ListItemText primary="3. 打开「提醒事项」App，会出现名为「RakkoTasks」的列表。同步频率由系统「获取新数据」设置决定。" />
-              </ListItem>
-            </List>
+            {/* 三步说明：结构与其它设置行一致，只有一点不同——行与行之间不画分隔线
+                （三句是同一段连续引导，切三段线会把一段话读成三件事） */}
+            <Stack
+              sx={{
+                '& [data-setting-row] + [data-setting-row]': {
+                  borderTop: 'none',
+                  paddingLeft: 0,
+                },
+              }}
+            >
+              <SettingsRow
+                label={<Typography variant="caption">1. 打开 iPhone「设置」→「应用」→「提醒事项」→「提醒事项账户」→「添加账户」→「其他」→「添加 CalDAV 账户」</Typography>}
+              />
+              <SettingsRow
+                label={<Typography variant="caption">2. 服务器填上面的「服务器」，用户名、密码填上面的值，描述随意，点「下一步」并存储。</Typography>}
+              />
+              <SettingsRow
+                label={<Typography variant="caption">3. 打开「提醒事项」App，会出现名为「RakkoTasks」的列表。同步频率由系统「获取新数据」设置决定。</Typography>}
+              />
+            </Stack>
           </>
         ) : null}
       </Box>
 
-      {/* 账户：显示登录者 + 退出登录（回到登录流程） */}
+      {/* 账户：显示登录者 + 退出登录（回到登录流程）。退出登录是危险入口 → text error */}
       <Box data-glass="panel" sx={PANEL_SX}>
-        <Typography variant="overline">账户</Typography>
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-          {displayName}
+        <Typography variant="overline" component="h2" sx={SECTION_TITLE_SX}>
+          账户
         </Typography>
-        <Button variant="outlined" color="error" onClick={handleLogout}>
-          退出登录
-        </Button>
+        <SettingsRow
+          label={<Typography variant="body2">当前登录</Typography>}
+          value={displayName}
+        />
+        <SettingsRow
+          value={
+            <Button variant="text" color="error" onClick={handleLogout}>
+              退出登录
+            </Button>
+          }
+        />
       </Box>
 
-      {/* 同步状态：进 /sync 看这一轮同步的阶段与按邮箱进度；secondary 报上一轮的结果 */}
+      {/* 同步状态：进 /sync 看这一轮同步的阶段与按邮箱进度；值报上一轮的结果 */}
       <Box data-glass="panel" sx={PANEL_SX}>
-        <Typography variant="overline">同步</Typography>
-        <List dense>
-          <ListItemButton onClick={() => go('/sync')}>
-            <ListItemText
-              primary="同步状态"
-              secondary={syncLastSummary(status === null ? null : status.last)}
-            />
-            <ChevronRightIcon />
-          </ListItemButton>
-        </List>
+        <Typography variant="overline" component="h2" sx={SECTION_TITLE_SX}>
+          同步
+        </Typography>
+        <SettingsRow
+          onClick={() => go('/sync')}
+          label={<Typography variant="body2">同步状态</Typography>}
+          value={
+            <Stack direction="row" spacing={1} alignItems="center">
+              <Typography variant="caption" sx={{ textAlign: 'right' }}>
+                {syncLastSummary(status === null ? null : status.last)}
+              </Typography>
+              <ChevronRightIcon fontSize="small" />
+            </Stack>
+          }
+        />
       </Box>
 
       {/* 关于：构建注入的版本号与后端地址 */}
       <Box data-glass="panel" sx={PANEL_SX}>
-        <Typography variant="overline">关于</Typography>
-        <List dense>
-          <ListItem>
-            <ListItemText primary="版本" secondary={__APP_VERSION__} />
-          </ListItem>
-          <ListItem>
+        <Typography variant="overline" component="h2" sx={SECTION_TITLE_SX}>
+          关于
+        </Typography>
+        <SettingsRow label={<Typography variant="body2">版本</Typography>} value={__APP_VERSION__} />
+        <SettingsRow
+          value={
             <Button variant="outlined" size="small" onClick={handleCheckUpdate}>
               检查更新
             </Button>
-          </ListItem>
-          <ListItem>
-            <ListItemText primary="后端地址" secondary={API_BASE_URL || '同源'} />
-          </ListItem>
-          <ListItem>
-            <ListItemText primary="鉴权服务" secondary={PHAINON_API_BASE} />
-          </ListItem>
-        </List>
+          }
+        />
+        <SettingsRow
+          label={<Typography variant="body2">后端地址</Typography>}
+          value={API_BASE_URL || '同源'}
+        />
+        <SettingsRow
+          label={<Typography variant="body2">鉴权服务</Typography>}
+          value={PHAINON_API_BASE}
+        />
       </Box>
 
       {/* 重新生成确认：旧链接立即失效，已订阅的日历需重新添加 */}
@@ -500,10 +689,10 @@ export default function SettingsPage() {
           </DialogContentText>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setRotateOpen(false)} disabled={rotating}>
+          <Button variant="text" color="inherit" onClick={() => setRotateOpen(false)} disabled={rotating}>
             取消
           </Button>
-          <Button color="error" onClick={handleRotate} disabled={rotating}>
+          <Button variant="contained" color="error" onClick={handleRotate} disabled={rotating}>
             确认
           </Button>
         </DialogActions>
@@ -520,10 +709,15 @@ export default function SettingsPage() {
           </DialogContentText>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setDavRotateOpen(false)} disabled={davGenerating}>
+          <Button
+            variant="text"
+            color="inherit"
+            onClick={() => setDavRotateOpen(false)}
+            disabled={davGenerating}
+          >
             取消
           </Button>
-          <Button color="error" onClick={handleGenerateDavPassword} disabled={davGenerating}>
+          <Button variant="contained" color="error" onClick={handleGenerateDavPassword} disabled={davGenerating}>
             确认
           </Button>
         </DialogActions>
@@ -537,12 +731,8 @@ export default function SettingsPage() {
         onConfirm={handleCropConfirm}
         onExited={handleCropExited}
       />
-      <Snackbar
-        open={snack !== null}
-        autoHideDuration={3000}
-        onClose={() => setSnack(null)}
-        message={snack}
-      />
+      {/* 自动关闭时长由主题的 MuiSnackbar.defaultProps 统一给（4 秒），这里不再写死 */}
+      <Snackbar open={snack !== null} onClose={() => setSnack(null)} message={snack} />
     </Box>
   );
 }
