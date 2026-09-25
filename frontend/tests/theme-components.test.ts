@@ -16,15 +16,25 @@ import Chip from '@mui/material/Chip';
 import DialogActions from '@mui/material/DialogActions';
 import IconButton from '@mui/material/IconButton';
 import TextField from '@mui/material/TextField';
-import { ThemeProvider, createTheme } from '@mui/material/styles';
+import { ThemeProvider, alpha, createTheme, getContrastRatio, rgbToHex } from '@mui/material/styles';
 import type { Theme } from '@mui/material/styles';
 import type { ThemeOptions } from '@mui/material/styles';
-import { MOTION, RADIUS, SEMANTIC_INVERSE_SURFACE, SPACING, STATE_OPACITY } from '../src/rakko-tokens';
+import {
+  MOTION,
+  RADIUS,
+  SEMANTIC_INVERSE_SURFACE,
+  SEMANTIC_TINT_ALPHA,
+  SPACING,
+  STATE_OPACITY,
+} from '../src/rakko-tokens';
 import { buildThemeOptions } from '../src/theme';
 import { allStyleText } from './glass-text-contrast.test-utils';
 
 const MODES = ['light', 'dark'] as const;
 type Mode = (typeof MODES)[number];
+
+/** 四个语义色（palette 键），芯片守卫逐色跑 */
+const SEMANTIC_KEYS = ['info', 'success', 'warning', 'error'] as const;
 
 const OPTIONS: Record<Mode, ThemeOptions> = {
   light: buildThemeOptions('light'),
@@ -49,6 +59,29 @@ function slot(theme: Theme, component: string, name: string): Record<string, unk
         ownerState: {},
       })
     : (raw as Record<string, unknown>);
+}
+
+/** 主题里某组件 variants 中 props 命中 color 的那一条的 style（由 theme 求值） */
+function variantStyle(
+  theme: Theme,
+  component: string,
+  color: string,
+): Record<string, unknown> {
+  const entry = (theme.components as Record<string, { variants?: unknown[] }>)[component];
+  expect(entry, `${component} 应有 variants`).toBeDefined();
+  const variants = (entry.variants ?? []) as Array<{
+    props: Record<string, unknown>;
+    style: unknown;
+  }>;
+  for (const v of variants) {
+    if (v.props?.color === color) {
+      const raw = v.style;
+      return typeof raw === 'function'
+        ? (raw as (a: { theme: Theme }) => Record<string, unknown>)({ theme })
+        : (raw as Record<string, unknown>);
+    }
+  }
+  throw new Error(`${component} 的 variants 里没有 color=${color}`);
 }
 
 /** 取 OutlinedInput root 覆盖里「静止态描边」那一条的键名（排除 hover / focus 两条） */
@@ -252,8 +285,10 @@ describe('A2 芯片：12px/500 标签字、chip 圆角、中性档底色', () =>
   it('color="default" 的 filled 背景是中性浅填充，不是不透明纸色', () => {
     for (const mode of MODES) {
       const theme = THEMES[mode];
-      const root = slot(theme, 'MuiChip', 'root');
-      const colorDefault = root['&.MuiChip-colorDefault'] as Record<string, Record<string, unknown>>;
+      const colorDefault = variantStyle(theme, 'MuiChip', 'default') as Record<
+        string,
+        Record<string, unknown>
+      >;
       expect(colorDefault, mode).toBeDefined();
       expect(colorDefault['&.MuiChip-filled'].backgroundColor, mode).toBe(
         theme.palette.action.disabledBackground,
@@ -273,6 +308,94 @@ describe('A2 芯片：12px/500 标签字、chip 圆角、中性档底色', () =>
     const bg = getComputedStyle(chip).backgroundColor;
     expect(bg).toBe(THEMES.light.palette.action.disabledBackground);
     expect(bg).not.toBe(THEMES.light.palette.background.paper);
+  });
+
+  it('语义色 outlined：文字是 text.primary，不是 palette[c].main', () => {
+    for (const mode of MODES) {
+      const theme = THEMES[mode];
+      for (const key of SEMANTIC_KEYS) {
+        const style = variantStyle(theme, 'MuiChip', key) as Record<
+          string,
+          Record<string, unknown>
+        >;
+        const outlined = style['&.MuiChip-outlined'] as Record<string, unknown>;
+        expect(outlined, `${mode} ${key}`).toBeDefined();
+        expect(outlined.color, `${mode} ${key} 文字色`).toBe(theme.palette.text.primary);
+        expect(outlined.color, `${mode} ${key} 不许用语义色当文字`).not.toBe(
+          theme.palette[key].main,
+        );
+        expect(outlined.borderColor, `${mode} ${key} 描边`).toBe(theme.palette[key].main);
+        expect(outlined.backgroundColor, `${mode} ${key} 底色`).toBe(
+          alpha(theme.palette[key].main, SEMANTIC_TINT_ALPHA[mode]),
+        );
+        const icon = style['&.MuiChip-outlined .MuiChip-icon'] as Record<string, unknown>;
+        expect(icon?.color, `${mode} ${key} 图标`).toBe(theme.palette[key].main);
+      }
+    }
+    // 生效值：四色 × 两模式的文字都是 n9，且对纯纸色够 4.5
+    for (const mode of MODES) {
+      const theme = THEMES[mode];
+      for (const key of SEMANTIC_KEYS) {
+        cleanup();
+        const { container } = render(
+          createElement(
+            ThemeProvider,
+            { theme },
+            createElement(Chip, { label: '正常', color: key, variant: 'outlined' }),
+          ),
+        );
+        const chip = container.querySelector('.MuiChip-root') as HTMLElement;
+        const cs = getComputedStyle(chip);
+        // jsdom 把 hex 渲染成 rgb(...)，用 rgbToHex 归一后再比
+        expect(rgbToHex(cs.color), `${mode} ${key} 渲染文字色`).toBe(
+          theme.palette.text.primary,
+        );
+        expect(
+          getContrastRatio(theme.palette.text.primary, theme.palette.background.default),
+          `${mode} ${key} 文字对纯纸色`,
+        ).toBeGreaterThanOrEqual(4.5);
+      }
+    }
+  });
+
+  it('语义色 filled：底色配 contrastText 的对比度 ≥ 4.5（不够时降 dark 档）', () => {
+    for (const mode of MODES) {
+      const theme = THEMES[mode];
+      for (const key of SEMANTIC_KEYS) {
+        const slot = theme.palette[key];
+        const filled = (variantStyle(theme, 'MuiChip', key) as Record<string, Record<string, unknown>>)[
+          '&.MuiChip-filled'
+        ];
+        expect(filled.color, `${mode} ${key} filled 文字`).toBe(slot.contrastText);
+        // 底色要么是 main（够线），要么是 dark（main 不够线时的降档）
+        expect([slot.main, slot.dark], `${mode} ${key} filled 底色`).toContain(
+          filled.backgroundColor as string,
+        );
+        expect(
+          getContrastRatio(filled.color as string, filled.backgroundColor as string),
+          `${mode} ${key} filled 对比度`,
+        ).toBeGreaterThanOrEqual(4.5);
+      }
+    }
+    // 生效值：渲染出来的比值同样要够线
+    for (const mode of MODES) {
+      for (const key of SEMANTIC_KEYS) {
+        cleanup();
+        const { container } = render(
+          createElement(
+            ThemeProvider,
+            { theme: THEMES[mode] },
+            createElement(Chip, { label: '逾期', color: key }),
+          ),
+        );
+        const chip = container.querySelector('.MuiChip-root') as HTMLElement;
+        const cs = getComputedStyle(chip);
+        expect(
+          getContrastRatio(cs.color, cs.backgroundColor),
+          `${mode} ${key} 渲染 filled 对比度`,
+        ).toBeGreaterThanOrEqual(4.5);
+      }
+    }
   });
 
   it('渲染出的 default Chip 字号是 12px（规则文本里没有 13px 的 label 声明）', () => {

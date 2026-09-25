@@ -147,6 +147,16 @@ export const STATE_OPACITY = {
   pressed: 0.12,
 } as const;
 
+/** 语义色描边芯片的底色档：同色、比中性档更浓一点的浅填充。
+ *  语义由「同色描边 + 同色淡填充」传达，12px 的标签文字另走 n9（见下面的
+ *  TEXT_CONTRAST_MIN）。比中性档重：这一档要和描边一起扛「这是哪一类状态」，
+ *  太淡就只剩一根细线。 */
+export const SEMANTIC_TINT_ALPHA = { light: 0.14, dark: 0.2 } as const;
+
+/** 文字可读性的对比度地板：12px 标签无论压在纸色还是玻璃上都按 WCAG AA 正文档取值。
+ *  芯片之类的小字零件用它当硬约束（filled 底配 contrastText 不够线就降档）。 */
+export const TEXT_CONTRAST_MIN = 4.5;
+
 /** 反相面（Tooltip / Snackbar）的墨底色与面上文字色。
  *  Tooltip 契约是「保持 n-10 实底（对比度优先、面积小、存活短）」
  *  （references/components.md:20），Snackbar 契约是「n-10 底、n-1 字」
