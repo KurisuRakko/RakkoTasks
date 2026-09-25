@@ -31,3 +31,16 @@ export const WALLPAPER_LAYER_ID = 'rtk-wallpaper';
 
 /** Dialog 遮罩与壁纸裁剪框外遮罩共用的颜色（--glass-scrim-opacity 由主题层下发到 :root） */
 export const SCRIM_COLOR = 'rgb(0 0 0 / var(--glass-scrim-opacity))';
+
+/** 壁纸压暗层的 CSS 变量，由主题层下发到 :root。浅色是 none（浅色壁纸不叠任何层），
+ *  深色是一层 35% 纯黑——亮壁纸透过半透明深纸会把黑纸染脏，压暗后玻璃与正文才落在
+ *  深色纸上。压在壁纸之上、全部内容与玻璃之下。
+ *  实现形式必须是**壁纸承载层自己的一条 background 叠层**（见 theme.ts 的
+ *  `#rtk-wallpaper` 规则），不能新增 ::before 之类的伪元素：body::before + position:fixed
+ *  的壁纸在 Chromium 里采样不到 backdrop-filter，新增伪元素等于改掉壁纸那块被读回的
+ *  合成层结构，玻璃会连壁纸一起读丢。 */
+export const WALLPAPER_SHADE_VAR = '--rtk-wallpaper-shade';
+
+/** 深色壁纸压暗层的值：纯黑 35%。
+ *  不用 n-10 墨色——它在深色主题是近白，压上去是漂白（同遮罩层的取舍）。 */
+export const WALLPAPER_SHADE_DARK = 'rgba(0, 0, 0, 0.35)';

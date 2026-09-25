@@ -10,14 +10,21 @@ import AppBar from '@mui/material/AppBar';
 import CssBaseline from '@mui/material/CssBaseline';
 import { ThemeProvider } from '@mui/material/styles';
 import { ThemeModeProvider } from '../src/lib/theme-mode';
-import { DEFAULT_WALLPAPER_URL, WALLPAPER_LAYER_ID, WALLPAPER_VAR } from '../src/lib/glass';
+import {
+  DEFAULT_WALLPAPER_URL,
+  WALLPAPER_LAYER_ID,
+  WALLPAPER_SHADE_VAR,
+  WALLPAPER_VAR,
+} from '../src/lib/glass';
 import {
   ACCENT,
   GLASS,
+  GLASS_DARK,
   GLASS_SHADOW_WHISPER,
   MOTION,
   NEUTRAL_DARK,
   NEUTRAL_LIGHT,
+  PAPER,
   STATE_OPACITY,
   TYPE_SCALE,
   WHISPER_SHADOW,
@@ -26,6 +33,8 @@ import { useAppTheme } from '../src/theme';
 import { allStyleText, renderWithAppTheme } from './glass-text-contrast.test-utils';
 
 const MODE_KEY = 'rakkotasks.theme-mode';
+
+type Mode = 'light' | 'dark';
 
 function wrapper(props: { children?: ReactNode }) {
   return createElement(ThemeModeProvider, null, props.children);
@@ -61,7 +70,9 @@ describe('Rakko Design token 主题', () => {
   it('palette 对齐 accent 与中性色（深色）', () => {
     const theme = themeOf('dark');
     expect(theme.palette.primary.main).toBe(ACCENT.dark);
-    expect(theme.palette.background.default).toBe(NEUTRAL_DARK[0]);
+    // 深色纸色是 PAPER.dark 而不是 NEUTRAL_DARK[0]：契约让深色中性阶保持纯灰，
+    // 暖意只由纸色承担（见 rakko-tokens 的 PAPER）
+    expect(theme.palette.background.default).toBe(PAPER.dark);
     expect(theme.palette.background.paper).toBe(NEUTRAL_DARK[1]);
     expect(theme.palette.text.primary).toBe(NEUTRAL_DARK[8]);
     expect(theme.palette.text.secondary).toBe(NEUTRAL_DARK[6]);
@@ -174,19 +185,32 @@ function rootVars(mode: 'light' | 'dark'): Record<string, string> {
 }
 
 describe('玻璃材质变量下发与让位', () => {
-  it('5a. :root 的 --glass-* 值与 GLASS 常量逐项一致（浅/深两套）', () => {
-    const expected: Record<string, string> = {
-      '--glass-blur': GLASS.blur,
-      '--glass-saturate': GLASS.saturate,
-      '--glass-surface-opacity': GLASS.surfaceOpacity,
-      '--glass-panel-opacity': GLASS.panelOpacity,
-      '--glass-scrim-opacity': GLASS.scrimOpacity,
-      '--glass-haze-opacity': GLASS.hazeOpacity,
-      '--glass-haze-bleed': GLASS.hazeBleed,
+  it('5a. :root 的 --glass-* 值与 GLASS（浅色）/ GLASS_DARK（深色）逐项一致', () => {
+    // 三档纸底 opacity 深浅取值不同：浅色是 GLASS 的实测底线，深色另有一套更实的档位
+    // （见 GLASS_DARK）。blur / saturate / scrim / bleed 两主题共用同一支。
+    const expected: Record<Mode, Record<string, string>> = {
+      light: {
+        '--glass-blur': GLASS.blur,
+        '--glass-saturate': GLASS.saturate,
+        '--glass-surface-opacity': GLASS.surfaceOpacity,
+        '--glass-panel-opacity': GLASS.panelOpacity,
+        '--glass-scrim-opacity': GLASS.scrimOpacity,
+        '--glass-haze-opacity': GLASS.hazeOpacity,
+        '--glass-haze-bleed': GLASS.hazeBleed,
+      },
+      dark: {
+        '--glass-blur': GLASS.blur,
+        '--glass-saturate': GLASS.saturate,
+        '--glass-surface-opacity': GLASS_DARK.surfaceOpacity,
+        '--glass-panel-opacity': GLASS_DARK.panelOpacity,
+        '--glass-scrim-opacity': GLASS.scrimOpacity,
+        '--glass-haze-opacity': GLASS_DARK.hazeOpacity,
+        '--glass-haze-bleed': GLASS.hazeBleed,
+      },
     };
     for (const mode of ['light', 'dark'] as const) {
       const vars = rootVars(mode);
-      for (const [cssVar, tokenValue] of Object.entries(expected)) {
+      for (const [cssVar, tokenValue] of Object.entries(expected[mode])) {
         expect(vars[cssVar], `${mode} ${cssVar}`).toBe(tokenValue);
       }
     }
@@ -208,17 +232,15 @@ describe('玻璃材质变量下发与让位', () => {
     expect(rootVars('dark')['--shadow-whisper']).toBe(GLASS_SHADOW_WHISPER.dark);
   });
 
-  it('5c. --color-paper 等于该主题 palette.background.default', () => {
+  it('5c. --color-paper 等于该主题 palette.background.default 与 PAPER token', () => {
     for (const mode of ['light', 'dark'] as const) {
       const theme = themeOf(mode);
       expect(rootVars(mode)['--color-paper']).toBe(theme.palette.background.default);
-      expect(rootVars(mode)['--color-paper']).toBe(
-        mode === 'light' ? NEUTRAL_LIGHT[0] : NEUTRAL_DARK[0],
-      );
+      expect(rootVars(mode)['--color-paper']).toBe(PAPER[mode]);
     }
   });
 
-  it('5d. 壁纸原图单层背景位于顶层键 #rtk-wallpaper 承载层（var(--rtk-wallpaper)，驯化层已移除不含 color-mix）', () => {
+  it('5d. 壁纸原图位于顶层键 #rtk-wallpaper 承载层（var(--rtk-wallpaper)，驯化层已移除不含 color-mix）', () => {
     for (const mode of ['light', 'dark'] as const) {
       const styles = globalStyles(mode);
       const layer = styles[`#${WALLPAPER_LAYER_ID}`] as Record<string, unknown> | undefined;
@@ -228,6 +250,12 @@ describe('玻璃材质变量下发与让位', () => {
       expect(bg as string).toContain('var(--rtk-wallpaper');
       // 壁纸层不带纸色 color-mix 叠加：壁纸显示用户原图
       expect(bg as string).not.toContain('color-mix');
+      // 压暗层（第一层的变量）必须压在壁纸之上，不能反过来盖在壁纸下面。
+      // 定位壁纸那一段时按「变量名 + 逗号」找：压暗变量名是壁纸变量名的前缀，裸变量名
+      // 会命中同一处，位移比较无从谈起。
+      expect(bg as string, `${mode}: 压暗层应在壁纸之上`).toContain(
+        `var(${WALLPAPER_SHADE_VAR}), var(${WALLPAPER_VAR},`,
+      );
     }
   });
 

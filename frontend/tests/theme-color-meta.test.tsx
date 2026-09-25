@@ -4,12 +4,14 @@
 //
 // 取值口径：改写用的常量（THEME_COLOR_BY_MODE）必须与该模式的 palette.background.default
 // 一致——测试同时从 rakko-tokens 与 buildThemeOptions 两侧取值比对，任一侧漂移都报警。
+// 两侧同源的那一支是 PAPER（= CssBaseline 下发的 --color-paper），不是中性色阶：
+// 深色纸色与深色 n1 不是同一个值（见 rakko-tokens 的 PAPER 注释）。
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import { createTheme } from '@mui/material/styles';
 import { ThemeModeProvider, useThemeMode } from '../src/lib/theme-mode';
-import { NEUTRAL_DARK, NEUTRAL_LIGHT } from '../src/rakko-tokens';
+import { NEUTRAL_LIGHT, PAPER } from '../src/rakko-tokens';
 import { buildThemeOptions } from '../src/theme';
 import { allStyleText } from './glass-text-contrast.test-utils';
 
@@ -56,12 +58,12 @@ describe('A3 PWA 状态栏底色随模式改写', () => {
     expect(meta.getAttribute('content')).toBe(NEUTRAL_LIGHT[0]);
   });
 
-  it('深色模式写深色 n1（状态栏与深色页面同底）', () => {
+  it('深色模式写深色纸色（状态栏与深色页面同底）', () => {
     localStorage.setItem(MODE_KEY, 'dark');
     const meta = installMeta();
     renderProvider();
     expect(screen.getByTestId('state').textContent).toBe('dark:dark');
-    expect(meta.getAttribute('content')).toBe(NEUTRAL_DARK[0]);
+    expect(meta.getAttribute('content')).toBe(PAPER.dark);
     expect(meta.getAttribute('content')).not.toBe(NEUTRAL_LIGHT[0]);
   });
 
@@ -86,7 +88,7 @@ describe('A3 PWA 状态栏底色随模式改写', () => {
     cleanup();
     localStorage.setItem(MODE_KEY, 'dark');
     renderProvider();
-    expect(meta.getAttribute('content')).toBe(NEUTRAL_DARK[0]);
+    expect(meta.getAttribute('content')).toBe(PAPER.dark);
   });
 
   it('页面里没有这条 meta 时不抛异常（嵌入 / 测试场景）', () => {

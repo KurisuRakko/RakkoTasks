@@ -17,6 +17,7 @@ import {
   BORDER,
   NEUTRAL_DARK,
   NEUTRAL_LIGHT,
+  PAPER,
   SEMANTIC,
   STATE_OPACITY,
 } from '../src/rakko-tokens';
@@ -130,10 +131,13 @@ describe('A1 基础面：accent / 纸色 / 分割线 / 状态层', () => {
     }
   });
 
-  it('background.default / paper 是 n1 / n2', () => {
+  it('background.default 是纸色（浅色 n1 / 深色 PAPER.dark），paper 是 n2', () => {
+    // 纸色与中性色阶分家是契约口径（tokens.md:7：深色不反转暖色阶，暖意只由 --color-paper
+    // 承担）：浅色纸就是 n1，深色纸是另一支（见 PAPER 的注释），所以深色这里不能拿
+    // NEUTRAL_DARK[0] 当期望值。
     for (const mode of MODES) {
       const neutral = mode === 'light' ? NEUTRAL_LIGHT : NEUTRAL_DARK;
-      expect(THEMES[mode].palette.background.default, mode).toBe(neutral[0]);
+      expect(THEMES[mode].palette.background.default, mode).toBe(PAPER[mode]);
       expect(THEMES[mode].palette.background.paper, mode).toBe(neutral[1]);
     }
   });
