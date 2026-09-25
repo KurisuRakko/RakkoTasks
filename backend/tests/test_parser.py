@@ -206,3 +206,18 @@ def test_unknown_declared_charset_falls_back_to_utf8():
     word = "=?nosuch-charset?B?" + base64.b64encode("会议通知".encode()).decode() + "?="
 
     assert parse_message(_folded_subject_raw(word))["subject"] == "会议通知"
+
+
+def test_unknown_charset_ascii_content_decodes_as_utf8():
+    """未知 charset 的 ASCII 内容按 utf-8 解：解出来就是原文，不该漏出 encoded-word。"""
+    word = "=?x-nope?B?" + base64.b64encode(b"hello").decode() + "?="
+
+    assert parse_message(_folded_subject_raw(word))["subject"] == "hello"
+
+
+def test_gbk_word_mixed_with_plain_text_and_utf8_word():
+    """GBK 声明 word + 普通文本 + utf-8 word 混排：三段都正常解码、中间的空白原样保留。"""
+    utf8_word = "=?utf-8?b?" + base64.b64encode("世界".encode()).decode() + "?="
+    subject = f"{_gbk_encoded_word('会议：朱镕基 喆')} hello {utf8_word}"
+
+    assert parse_message(_folded_subject_raw(subject))["subject"] == "会议：朱镕基 喆 hello 世界"

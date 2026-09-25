@@ -23,7 +23,7 @@ _ACCOUNT_ERR_TEXT = {
     "bad_kind": "不支持的账户类型（仅支持 gmail / qq / microsoft）",
     "bad_name": "账户名称需为 1-128 个字符",
     "bad_email": "邮箱地址无效（需包含 @ 且不超过 256 个字符）",
-    "password_required": "应用专用密码不能为空",
+    "password_required": "应用专用密码 / 授权码不能为空",
     "account_exists": "该邮箱账户已存在（含已停用账户）",
     "invalid_kind": "账户类型与操作不匹配（应用专用密码/授权码仅 gmail、qq；OAuth 授权仅 microsoft）",
     "bad_redirect": "不支持的 OAuth 重定向地址",
