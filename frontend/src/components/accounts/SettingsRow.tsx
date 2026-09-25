@@ -78,20 +78,47 @@ interface Props {
   onClick?: () => void;
   /** 行级稳定钩子（如 data-account-row），供测试与样式定位 */
   rowDataAttr?: Record<string, string>;
+  /** 行内排布方向。默认 row（标签左、值右）；'column' 时标签在上、值在下并占满行宽——
+   *  控件自身有合适宽度时（分段控件这类）不该被塞进右侧的小格子里挤到换行 */
+  direction?: 'row' | 'column';
   sx?: SystemStyleObject<Theme>;
 }
 
 /**
  * 一行设置。两种形态共用同一套内边距、最小高度与分隔线：
- * - 静态行：左标签 + 右值 / 右控件；
+ * - 静态行：左标签 + 右值 / 右控件（direction="column" 时改成标签在上、值在下占满行宽）；
  * - 可点行（onClick）：整行一个 ButtonBase，左侧仍是同样的标签与说明。
  */
-export default function SettingsRow({ leading, label, value, onClick, rowDataAttr, sx }: Props) {
+export default function SettingsRow({
+  leading,
+  label,
+  value,
+  onClick,
+  rowDataAttr,
+  direction = 'row',
+  sx,
+}: Props) {
+  // 纵向时值槽占满剩余宽度（含被标签挤出的情况）：控件的宽度由自己决定，
+  // 行只负责给它一整行
+  const valueSx =
+    direction === 'column'
+      ? { display: 'flex', width: '100%', minWidth: 0 }
+      : { display: 'flex', flexShrink: 0, minWidth: 0, maxWidth: '100%' };
   const content = (
     <>
       {leading !== undefined && leading !== null && <Box sx={{ flexShrink: 0 }}>{leading}</Box>}
       {label !== undefined && label !== null && (
-        <Box sx={{ flexGrow: 1, minWidth: 0, textAlign: 'left' }}>{label}</Box>
+        <Box
+          sx={{
+            flexGrow: 1,
+            minWidth: 0,
+            textAlign: 'left',
+            // 纵向时标签不该被拉成一块大盒子（值是 36px 高的控件，行高由内容决定）
+            ...(direction === 'column' ? { flexGrow: 0, flexShrink: 0 } : {}),
+          }}
+        >
+          {label}
+        </Box>
       )}
       {value !== undefined &&
         value !== null &&
@@ -100,7 +127,7 @@ export default function SettingsRow({ leading, label, value, onClick, rowDataAtt
             {value}
           </Typography>
         ) : (
-          value
+          <Box sx={valueSx}>{value}</Box>
         ))}
     </>
   );
@@ -111,14 +138,23 @@ export default function SettingsRow({ leading, label, value, onClick, rowDataAtt
         onClick={onClick}
         data-setting-row
         {...rowDataAttr}
-        sx={[ROW_SX, rowSeparatorSx, { display: 'flex', width: '100%' }, ...(sx ? [sx] : [])]}
+        sx={[
+          ROW_SX,
+          rowSeparatorSx,
+          { display: 'flex', flexDirection: direction, width: '100%' },
+          ...(sx ? [sx] : []),
+        ]}
       >
         {content}
       </ButtonBase>
     );
   }
   return (
-    <Box data-setting-row {...rowDataAttr} sx={[ROW_SX, rowSeparatorSx, ...(sx ? [sx] : [])]}>
+    <Box
+      data-setting-row
+      {...rowDataAttr}
+      sx={[ROW_SX, rowSeparatorSx, { flexDirection: direction }, ...(sx ? [sx] : [])]}
+    >
       {content}
     </Box>
   );
