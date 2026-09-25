@@ -12,8 +12,8 @@
 //    grey/orange 漏进界面。
 
 import { useMemo } from 'react';
-import { alpha, createTheme, darken, lighten } from '@mui/material/styles';
-import type { PaletteColorOptions, Shadows, ThemeOptions } from '@mui/material/styles';
+import { alpha, createTheme, darken, getContrastRatio, lighten } from '@mui/material/styles';
+import type { PaletteColorOptions, Shadows, Theme, ThemeOptions } from '@mui/material/styles';
 import { useThemeMode } from './lib/theme-mode';
 import { viewTransitionStyles } from './motion-styles';
 import {
@@ -29,8 +29,10 @@ import {
   RADIUS,
   SEMANTIC,
   SEMANTIC_INVERSE_SURFACE,
+  SEMANTIC_TINT_ALPHA,
   SPACING,
   STATE_OPACITY,
+  TEXT_CONTRAST_MIN,
   TYPE_SCALE,
   WHISPER_SHADOW,
 } from './rakko-tokens';
@@ -51,6 +53,17 @@ const BUTTON_METRICS = {
  *  不用 background.paper 这类不透明纸色：芯片压在玻璃行上会变成一颗实心药丸，
  *  浅色主题下又和卡片同色、只剩文字。 */
 const NEUTRAL_TINT_ALPHA = { light: 0.08, dark: 0.12 } as const;
+
+/** 语义色 filled 芯片的底色：main 档与 contrastText 够不到 TEXT_CONTRAST_MIN 时降到
+ *  dark 档。深色主题下 info / error 的 main 是提亮值，配白字只有 4.23——12px 的芯片
+ *  标签按正文档要求不合格，换成它们的 dark 档（5.10 / 5.15）。 */
+function semanticFill(theme: Theme, key: 'info' | 'success' | 'warning' | 'error'): string {
+  const slot = theme.palette[key];
+  return getContrastRatio(slot.contrastText, slot.main) >= TEXT_CONTRAST_MIN ? slot.main : slot.dark;
+}
+
+/** 四个语义色的 MUI 名（palette 键 → class 后缀），芯片与其它语义色零件共用 */
+const SEMANTIC_KEYS = ['info', 'success', 'warning', 'error'] as const;
 
 /** MUI 的"加深/变浅一档"用前景墨色 alpha 表达，不引入新的 hex：
  *  hover 描边 = 边框 token 再叠 20% 墨色，浅色变深、深色变亮，方向都正确
@@ -369,14 +382,25 @@ export function buildThemeOptions(mode: Mode): ThemeOptions {
       // large(14) 三档不同字号带来的「同一个芯片在不同页面大小不一」。
       // 高度不给：交回 MUI 的 size 体系（medium 32 / small 24），调用点的 size="small"
       // 状态芯片要保持自己的小尺寸，统一高度会把它们撑胖。
+      //
+      // 语义色的芯片有一条硬约束：**文字一律 text.primary**。
+      // 芯片标签是 12px 正文，MUI 默认把语义色 main 当文字色，压在纸底上 success 只有
+      // 2.93、warning 3.58（压在 58% 玻璃上更低），够不到 TEXT_CONTRAST_MIN。所以
+      // outlined 的语义由「同色描边 + 同色淡填充」传达，文字与图标分家：
+      //   文字 text.primary（13.6:1），描边 palette[c].main，底色 alpha(main, 14%/20%)。
+      // filled 语义芯片保留 main 底 + contrastText（语义靠整块底色，文字必须是最强的
+      // 那一档），底色用 semanticFill——main 配 contrastText 够不到地板时降 dark 档。
+      //
       // color="default" 是中性档：filled 走纸上一档中性浅填充（与禁用按钮同一口径，
-      // 而不是不透明纸色——压在玻璃行上会变成一颗实心药丸），outlined 走 BORDER 描边；
-      // MUI 默认的 action.selected 填充与 currentColor 描边都会带上 Material 的灰。
+      // 而不是不透明纸色——压在玻璃行上会变成一颗实心药丸），outlined 走 BORDER 描边。
       MuiChip: {
-        styleOverrides: {
-          root: ({ theme }) => ({
-            borderRadius: RADIUS.chip,
-            '&.MuiChip-colorDefault': {
+        // 芯片的 color 由 MUI 自己的 variants 写死（colorDefault 的填充、语义色的
+        // main 文字），styleOverrides 的键名命中不到它，必须同样用 variants 覆盖；
+        // 排在自己的 styleOverrides 之前，故最终生效。
+        variants: [
+          {
+            props: { color: 'default' },
+            style: ({ theme }: { theme: Theme }) => ({
               '&.MuiChip-filled': {
                 backgroundColor: theme.palette.action.disabledBackground,
                 color: theme.palette.text.primary,
@@ -385,8 +409,31 @@ export function buildThemeOptions(mode: Mode): ThemeOptions {
                 borderColor: theme.palette.divider,
                 color: theme.palette.text.primary,
               },
-            },
-          }),
+            }),
+          },
+          ...SEMANTIC_KEYS.map((key) => ({
+            props: { color: key },
+            style: ({ theme }: { theme: Theme }) => ({
+              '&.MuiChip-filled': {
+                backgroundColor: semanticFill(theme, key),
+                color: theme.palette[key].contrastText,
+              },
+              '&.MuiChip-outlined': {
+                borderColor: theme.palette[key].main,
+                backgroundColor: alpha(
+                  theme.palette[key].main,
+                  SEMANTIC_TINT_ALPHA[theme.palette.mode],
+                ),
+                color: theme.palette.text.primary,
+              },
+              '&.MuiChip-outlined .MuiChip-icon': {
+                color: theme.palette[key].main,
+              },
+            }),
+          })),
+        ],
+        styleOverrides: {
+          root: { borderRadius: RADIUS.chip },
           label: { ...typeStyle('label-12'), fontWeight: 500 },
         },
       },
