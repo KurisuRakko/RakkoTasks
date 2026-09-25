@@ -18,7 +18,7 @@
 // 也不能用来判「这一层是不是合法 <image>」。
 
 import { describe, expect, it } from 'vitest';
-import { createTheme } from '@mui/material/styles';
+import { createTheme, getContrastRatio } from '@mui/material/styles';
 import type { Theme } from '@mui/material/styles';
 import {
   DEFAULT_WALLPAPER_URL,
@@ -36,6 +36,9 @@ import {
   NEUTRAL_DARK,
   NEUTRAL_LIGHT,
   PAPER,
+  PAPER_RAISED,
+  SEMANTIC_INVERSE_SURFACE,
+  TEXT_CONTRAST_MIN,
 } from '../src/rakko-tokens';
 import { buildThemeOptions } from '../src/theme';
 
@@ -512,6 +515,113 @@ describe('D6 深色通用描边：与 D2 同一量级', () => {
   });
 });
 
+describe('D7 深色实体浮层的底：暖色系抬升一档，文字对比度过 AA', () => {
+  it('深色 background.paper 是 PAPER_RAISED.dark = #262420（不是纯冷灰的 n2）', () => {
+    // 取证结论：深色详情/菜单/对话框这类不透明实色浮层的底原本是 n2（#242424，纯冷灰），
+    // 压在暖近黑的页面纸色上色调打架。
+    expect(PAPER_RAISED.dark).toBe('#262420');
+    expect(THEMES.dark.palette.background.paper).toBe('#262420');
+    expect(THEMES.dark.palette.background.paper).not.toBe(NEUTRAL_DARK[1]);
+    expect(NEUTRAL_DARK[1], '中性色阶仍是纯冷灰（契约不动它）').toBe('#242424');
+  });
+
+  it('新 paper 与深色 n2 同明度（CIE L* 差 < 0.5）：抬升一档的观感不变', () => {
+    const lum = (hex: string) => {
+      const [r, g, b] = channels(hex);
+      const lin = (c: number) => {
+        const v = c / 255;
+        return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+      };
+      return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+    };
+    // CIE L*（相对亮度的立方根近似）
+    const lStar = (hex: string) => {
+      const Y = lum(hex);
+      const e = 216 / 24389;
+      const k = 24389 / 27;
+      const fy = Y > e ? Y ** (1 / 3) : (k * Y + 16) / 116;
+      return 116 * fy - 16;
+    };
+    expect(Math.abs(lStar(PAPER_RAISED.dark) - lStar(NEUTRAL_DARK[1]))).toBeLessThan(0.5);
+    // 抬升关系不能反：浮层的底必须比页面纸色亮
+    expect(lStar(PAPER_RAISED.dark)).toBeGreaterThan(lStar(PAPER.dark));
+  });
+
+  it('新 paper 与 PAPER.dark 同色相：三通道 R > G > B，且三通道都比纸色高', () => {
+    const [pr, pg, pb] = channels(PAPER_RAISED.dark);
+    const [cr, cg, cb] = channels(PAPER.dark);
+    expect(pr, 'R > G：保持暖向').toBeGreaterThan(pg);
+    expect(pg, 'G > B：保持暖向').toBeGreaterThan(pb);
+    // 混白只降饱和度（13.0% → 8.6%），色相 40° 不变；R-B 与纸色相同
+    expect(pr - pb).toBe(cr - cb);
+    // 抬升是"整体加白"：三个通道都必须高于纸色，不能只抬一两个
+    expect(pr).toBeGreaterThan(cr);
+    expect(pg).toBeGreaterThan(cg);
+    expect(pb).toBeGreaterThan(cb);
+  });
+
+  it('实体浮层上的深色文字对比度：text.primary 与 text.secondary 都 ≥ 4.5', () => {
+    /** WCAG 2.x 的对比度，按标准公式自算：sRGB 相对亮度（0.04045 分段函数）后取 (L1+.05)/(L2+.05)。
+     *  不用 MUI 的 getContrastRatio——它对深色有量化（相对亮度被压到 0.01 一档）：
+     *  `#f0f0f0` 对 `#242424`、`#262420`、`#141312` 它都给同一个 13.5441，量不出换色带来的
+     *  差异。要求本身就是「对比度 ≥ 4.5」，用标准公式算出来的数才是那个对比度。 */
+    const lum = (hex: string): number => {
+      const [r, g, b] = channels(hex);
+      const lin = (c: number) => {
+        const v = c / 255;
+        return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+      };
+      return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+    };
+    const contrast = (fg: string, bg: string): number => {
+      const [l1, l2] = [lum(fg), lum(bg)].sort((a, b) => b - a);
+      return (l1! + 0.05) / (l2! + 0.05);
+    };
+
+    const palette = THEMES.dark.palette;
+    const paper = palette.background.paper;
+    const primary = contrast(palette.text.primary, paper);
+    const secondary = contrast(palette.text.secondary, paper);
+    expect(primary, `text.primary ${palette.text.primary} on ${paper}`).toBeGreaterThanOrEqual(
+      TEXT_CONTRAST_MIN,
+    );
+    expect(secondary, `text.secondary ${palette.text.secondary} on ${paper}`).toBeGreaterThanOrEqual(
+      TEXT_CONTRAST_MIN,
+    );
+    expect(getContrastRatio(palette.text.primary, paper)).toBeGreaterThanOrEqual(TEXT_CONTRAST_MIN);
+    expect(getContrastRatio(palette.text.secondary, paper)).toBeGreaterThanOrEqual(
+      TEXT_CONTRAST_MIN,
+    );
+    // 深色正文档 n9/n8 压在新 paper 上也过线
+    expect(contrast(NEUTRAL_DARK[8], paper)).toBeGreaterThanOrEqual(TEXT_CONTRAST_MIN);
+    expect(contrast(NEUTRAL_DARK[9], paper)).toBeGreaterThanOrEqual(TEXT_CONTRAST_MIN);
+    // 浅色的对应关系不变（浅色是标杆）
+    expect(
+      contrast(THEMES.light.palette.text.primary, THEMES.light.palette.background.paper),
+    ).toBeGreaterThanOrEqual(TEXT_CONTRAST_MIN);
+  });
+
+  it('反相面不受影响：Snackbar / Tooltip 仍是浅色墨底 + 浅色字，不是新 paper', () => {
+    // 反相面走 SEMANTIC_INVERSE_SURFACE（浅色 n10 底 + 浅色 n1 字），本来就不吃
+    // background.paper；这条钉住"改 paper 没波及它"。
+    expect(SEMANTIC_INVERSE_SURFACE.bg).toBe(NEUTRAL_LIGHT[9]);
+    expect(SEMANTIC_INVERSE_SURFACE.fg).toBe(NEUTRAL_LIGHT[0]);
+    for (const mode of MODES) {
+      const components = THEMES[mode].components;
+      const tooltip = components?.MuiTooltip?.styleOverrides?.tooltip as Record<string, unknown>;
+      const snackbar = components?.MuiSnackbarContent?.styleOverrides?.root as Record<string, unknown>;
+      expect(tooltip.backgroundColor, mode).toBe(SEMANTIC_INVERSE_SURFACE.bg);
+      expect(snackbar.backgroundColor, mode).toBe(SEMANTIC_INVERSE_SURFACE.bg);
+      expect(snackbar.color, mode).toBe(SEMANTIC_INVERSE_SURFACE.fg);
+      expect(tooltip.backgroundColor, mode).not.toBe(THEMES[mode].palette.background.paper);
+    }
+    // 反相面自己的对比度也够（墨底浅字）
+    expect(
+      getContrastRatio(SEMANTIC_INVERSE_SURFACE.bg, SEMANTIC_INVERSE_SURFACE.fg),
+    ).toBeGreaterThanOrEqual(TEXT_CONTRAST_MIN);
+  });
+});
+
 describe('D-V2 浅色主题逐项快照：与基线逐字一致（期望值直接写出，不用快照文件）', () => {
   /** 浅色 :root 的完整期望表：24 个契约变量逐字写死。
    *  这一条是「浅色是标杆、一个值都不许动」的机器可读版本——任何一处漂移立刻红。
@@ -609,7 +719,7 @@ describe('D-V2 浅色主题逐项快照：与基线逐字一致（期望值直�
   it('深色 palette 是另一套值（防止把浅色那份复制成深色断言）', () => {
     const d = THEMES.dark.palette;
     expect(d.background.default).toBe('#1a1814');
-    expect(d.background.paper).toBe('#242424');
+    expect(d.background.paper).toBe('#262420');
     expect(d.text.primary).toBe('#f0f0f0');
     expect(d.divider).toBe('rgba(255, 255, 255, 0.12)');
     expect(d.primary.main).toBe('#e095a4');

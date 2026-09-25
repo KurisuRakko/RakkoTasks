@@ -25,6 +25,7 @@ import {
   NEUTRAL_DARK,
   NEUTRAL_LIGHT,
   PAPER,
+  PAPER_RAISED,
   STATE_OPACITY,
   TYPE_SCALE,
   WHISPER_SHADOW,
@@ -73,7 +74,8 @@ describe('Rakko Design token 主题', () => {
     // 深色纸色是 PAPER.dark 而不是 NEUTRAL_DARK[0]：契约让深色中性阶保持纯灰，
     // 暖意只由纸色承担（见 rakko-tokens 的 PAPER）
     expect(theme.palette.background.default).toBe(PAPER.dark);
-    expect(theme.palette.background.paper).toBe(NEUTRAL_DARK[1]);
+    // 实体浮层的底走 PAPER_RAISED（暖色系抬升一档），不是纯冷灰的深色 n2
+    expect(theme.palette.background.paper).toBe(PAPER_RAISED.dark);
     expect(theme.palette.text.primary).toBe(NEUTRAL_DARK[8]);
     expect(theme.palette.text.secondary).toBe(NEUTRAL_DARK[6]);
     expect(theme.palette.text.disabled).toBe(NEUTRAL_DARK[4]);

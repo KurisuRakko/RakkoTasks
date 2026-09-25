@@ -18,6 +18,7 @@ import {
   NEUTRAL_DARK,
   NEUTRAL_LIGHT,
   PAPER,
+  PAPER_RAISED,
   SEMANTIC,
   STATE_OPACITY,
 } from '../src/rakko-tokens';
@@ -131,15 +132,18 @@ describe('A1 基础面：accent / 纸色 / 分割线 / 状态层', () => {
     }
   });
 
-  it('background.default 是纸色（浅色 n1 / 深色 PAPER.dark），paper 是 n2', () => {
+  it('background.default 是纸色，paper 是抬升一档的实体面（两者都不取中性色阶）', () => {
     // 纸色与中性色阶分家是契约口径（tokens.md:7：深色不反转暖色阶，暖意只由 --color-paper
     // 承担）：浅色纸就是 n1，深色纸是另一支（见 PAPER 的注释），所以深色这里不能拿
-    // NEUTRAL_DARK[0] 当期望值。
+    // NEUTRAL_DARK[0] 当期望值。实体浮层的底同理走 PAPER_RAISED——深色的 n2 是纯冷灰，
+    // 压在暖纸上色调打架（见 PAPER_RAISED 的注释）。
     for (const mode of MODES) {
-      const neutral = mode === 'light' ? NEUTRAL_LIGHT : NEUTRAL_DARK;
       expect(THEMES[mode].palette.background.default, mode).toBe(PAPER[mode]);
-      expect(THEMES[mode].palette.background.paper, mode).toBe(neutral[1]);
+      expect(THEMES[mode].palette.background.paper, mode).toBe(PAPER_RAISED[mode]);
     }
+    // 浅色两支仍等于浅色中性档（浅色是标杆，n1 / n2 一个值都没动）
+    expect(THEMES.light.palette.background.default).toBe(NEUTRAL_LIGHT[0]);
+    expect(THEMES.light.palette.background.paper).toBe(NEUTRAL_LIGHT[1]);
   });
 
   it('divider 用 BORDER token（不是 MUI 的 rgba(0,0,0,0.12)）', () => {
