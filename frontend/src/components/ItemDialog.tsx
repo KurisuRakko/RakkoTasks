@@ -7,11 +7,12 @@
 // 移动端全屏、桌面端限宽（md）；paper 挂 VT_NAMES.sheet，与来源列表行做容器变换。
 // md 起经 columnDialogSx 与内容列重合（同宽、居中于主内容区），列表行长成对话框时
 // 容器只在纵向生长，不再露出空白条。
-// 纸面材质取与右键菜单同一档的 panel 玻璃（见下面的 DIALOG_PAPER_PROPS）；因为整张
-// paper 是玻璃，段与段之间的分隔只用 Divider 一种（颜色走 theme.palette.divider），
+// 纸面是不透明实色（见下面的 DIALOG_PAPER_PROPS）：详情是长文阅读面，可读性优先，
+// 不用毛玻璃。段与段之间的分隔只用 Divider 一种（颜色走 theme.palette.divider），
 // 段间距统一取 CHEATSHEET §Spacing 的 gap-4（16px，夹在 12px 的卡内间距与 24px 的
-// 分区间距之间），不再各段一个数；正文里的次级文字一律用 text.primary——n7 压在
-// 58% 纸色的玻璃上实测对比度只有 2.4–2.6，够不到 AA 正文的 4.5。
+// 分区间距之间），不再各段一个数。实色纸面上恢复正常文字层级：标题 text.primary，
+// 辅助文字 text.secondary——深浅两套下 text.secondary 对 background.paper 都过
+// AA 4.5（浅 6.01 / 深 10.01，守卫用例在 tests/item-dialog.test.tsx 里）。
 
 import { useEffect, useState } from 'react';
 import AppBar from '@mui/material/AppBar';
@@ -36,6 +37,7 @@ import Toolbar from '@mui/material/Toolbar';
 import Typography from '@mui/material/Typography';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import { useTheme } from '@mui/material/styles';
+import type { Theme } from '@mui/material/styles';
 import CloseIcon from '@mui/icons-material/Close';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
@@ -69,16 +71,21 @@ interface Props {
   onDeleted?: (id: number) => void;
 }
 
-// 详情对话框纸面：与右键菜单同档的 panel 玻璃（只挂 data-glass 与共享名，不下发任何
-// 材质）。提成模块级常量与 RowContextMenu 的 MENU_PAPER_PROPS 同理：slotProps 的类型
-// 对行内字面量做 excess property check，data-* 不在其类型里，常量赋值可绕过该检查。
+// 详情对话框纸面：不透明实色纸（详情是长文，可读性优先于材质）。底色取
+// background.paper，backgroundImage 压成 none（MUI 深色会给 Paper 叠一层 overlay
+// 渐变，留着就不是纯实色了）；文字不用光晕（textShadow: 'none'）；阴影交回主题的
+// Dialog 默认档（elevation 24 走 theme.shadows，这里不覆写）。
 //
-// injectFirst 把 emotion 插在 <head> 最前，同特异性下 rakko-glass.css 的配方赢；要覆盖
-// 配方必须写成 &[data-glass="panel"] 抬到 (0,2,0)，且 box-shadow 是整条替换——只写自己
-// 那一段会把配方的内唇高光一起抹掉。所以这里的 sx 只放共享名。
+// 提成模块级常量与 RowContextMenu 的 MENU_PAPER_PROPS 同理：slotProps 的类型对行内
+// 字面量做 excess property check，常量赋值可绕过该检查。VT_NAMES.sheet 保留——行↔
+// 详情的容器变换不随纸面材质改变。
 const DIALOG_PAPER_PROPS = {
-  'data-glass': 'panel',
-  sx: { viewTransitionName: VT_NAMES.sheet },
+  sx: (theme: Theme) => ({
+    viewTransitionName: VT_NAMES.sheet,
+    backgroundColor: theme.palette.background.paper,
+    backgroundImage: 'none',
+    textShadow: 'none',
+  }),
 };
 
 // 段与段之间只有一种分隔：MUI 的 Divider（颜色默认取 theme.palette.divider，不重写）。
@@ -264,7 +271,9 @@ export default function ItemDialog({ item, onClose, onChanged, onDeleted }: Prop
               {current.summary ? (
                 <SafeMarkdown breaks>{current.summary}</SafeMarkdown>
               ) : (
-                <Typography variant="body2">暂无详情</Typography>
+                <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+                  暂无详情
+                </Typography>
               )}
             </Box>
             <Divider sx={SECTION_DIVIDER_SX} />
@@ -282,7 +291,7 @@ export default function ItemDialog({ item, onClose, onChanged, onDeleted }: Prop
           </>
         ) : (
           <>
-            <Typography variant="body2" gutterBottom>
+            <Typography variant="body2" gutterBottom sx={{ color: 'text.secondary' }}>
               来源账户：{accountName ?? '…'}
             </Typography>
             {current.summary && (
@@ -302,7 +311,9 @@ export default function ItemDialog({ item, onClose, onChanged, onDeleted }: Prop
               </Stack>
             ) : detailError ? (
               <Stack alignItems="center" spacing={1} sx={{ py: 2 }}>
-                <Typography variant="body2">详情生成失败</Typography>
+                <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+                  详情生成失败
+                </Typography>
                 <Button
                   variant="outlined"
                   size="small"
@@ -319,7 +330,9 @@ export default function ItemDialog({ item, onClose, onChanged, onDeleted }: Prop
                 <SafeMarkdown>{detail}</SafeMarkdown>
               </Box>
             ) : (
-              <Typography variant="body2">暂无详情</Typography>
+              <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+                暂无详情
+              </Typography>
             )}
             {related.length > 0 && (
               <>
@@ -343,11 +356,7 @@ export default function ItemDialog({ item, onClose, onChanged, onDeleted }: Prop
                             secondary={[r.sent_at ? r.sent_at.slice(0, 10) : '', r.reason]
                               .filter(Boolean)
                               .join(' · ')}
-                            // 这一行压在对话框自己的 data-glass="panel" 玻璃上：MUI 默认给
-                            // secondary 的 text.secondary（n7）在玻璃上实测对比度只有
-                            // 2.4–2.6，够不到 AA 4.5。层级改由字号/字重承担，颜色取
-                            // text.primary（n9），与列表行摘要同一条口径
-                            slotProps={{ secondary: { color: 'text.primary' } }}
+                            // 日期/原因是次级信息，实色纸面上取默认 text.secondary
                           />
                         </ListItemButton>
                         {open && (
