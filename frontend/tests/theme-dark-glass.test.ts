@@ -6,9 +6,16 @@
 // 深浅两侧的读法都走真实下发路径，不抄一份：
 //   主题层  buildThemeOptions(mode) → createTheme → palette / MuiCssBaseline 的 :root 块；
 //   静态表  src/rakko-tokens.ts 的具名 token 常量。
-// 深色落在这里的三条硬约束：
+// 深色落在这里的硬约束：
 //   D1 纸色是暖的近黑（不是纯灰 n1）；D2 深色玻璃的白层一律收敛；
-//   D3 深色三档纸底 opacity 只许上调；D4 深色壁纸才叠压暗层，浅色一个都不叠。
+//   D3 深色三档纸底 opacity 只许上调；D4 深色壁纸才叠压暗层，浅色一个都不叠；
+//   D5 深色光晕是黑且减半；D6 深色通用描边不超过 D2 量级。
+//
+// 本文件不碰 DOM，也不依赖 CSSOM：D-V1 的调用形式（`npm --prefix frontend exec vitest run
+// tests/theme-dark`，从仓库根执行）**不会加载 frontend/vite.config.ts**，environment 退回
+// node——没有 document / window。所以这里只读 token 常量与主题对象，涉及 css 文本的地方
+// 全部走字符串解析。jsdom 的 CSSOM 对 background-image 不做值校验（纯色值也照收），本来
+// 也不能用来判「这一层是不是合法 <image>」。
 
 import { describe, expect, it } from 'vitest';
 import { createTheme } from '@mui/material/styles';
@@ -256,8 +263,117 @@ describe('D3 深色玻璃更深：三档纸底只许上调', () => {
 });
 
 describe('D4 深色壁纸压暗：只有深色叠，浅色一层都不叠', () => {
-  it('压暗层是 35% 纯黑', () => {
-    expect(WALLPAPER_SHADE_DARK).toBe('rgba(0, 0, 0, 0.35)');
+  it('压暗层是 35% 纯黑的实心渐变（<image> 而不是 <color>）', () => {
+    expect(WALLPAPER_SHADE_DARK).toBe(
+      'linear-gradient(rgba(0, 0, 0, 0.35), rgba(0, 0, 0, 0.35))',
+    );
+    // 两端同色即实心：这是「一层 35% 纯黑」的合法写法
+    expect([...WALLPAPER_SHADE_DARK.matchAll(/rgba\(0, 0, 0, ([\d.]+)\)/g)].map((m) => m[1])).toEqual([
+      '0.35',
+      '0.35',
+    ]);
+  });
+
+  it('深浅两档的 shade 取值都必须是合法 <image>（none 或 linear-gradient）', () => {
+    // 这一条是本轮返工的直接原因：shade 是 background-image 的一层，只接受 <image>。
+    // 写成 rgba(...) 这类 <color> 时浏览器把整条 background-image 判无效，连后面的壁纸
+    // url 一起丢掉——实测表现是深色下壁纸整张消失（getComputedStyle 得到 'none'）。
+    const imageOnly = /^(none|linear-gradient\(.+\))$/;
+    for (const mode of MODES) {
+      const shade = rootVars(mode)[WALLPAPER_SHADE_VAR];
+      expect(shade, `${mode} ${WALLPAPER_SHADE_VAR} 应是 <image> 或 none`).toMatch(imageOnly);
+    }
+    const darkShade = rootVars('dark')[WALLPAPER_SHADE_VAR];
+    expect(darkShade, '深色取值不得以 rgba( 开头：那是 <color>，会让整条 background-image 失效')
+      .not.toMatch(/^rgba\(/);
+    expect(darkShade, '深色取值不得以 rgb( 开头').not.toMatch(/^rgb\(/);
+    expect(darkShade, '深色取值不得是裸十六进制色').not.toMatch(/^#/);
+  });
+
+  it('把两档 shade 代进 background-image 后，每一层都是合法的 <image>', () => {
+    // 上一组断言只看取值形状；这一条看**代入后的整条声明**：逐层判它是不是 <image>。
+    // 这就是浏览器丢壁纸的那一步——第一层是 <color> 时整条 background-image 无效，
+    // 后面的壁纸 url 一起被丢掉。
+    //
+    // 为什么不用 document.createElement('div').style 让 CSSOM 判：jsdom 的 CSSOM 对
+    // background-image 不做值校验（rgba() 那版照样原样读回，守卫会空转），而且本文件在
+    // D-V1 的调用形式下拿不到 document（见文件头）。所以自己解析列表、自己判层类型。
+    //
+    // 顶层逗号切分（跳过括号内的逗号），再逐层匹配已知的 <image> 形态
+    const splitLayers = (value: string): string[] => {
+      const layers: string[] = [];
+      let depth = 0;
+      let current = '';
+      for (const ch of value) {
+        if (ch === '(') depth += 1;
+        if (ch === ')') depth -= 1;
+        if (ch === ',' && depth === 0) {
+          layers.push(current.trim());
+          current = '';
+        } else {
+          current += ch;
+        }
+      }
+      layers.push(current.trim());
+      return layers.filter((layer) => layer !== '');
+    };
+    const isImageLayer = (layer: string): boolean =>
+      /^(none|url\(|(repeating-)?(linear|radial|conic)-gradient\(|image-set\(|cross-fade\(|element\(|(repeating-)?-webkit-(linear|radial)-gradient\()/.test(
+        layer,
+      );
+    /** 层文本的**顶层**是不是 <color>（十六进制色 / 颜色函数）。<color> 与 <image> 不能
+     *  混在同一层里，这一条专门抓「把纯色值当图像层用」这个错法。只看顶层：渐变内部的色标
+     *  （linear-gradient(rgba(...), rgba(...))）是 <image> 的合法组成，不算「这一层是颜色」。
+     *  做法：先把每个函数调用的括号内容整段去掉（函数名留下），再看剩下的顶层文本——要么是
+     *  一个颜色函数名（rgb / rgba / …），要么是一个十六进制色。 */
+    const hasTopLevelColorToken = (layer: string): boolean => {
+      const withoutParens = layer.replace(/\([^()]*\)/g, '');
+      if (/#[0-9a-f]{3,8}\b/.test(withoutParens)) return true;
+      return /^(?:rgb|rgba|hsl|hsla|hwb|lab|lch|oklab|oklch|color)$/.test(
+        withoutParens.trim().toLowerCase(),
+      );
+    };
+    /** 代入两个真实下发值后的 background-image 层列表 */
+    const resolvedLayers = (mode: Mode): string[] => {
+      const raw = wallpaperLayer(mode).backgroundImage as string;
+      // 用模板代换 var()（jsdom 不解析 var()，且这里也拿不到 CSSOM），代入的是**真的下发值**
+      const resolved = raw
+        .replace(new RegExp(`var\\(${WALLPAPER_SHADE_VAR}\\)`), rootVars(mode)[WALLPAPER_SHADE_VAR])
+        .replace(
+          // var() 整体替换掉（含它自己的右括号）：壁纸那一段是
+          // var(--rtk-wallpaper, url("..."))，只替 [^)]* 会多留一个右括号
+          new RegExp(`var\\(${WALLPAPER_VAR},[^)]*\\)\\)`),
+          `url("${DEFAULT_WALLPAPER_URL}")`,
+        );
+      expect(resolved, `${mode}: 代入后不该再留 var()`).not.toContain('var(');
+      return splitLayers(resolved);
+    };
+
+    for (const mode of MODES) {
+      const layers = resolvedLayers(mode);
+      expect(layers, `${mode}: 代入后应恰好两层（压暗 + 壁纸）`).toHaveLength(2);
+      expect(isImageLayer(layers[0]), `${mode}: 第一层不是 <image>：${layers[0]}`).toBe(true);
+      expect(
+        hasTopLevelColorToken(layers[0]),
+        `${mode}: 第一层是纯 <color>（会让整条 background-image 失效）：${layers[0]}`,
+      ).toBe(false);
+      expect(layers[1], `${mode}: 第二层应是壁纸 url`).toBe(`url("${DEFAULT_WALLPAPER_URL}")`);
+      expect(isImageLayer(layers[1]), `${mode}: 第二层不是 <image>`).toBe(true);
+      // 深色第一层必须真的是渐变（纯色值会在这里现形），浅色才是 none
+      if (mode === 'dark') expect(layers[0]).toContain('linear-gradient(');
+      else expect(layers[0]).toBe('none');
+    }
+
+    // 对照物：上一版那个 <color> 取值必须被判出来（否则守卫是空转的）
+    const previous = `rgba(0, 0, 0, 0.35), url("${DEFAULT_WALLPAPER_URL}")`;
+    expect(splitLayers(previous)[0]).toBe('rgba(0, 0, 0, 0.35)');
+    expect(isImageLayer(splitLayers(previous)[0]), 'rgba() 不该被认成 <image>').toBe(false);
+    expect(hasTopLevelColorToken(splitLayers(previous)[0]), 'rgba() 该被判成 <color>').toBe(true);
+    expect(hasTopLevelColorToken('#000'), '十六进制色该被判成 <color>').toBe(true);
+    expect(hasTopLevelColorToken('none'), 'none 不是颜色').toBe(false);
+    // 渐变里的色标虽然含 rgba()，但它是在 gradient() 内部，层本身是 <image>
+    expect(hasTopLevelColorToken(WALLPAPER_SHADE_DARK), '渐变层本身不是 <color> 层').toBe(false);
+    expect(isImageLayer(WALLPAPER_SHADE_DARK)).toBe(true);
   });
 
   it('浅色下发 none，深色下发压暗层', () => {
@@ -286,12 +402,21 @@ describe('D4 深色壁纸压暗：只有深色叠，浅色一层都不叠', () =
     }
   });
 
-  it('深色解析出的压暗层是纯黑：不含任何亮色通道，也不是反相白', () => {
-    // 压暗层的值必须是黑。用 n-10（深色主题下是近白）当压暗色会把壁纸漂白。
+  it('深色压暗层是纯黑、35% 不透明度：不含任何亮色通道，也不是反相白', () => {
+    // 压暗层的颜色必须是黑。用 n-10（深色主题下是近白）当压暗色会把壁纸漂白。
     const [r, g, b] = channels('#000000');
     expect([r, g, b]).toEqual([0, 0, 0]);
-    expect(WALLPAPER_SHADE_DARK).toMatch(/^rgba\(0, 0, 0,/);
-    expect(alphaOf(WALLPAPER_SHADE_DARK)).toBeCloseTo(0.35, 5);
+    // 取的是声明里两端色标（gradient 两端同色），不是 alphaOf——那条只认 alpha 直接收尾的
+    // rgba()，渐变的字符串以 ')' 收尾，用它会把合法的渐变判失败
+    const stops = [...WALLPAPER_SHADE_DARK.matchAll(/rgba\((\d+), (\d+), (\d+), ([\d.]+)\)/g)].map(
+      (m) => [Number(m[1]), Number(m[2]), Number(m[3]), parseFloat(m[4])] as const,
+    );
+    expect(stops, '压暗层应有两个同色色标').toHaveLength(2);
+    for (const [rr, gg, bb, alpha] of stops) {
+      expect([rr, gg, bb], '压暗色必须是纯黑').toEqual([0, 0, 0]);
+      expect(alpha).toBeCloseTo(0.35, 5);
+    }
+    expect(WALLPAPER_SHADE_DARK, '不得出现亮色通道（白压上去是漂白）').not.toContain('255');
     expect(rootVars('light')[WALLPAPER_SHADE_VAR], '浅色不得有可见压暗').toBe('none');
   });
 

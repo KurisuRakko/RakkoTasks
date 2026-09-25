@@ -35,12 +35,17 @@ export const SCRIM_COLOR = 'rgb(0 0 0 / var(--glass-scrim-opacity))';
 /** 壁纸压暗层的 CSS 变量，由主题层下发到 :root。浅色是 none（浅色壁纸不叠任何层），
  *  深色是一层 35% 纯黑——亮壁纸透过半透明深纸会把黑纸染脏，压暗后玻璃与正文才落在
  *  深色纸上。压在壁纸之上、全部内容与玻璃之下。
+ *  取值必须是 <image> 或 none（它是 background-image 的层，见下面的常量说明）。
  *  实现形式必须是**壁纸承载层自己的一条 background 叠层**（见 theme.ts 的
  *  `#rtk-wallpaper` 规则），不能新增 ::before 之类的伪元素：body::before + position:fixed
  *  的壁纸在 Chromium 里采样不到 backdrop-filter，新增伪元素等于改掉壁纸那块被读回的
  *  合成层结构，玻璃会连壁纸一起读丢。 */
 export const WALLPAPER_SHADE_VAR = '--rtk-wallpaper-shade';
 
-/** 深色壁纸压暗层的值：纯黑 35%。
- *  不用 n-10 墨色——它在深色主题是近白，压上去是漂白（同遮罩层的取舍）。 */
-export const WALLPAPER_SHADE_DARK = 'rgba(0, 0, 0, 0.35)';
+/** 深色壁纸压暗层的值：一层 35% 纯黑的**实心线性渐变**。
+ *  必须写成渐变，不能写成 rgba() 色值：这个变量是 background-image 的**第一层**，而
+ *  background-image 只接受 <image>，rgba(0,0,0,.35) 是 <color> 不是 <image>——整条
+ *  background-image 声明会在计算值阶段失效，连后面的壁纸 url 一起丢掉（壁纸整张消失）。
+ *  linear-gradient 两端同色即实心填充，等效于一层纯色像，且是合法 <image>。
+ *  颜色用纯黑不用 n-10 墨色——它在深色主题是近白，压上去是漂白（同遮罩层的取舍）。 */
+export const WALLPAPER_SHADE_DARK = 'linear-gradient(rgba(0, 0, 0, 0.35), rgba(0, 0, 0, 0.35))';

@@ -264,10 +264,11 @@ export function buildThemeOptions(mode: Mode): ThemeOptions {
             '--glass-lift': GLASS_AERO[mode].lift,
             '--glass-text-glow': GLASS_AERO[mode].textGlow,
             '--shadow-whisper': GLASS_SHADOW_WHISPER[mode],
-            // 壁纸压暗层：浅色 none，深色是 35% 纯黑（见 lib/glass 的两个常量）。
-            // 下发在 :root，由下面的壁纸承载层当 background 的第一层消费——它不是新节点
-            // 也不是伪元素，只往同一个 background 里加一层像，壁纸那一层仍被
-            // backdrop-filter 读得到。
+            // 壁纸压暗层：浅色 none，深色是 35% 纯黑的实心渐变（见 lib/glass 的两个常量）。
+            // 下发在 :root，由下面的壁纸承载层当 background-image 的第一层消费——它不是新
+            // 节点也不是伪元素，只往同一个 background 里加一层像，壁纸那一层仍被
+            // backdrop-filter 读得到。取值必须是 <image> 或 none：写成 rgba() 色值会让整条
+            // background-image 失效，壁纸会跟着一起消失。
             [WALLPAPER_SHADE_VAR]: mode === 'light' ? 'none' : WALLPAPER_SHADE_DARK,
           },
           // 不下发 --glass-highlight：chrome / panel / inverse 三档的光泽全部由
@@ -298,6 +299,9 @@ export function buildThemeOptions(mode: Mode): ThemeOptions {
           // 亮壁纸带着半透明深纸透上来会把黑纸染脏，压暗 35% 后玻璃与正文才落在深色纸上。
           // 压暗只改本节点 background 的叠层，不新增 DOM 节点或伪元素——新增会改掉这块
           // 壁纸被 backdrop-filter 采样时的合成层结构，玻璃会连壁纸一起读丢。
+          // 这一层的取值只能是 <image> 或 none：写成 <color> 会让整条 backgroundImage
+          // 在计算值阶段判无效，连壁纸那段 url 一起丢（tests/theme-dark-glass.test.ts 用
+          // /^(none|linear-gradient\(.+\))$/ 与前缀断言守住这一点）。
           [`#${WALLPAPER_LAYER_ID}`]: {
             position: 'fixed',
             inset: 0,
