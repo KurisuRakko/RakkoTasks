@@ -29,7 +29,7 @@ import { cardRowSx } from "../../lib/surface";
 import { dialogPanelGlassSx } from "./dialog-glass";
 import { timeAgo } from "../../lib/time";
 import { MOTION } from "../../rakko-tokens";
-import { statusChipMeta, kindLabel } from "./meta";
+import { statusChipMeta, kindLabel, kindAvatar } from "./meta";
 import SettingsRow, { HINT_SX, ROW_MIN_HEIGHT_PX, rowSeparatorSx } from "./SettingsRow";
 import AccountDetail from "./AccountDetail";
 import AccountWizard from "./AccountWizard";
@@ -196,7 +196,7 @@ export default function AccountsSection() {
                     ]}
                   >
                     <SettingsRow
-                      leading={<Avatar>{a.kind === "gmail" ? "G" : "O"}</Avatar>}
+                      leading={<Avatar>{kindAvatar(a.kind)}</Avatar>}
                       label={
                         <>
                           <Typography variant="subtitle1" noWrap>

@@ -85,6 +85,88 @@ def test_add_account_success_trims_and_flushes(session_factory):
     assert row.app_password == "abcd efgh"
 
 
+def test_add_account_qq_requires_and_strips_authorization_code(session_factory):
+    """QQ 与 gmail 同一套密码登录：创建时授权码必填，首尾空白去掉、内部原样。"""
+    _seed_user(session_factory)
+    with session_factory() as s:
+        with pytest.raises(accounts.AccountError) as ei:
+            accounts.add_account(s, "user-1", name="QQ 邮箱", kind="qq", email="q@qq.com")
+        assert _err(ei).code == "password_required"
+        with pytest.raises(accounts.AccountError) as ei:
+            accounts.add_account(s, "user-1", name="QQ 邮箱", kind="qq", email="q@qq.com", app_password="   ")
+        assert _err(ei).code == "password_required"
+
+        acc = accounts.add_account(
+            s, "user-1", name="QQ 邮箱", kind="qq", email="q@qq.com",
+            app_password="  abcd efgh ijkl mnop  ",  # 授权码 16 位、自带空格
+        )
+        assert acc.kind == "qq"
+        assert acc.status == "pending"
+        assert acc.enabled is True
+        assert acc.app_password == "abcd efgh ijkl mnop"
+        s.commit()
+    row = _account_row(session_factory, "q@qq.com")
+    assert row.app_password == "abcd efgh ijkl mnop"
+    assert accounts.has_credentials(row) is True
+
+
+def test_has_credentials_qq_follows_authorization_code(session_factory):
+    """QQ 的凭据只看 app_password（授权码），token_cache 与它无关。"""
+    _seed_user(session_factory)
+    with session_factory() as s:
+        acc = Account(user_sub="user-1", name="q", kind="qq", email="q@qq.com")
+        s.add(acc)
+        s.commit()
+        assert accounts.has_credentials(acc) is False  # 授权码还没录
+        acc.app_password = "abcd efgh ijkl mnop"
+        assert accounts.has_credentials(acc) is True
+        acc.app_password = None
+        acc.token_cache = "{}"
+        assert accounts.has_credentials(acc) is False
+
+
+def test_set_app_password_qq_works_and_microsoft_still_invalid(session_factory):
+    _seed_user(session_factory)
+    with session_factory() as s:
+        qq = Account(
+            user_sub="user-1", name="q", kind="qq", email="q@qq.com", status="error", last_error="授权码无效"
+        )
+        ms = Account(user_sub="user-1", name="m", kind="microsoft", email="m@x.com", status="ok")
+        s.add_all([qq, ms])
+        s.commit()
+        with pytest.raises(accounts.AccountError) as ei:
+            accounts.set_app_password(ms, "whatever")
+        assert _err(ei).code == "invalid_kind"
+        assert ms.app_password is None
+        accounts.set_app_password(qq, "  新授权码  ")  # 首尾空白去除、内部原样
+        assert qq.app_password == "新授权码"
+        assert qq.status == "pending"
+        assert qq.last_error is None
+        s.commit()
+    assert _account_row(session_factory, "q@qq.com").app_password == "新授权码"
+
+
+def test_set_enabled_false_clears_qq_authorization_code(session_factory):
+    """停用清凭据对 qq 与 gmail 一视同仁；账户行与凭据位都留着。"""
+    _seed_user(session_factory)
+    with session_factory() as s:
+        acc = Account(
+            user_sub="user-1", name="QQ", kind="qq", email="q@qq.com", status="ok",
+            app_password="abcd efgh ijkl mnop",
+        )
+        s.add(acc)
+        s.commit()
+        accounts.set_enabled(acc, False)
+        assert acc.enabled is False
+        assert acc.app_password is None
+        assert acc.status == "pending"
+        assert accounts.has_credentials(acc) is False
+        s.commit()
+    row = _account_row(session_factory, "q@qq.com")
+    assert row.enabled is False
+    assert row.app_password is None
+
+
 def test_add_account_microsoft_ignores_app_password_and_blank_client_id(session_factory):
     _seed_user(session_factory)
     with session_factory() as s:

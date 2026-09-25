@@ -37,10 +37,10 @@ class Account(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_sub: Mapped[str] = mapped_column(ForeignKey("users.sub"), nullable=False, index=True)  # 归属用户
     name: Mapped[str] = mapped_column(String(128), nullable=False)
-    kind: Mapped[str] = mapped_column(String(16), nullable=False)  # gmail | microsoft
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)  # gmail | qq | microsoft
     email: Mapped[str] = mapped_column(String(256), nullable=False)
     ms_client_id: Mapped[str | None] = mapped_column(String(64))
-    app_password: Mapped[str | None] = mapped_column(Text)  # Gmail 应用专用密码，明文，仅服务端 IMAP 使用
+    app_password: Mapped[str | None] = mapped_column(Text)  # 应用专用密码 / QQ 授权码，明文，仅服务端 IMAP 使用
     token_cache: Mapped[str | None] = mapped_column(Text)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)  # 软删除：0 停用但保留邮件/任务
     # IMAP 增量游标

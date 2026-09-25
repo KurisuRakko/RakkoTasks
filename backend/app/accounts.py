@@ -13,9 +13,13 @@ from sqlalchemy.orm import Session
 
 from app.config import Settings
 from app.imap import mstoken
+from app.imap.client import PASSWORD_IMAP_HOSTS
 from app.models import Account, Email, Item
 
-KINDS = ("gmail", "microsoft")
+# 密码登录类 kind（应用专用密码 / 授权码）的名单直接取 IMAP 主机映射的键：那处是
+# 「哪些 kind 走密码登录」的唯一来源，这里不再抄一份。
+PASSWORD_KINDS = tuple(PASSWORD_IMAP_HOSTS)
+KINDS = (*PASSWORD_KINDS, "microsoft")
 # 每用户账户数上限。本系统没有用户白名单（任何通过 Phainon 鉴权的人都能用，见 DESIGN.md
 # 第 9 节），不设上限时单个用户就能建出任意多个账户，把 worker 的同步队列占满。
 # 已停用的账户同样计数：它仍占一行、仍可随时重新启用。
@@ -43,8 +47,8 @@ class AccountError(Exception):
 
 
 def has_credentials(account) -> bool:
-    """凭据是否已就绪：gmail 看应用专用密码，microsoft 看 token cache。"""
-    if account.kind == "gmail":
+    """凭据是否已就绪：gmail / qq 看应用专用密码或授权码，microsoft 看 token cache。"""
+    if account.kind in PASSWORD_KINDS:
         return bool(account.app_password)
     return bool(account.token_cache)
 
@@ -108,7 +112,7 @@ def add_account(
     email = email.strip()
     if "@" not in email or len(email) > 256:
         raise AccountError("bad_email")
-    if kind == "gmail":
+    if kind in PASSWORD_KINDS:
         if not app_password or not app_password.strip():
             raise AccountError("password_required")
         app_password = app_password.strip()  # 复制粘贴常带首尾空白；密码内部原样保留
@@ -147,8 +151,8 @@ def rename_account(account: Account, name: str) -> None:
 
 
 def set_app_password(account: Account, password: str | None) -> None:
-    """重录 Gmail 应用专用密码：成功后 status 回 pending（下次同步重新验证）、清掉旧错误。"""
-    if account.kind != "gmail":
+    """重录应用专用密码 / QQ 授权码：成功后 status 回 pending（下次同步重新验证）、清掉旧错误。"""
+    if account.kind not in PASSWORD_KINDS:
         raise AccountError("invalid_kind")
     if not password or not password.strip():
         raise AccountError("password_required")
