@@ -1,6 +1,7 @@
 // 主题：组件骨架仍为 MUI，视觉层整体换用 Rakko Design token（镜像常量见 ./rakko-tokens）。
 // 深浅色跟随 ThemeModeProvider 的 resolved 值（system 时跟随系统偏好）。
-// 纪律要点：正文用 n9、面用 n2、分割用 1px 边框；accent 只留给焦点元素与少量填充；
+// 纪律要点：正文用 n9、实体面用纸色系（页面 PAPER / 浮层 PAPER_RAISED，见 rakko-tokens）、
+// 分割用 1px 边框；accent 只留给焦点元素与少量填充；
 // 禁硬阴影（一律 whisper）；标题字重 500，全局不出现 700（CJK 禁伪粗）。
 //
 // 组件层（components）的两条总则：
@@ -28,6 +29,7 @@ import {
   NEUTRAL_DARK,
   NEUTRAL_LIGHT,
   PAPER,
+  PAPER_RAISED,
   RADIUS,
   SEMANTIC,
   SEMANTIC_INVERSE_SURFACE,
@@ -89,8 +91,9 @@ function typeStyle(scale: keyof typeof TYPE_SCALE): { fontSize: number; lineHeig
  *  要读「主题真的下发了什么」，而不是在测试里手抄一份颜色。 */
 export function buildThemeOptions(mode: Mode): ThemeOptions {
   const n = mode === 'light' ? NEUTRAL_LIGHT : NEUTRAL_DARK;
-  // n1 不再取：页面纸色走 PAPER（见下面的 paper）。位置留空以免后续几档错位。
-  const [, n2, , , n5, n6, n7, , n9, n10] = n;
+  // n1 / n2 不再取：纸色与实体浮层面走 PAPER / PAPER_RAISED（见下面的 paper 与
+  // paperRaised）。位置留空以免后面的几档错位。
+  const [, , , , n5, n6, n7, , n9, n10] = n;
   const accent = mode === 'light' ? ACCENT.light : ACCENT.dark;
   // accent 的 light/dark 是从 main 派生的两档（契约 ACCENT 只给了一个基础色）：浅色主题
   // 向亮侧、暗侧各 15%；深色主题的 accent 本身已是提亮值（#e095a4），dark 档直接沿用
@@ -111,6 +114,9 @@ export function buildThemeOptions(mode: Mode): ThemeOptions {
   // 纸色与玻璃纸底分家：中性色阶（上面的 n1..n10）深浅都是契约镜像，纸色是它之外的一支
   // （深色的暖意只由纸色承担，见 PAPER 的注释）。
   const paper = PAPER[mode];
+  // 实体浮层（卡片 / 菜单 / 对话框）的底：比纸色亮一档，深色取暖色系那一档
+  // （n2 是纯冷灰，压在暖纸上色调打架，见 PAPER_RAISED 的注释）。
+  const paperRaised = PAPER_RAISED[mode];
   // 深色三档纸底比浅色更实（见 GLASS_DARK 的注释）；浅色主题仍取 GLASS 原值。
   const glassOpacity = mode === 'light' ? GLASS : GLASS_DARK;
   // 描边深一档：边框 token 上再叠一层墨色（见 BORDER_STRONG_ALPHA 的说明）
@@ -127,7 +133,7 @@ export function buildThemeOptions(mode: Mode): ThemeOptions {
       },
       background: {
         default: paper,
-        paper: n2,
+        paper: paperRaised,
       },
       text: {
         primary: n9,
