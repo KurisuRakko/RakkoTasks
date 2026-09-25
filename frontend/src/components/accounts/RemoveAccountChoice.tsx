@@ -87,7 +87,7 @@ export default function RemoveAccountChoice({ account, onDisabled, onDeleted, on
 
   return (
     <Box>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+      <Typography variant="caption" sx={{ display: 'block', mb: 1.5 }}>
         选择 {account.name}（{account.email}）的处理方式：
       </Typography>
       <Stack spacing={1} role="group" aria-label="移除方式">
@@ -128,7 +128,7 @@ export default function RemoveAccountChoice({ account, onDisabled, onDeleted, on
                           <Chip label="已停用" size="small" color="default" variant="outlined" />
                         )}
                       </Stack>
-                      <Typography variant="body2" color="text.secondary">
+                      <Typography variant="caption" sx={{ display: 'block' }}>
                         {opt.description}
                       </Typography>
                     </Box>
@@ -147,7 +147,7 @@ export default function RemoveAccountChoice({ account, onDisabled, onDeleted, on
       )}
 
       {choice === 'disable' && !alreadyDisabled && (
-        <Typography variant="body2" color="text.secondary" sx={{ mt: 1.5 }}>
+        <Typography variant="caption" sx={{ display: 'block', mt: 1.5 }}>
           停用后该账户不再同步；要恢复使用，回到账户详情启用并重新设置凭据。
         </Typography>
       )}
@@ -168,7 +168,8 @@ export default function RemoveAccountChoice({ account, onDisabled, onDeleted, on
       )}
 
       <Stack direction="row" justifyContent="flex-end" spacing={1} sx={{ mt: 2 }}>
-        <Button variant="outlined" onClick={onCancel} disabled={busy}>
+        {/* 取消只有一个变体：text + inherit（本页的「返回」就是取消） */}
+        <Button variant="text" color="inherit" onClick={onCancel} disabled={busy}>
           返回
         </Button>
         {choice === 'delete' ? (

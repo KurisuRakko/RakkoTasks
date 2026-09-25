@@ -6,6 +6,7 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { createTheme, ThemeProvider } from '@mui/material/styles';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { AccountDetailPage, AccountNewPage, AccountRemovePage } from '../src/pages/AccountPages';
+import accountsSectionSource from '../src/components/accounts/AccountsSection.tsx?raw';
 import { ThemeModeProvider } from '../src/lib/theme-mode';
 import type { AccountInfo } from '../src/types';
 import { allStyleText, ruleTextOf } from './glass-text-contrast.test-utils';
@@ -114,6 +115,20 @@ describe('账户路由页的页面容器', () => {
     const rule = ruleTextOf(allStyleText(), panel);
     expect(rule, '面板应有自己的 emotion 规则（圆角与内边距）').toContain('border-radius');
     expect(rule).not.toContain('background');
+  });
+});
+
+describe('账户路由页与桌面 Dialog 的材质一致', () => {
+  it('移动端页面容器的 panel 配方与桌面 Dialog 纸面挂的是同一个 data-glass 值', async () => {
+    api.fetchAccountsMock.mockResolvedValue([makeAccount()]);
+    const { container } = renderAt('/settings/accounts/1');
+    await screen.findByLabelText('名称');
+
+    expect(container.querySelector('[data-glass="panel"]')).not.toBeNull();
+    // AccountsSection 的桌面 Dialog 用同一个值（同一份内容不该因断点换材质）；
+    // 覆盖玻璃背景时必须写成 &[data-glass="panel"] 并带回 inset 内唇
+    expect(accountsSectionSource).toContain("'data-glass': 'panel'");
+    expect(accountsSectionSource).toContain('dialogPanelGlassSx');
   });
 });
 

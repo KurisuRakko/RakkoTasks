@@ -5,13 +5,15 @@
 // AccountsSection 内部会调用带方向导航的 hook，渲染需要 Router 上下文。
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import SettingsPage from '../src/pages/SettingsPage';
 import { ThemeModeProvider } from '../src/lib/theme-mode';
 import { readWallpaper, setWallpaper } from '../src/lib/wallpaper';
 import type { WallpaperArea } from '../src/lib/wallpaper';
-import { MOTION } from '../src/rakko-tokens';
+import { MOTION, RADIUS } from '../src/rakko-tokens';
+import { ROW_MIN_HEIGHT_PX } from '../src/components/accounts/SettingsRow';
+import { AppThemeProvider, allStyleText, ownRules } from './glass-text-contrast.test-utils';
 import type { StatusResponse } from '../src/types';
 import settingsPageSource from '../src/pages/SettingsPage.tsx?raw';
 
@@ -283,9 +285,201 @@ describe('SettingsPage 玻璃分区与按钮配色', () => {
     });
   });
 
-  it('按钮不再有 warning 配色（源码断言）：color="warning" 与 <Divider 均已删除', () => {
+  it('按钮不再有 warning 配色（源码断言）：color="warning" 已删除', () => {
     expect(settingsPageSource).not.toContain('color="warning"');
-    expect(settingsPageSource).not.toContain('<Divider');
+  });
+
+  it('行与行之间的分隔线是 inset 发丝线：起点与文字左缘对齐，首行上方与末行下方不画', async () => {
+    vi.stubGlobal('fetch', makeFetchMock());
+    render(
+      <ThemeModeProvider>
+        <MemoryRouter>
+          <SettingsPage />
+        </MemoryRouter>
+      </ThemeModeProvider>,
+    );
+
+    // 日历订阅面板：说明行 → 订阅链接行 → 按钮行，三行两线
+    await screen.findByLabelText('订阅链接');
+    const panels = Array.from(document.querySelectorAll('[data-glass="panel"]'));
+    const calendar = panels.find((p) => p.textContent?.includes('日历订阅')) as HTMLElement;
+    const rows = Array.from(calendar.querySelectorAll('[data-setting-row]')) as HTMLElement[];
+    expect(rows.length).toBeGreaterThanOrEqual(3);
+
+    // 线画在伪元素上，不占盒子的边框：行自己不带 border-top，也就没有
+    // 「首行上方 / 末行下方多一条线」以及「边框从行最左端画起」的问题
+    for (const row of rows) {
+      expect(getComputedStyle(row).borderTopWidth).not.toBe('1px');
+    }
+
+    // 所有行的左内边距完全一致，且只有 ROW_SX 那一条（px:1 → 8px）；
+    // 旧写法会给相邻行补一条 padding-left:8px 把标签右推，这个序列不会出现。
+    // 分隔线也不再落在行的边框上（border-top 由伪元素取代，盒子不带 border）。
+    const css = allStyleText();
+    for (const row of rows) {
+      const own = ownRules(css, row);
+      expect(own).not.toBe('');
+      const paddings = own.match(/padding-left:[^;}]*/g) ?? [];
+      expect(paddings).toEqual(['padding-left:8px']);
+      expect(own).not.toContain('border-top');
+    }
+    // 线本身：第二行上的 `& + &::before` 规则存在，并且带 left（从文字左缘起，
+    // 不靠给相邻行补内边距）与 height:1px（发丝线）。
+    // 「首行上方不画线」由两条锁定：行的规则里没有任何 border-top 声明（上面已断言），
+    // 而伪元素的定位是 `& + &::before`——不相邻任何行的首行不会命中该选择器。
+    const second = ownRules(css, rows[1]);
+    expect(second).toContain('::before');
+    expect(second).toContain('left:8px');
+    expect(second).toContain('height:1px');
+    expect(second).toContain('pointer-events:none');
+  });
+
+  it('设置行是统一结构：最小高度 48px，标签 13px、值/说明 12px（字阶区分层级而不是变淡文字）', async () => {
+    vi.stubGlobal('fetch', makeFetchMock());
+    render(
+      <ThemeModeProvider>
+        <MemoryRouter>
+          <SettingsPage />
+        </MemoryRouter>
+      </ThemeModeProvider>,
+    );
+
+    await screen.findByLabelText('订阅链接');
+    const panels = Array.from(document.querySelectorAll('[data-glass="panel"]'));
+    const calendar = panels.find((p) => p.textContent?.includes('日历订阅')) as HTMLElement;
+    const rows = Array.from(calendar.querySelectorAll('[data-setting-row]')) as HTMLElement[];
+    // 所有行共用一个最小高度常量，不是各面板各写一个
+    for (const row of rows.slice(0, 3)) {
+      expect(getComputedStyle(row).minHeight).toBe(`${ROW_MIN_HEIGHT_PX}px`);
+    }
+
+    // 值 / 说明字阶：caption（label-12 = 12px / 1.5），与标签的 body2（13px）差一档
+    const hint = Array.from(calendar.querySelectorAll('.MuiTypography-caption')).find((el) =>
+      (el.textContent ?? '').includes('有截止日的未完成任务会出现在日历里'),
+    ) as HTMLElement;
+    expect(hint, '日历订阅的说明文字应是 caption 字阶').toBeTruthy();
+    expect(hint.className).toMatch(/MuiTypography-caption/);
+    // 字阶只认 caption 这一档：emotion 把 12px 下成 0.75rem（html font-size 14px 背景下的同一值）
+    expect(['0.75rem', '12px']).toContain(getComputedStyle(hint).fontSize);
+    // 说明文字在玻璃上取正文色，不用次级色（n7 在玻璃上只有 2.4–2.6 对比度）
+    expect(hint.className).not.toMatch(/MuiTypography-root css-.*secondary/);
+    // 说明文字的行距常量只有一处定义（SettingsRow 导出，页面不各写一份 sx）
+    expect(settingsPageSource).toContain('HINT_SX');
+  });
+
+  it('外观三态是 radiogroup / radio：aria-checked 跟着选中项走', async () => {
+    vi.stubGlobal('fetch', makeFetchMock());
+    render(
+      <ThemeModeProvider>
+        <MemoryRouter>
+          <SettingsPage />
+        </MemoryRouter>
+      </ThemeModeProvider>,
+    );
+
+    const group = screen.getByRole('radiogroup', { name: '外观' });
+    const radios = screen.getAllByRole('radio');
+    expect(radios).toHaveLength(3);
+    expect(group.contains(radios[0])).toBe(true);
+    // 默认 system：跟随系统选中，其余未选
+    expect(screen.getByRole('radio', { name: '跟随系统' }).getAttribute('aria-checked')).toBe('true');
+    expect(screen.getByRole('radio', { name: '深色' }).getAttribute('aria-checked')).toBe('false');
+    // 单选组只有一个 tab 停点（APG 的 roving tabindex）
+    expect(screen.getByRole('radio', { name: '跟随系统' }).getAttribute('tabindex')).toBe('0');
+    expect(screen.getByRole('radio', { name: '深色' }).getAttribute('tabindex')).toBe('-1');
+  });
+
+  it('外观分段控件是「中性轨道 + 抬起的滑块」：组无边框、段无边框无竖线、选中项才抬起', async () => {
+    vi.stubGlobal('fetch', makeFetchMock());
+    // 这一条要断言色值，必须用应用真实主题渲染（token 原值；ThemeModeProvider 之外的
+    // MUI Provider 用默认主题时 background.paper 是白色，断言会空转）
+    render(
+      <AppThemeProvider>
+        <MemoryRouter>
+          <SettingsPage />
+        </MemoryRouter>
+      </AppThemeProvider>,
+    );
+
+    const group = screen.getByRole('radiogroup', { name: '外观' });
+    const css = allStyleText();
+    const groupRule = ownRules(css, group);
+
+    // 组：无外框、浅填充轨道、2px 内边距、36px 高
+    expect(groupRule).not.toBe('');
+    expect(groupRule).not.toMatch(/border(-top|-right|-bottom|-left)?:\s*1px/);
+    expect(groupRule).toContain('background-color:rgba(20, 19, 18, 0.04)'); // action.hover = alpha(n10, 4%)
+    expect(groupRule).toContain('padding:2px');
+    expect(groupRule).toContain('height:36px');
+    // 段间竖线已删除（旧写法是相邻选择器的 border-left）
+    expect(groupRule).not.toContain('border-left');
+
+    // 段：不描边；选中项 = 纸色滑块 + whisper 阴影 + 字重 600，未选中 = 透明底 + 字重 500
+    const selected = screen.getByRole('radio', { name: '跟随系统' });
+    const idle = screen.getByRole('radio', { name: '深色' });
+    const selectedRule = ownRules(css, selected);
+    const idleRule = ownRules(css, idle);
+    expect(selectedRule).not.toMatch(/border:\s*1px/);
+    expect(idleRule).not.toMatch(/border:\s*1px/);
+    expect(selectedRule).toContain('background-color:#f0efeb'); // background.paper = n2
+    expect(selectedRule).toContain('box-shadow:0 1px 2px rgba(20, 19, 18, 0.06)'); // shadows[1] = whisper 一档
+    expect(idleRule).toContain('background-color:transparent');
+    expect(idleRule).toContain('box-shadow:none');
+    // 切换的过渡走 motion.md 的短时长 + 标准缓动
+    expect(selectedRule).toContain(`background-color ${MOTION.state}ms ${MOTION.easeStandard}`);
+    expect(selectedRule).toContain(`box-shadow ${MOTION.state}ms ${MOTION.easeStandard}`);
+    // 段圆角 = RADIUS.card - 2
+    expect(selectedRule).toContain(`border-radius:${RADIUS.card - 2}px`);
+  });
+
+  it('外观三态：方向键切换选中并把焦点移到新选中项，Home / End 到首尾', async () => {
+    vi.stubGlobal('fetch', makeFetchMock());
+    render(
+      <ThemeModeProvider>
+        <MemoryRouter>
+          <SettingsPage />
+        </MemoryRouter>
+      </ThemeModeProvider>,
+    );
+
+    // 每次都按可访问名现取：焦点移动发生在 effect 里，React 提交后节点引用会变，
+    // 抓住旧引用断言读到的还是上一轮的属性
+    const radio = (name: string) => screen.getByRole('radio', { name });
+    /** 按一次键并等这次提交（含焦点的 effect）跑完 */
+    const press = (name: string, key: string) =>
+      act(async () => {
+        fireEvent.keyDown(radio(name), { key });
+      });
+
+    act(() => radio('跟随系统').focus());
+
+    // → 从「跟随系统」到「浅色」：选中与焦点一起移动
+    await press('跟随系统', 'ArrowRight');
+    expect(radio('浅色').getAttribute('aria-checked')).toBe('true');
+    expect(radio('跟随系统').getAttribute('aria-checked')).toBe('false');
+    expect(document.activeElement).toBe(radio('浅色'));
+    expect(localStorage.getItem('rakkotasks.theme-mode')).toBe('light');
+
+    await press('浅色', 'ArrowRight');
+    expect(document.activeElement).toBe(radio('深色'));
+    expect(localStorage.getItem('rakkotasks.theme-mode')).toBe('dark');
+
+    // 末端回绕到首项：方向键在组内循环，不会卡在最后一格
+    await press('深色', 'ArrowRight');
+    expect(radio('跟随系统').getAttribute('aria-checked')).toBe('true');
+
+    // ← 反方向
+    await press('跟随系统', 'ArrowLeft');
+    expect(radio('深色').getAttribute('aria-checked')).toBe('true');
+    expect(document.activeElement).toBe(radio('深色'));
+
+    // End / Home 到首尾
+    await press('深色', 'Home');
+    expect(radio('跟随系统').getAttribute('aria-checked')).toBe('true');
+    expect(document.activeElement).toBe(radio('跟随系统'));
+    await press('跟随系统', 'End');
+    expect(radio('深色').getAttribute('aria-checked')).toBe('true');
+    expect(document.activeElement).toBe(radio('深色'));
   });
 
   it('日历操作排：主操作「在 iPhone 上订阅」是 contained，「重新生成」不再是 warning 色', async () => {
@@ -303,6 +497,81 @@ describe('SettingsPage 玻璃分区与按钮配色', () => {
     expect(subscribe.className).toMatch(/MuiButton-contained/);
     const rotate = screen.getByRole('button', { name: '重新生成' });
     expect(rotate.className).not.toMatch(/colorWarning/);
+    // 进入破坏性流程的入口 = text error（旧的 outlined + error 已收敛掉）
+    expect(rotate.className).toMatch(/MuiButton-text/);
+    expect(rotate.className).toMatch(/MuiButton-colorError/);
+  });
+
+  it('危险操作的最终确认是 contained error，取消是 text inherit，取消在左确认在右', async () => {
+    vi.stubGlobal('fetch', makeFetchMock());
+    render(
+      <ThemeModeProvider>
+        <MemoryRouter>
+          <SettingsPage />
+        </MemoryRouter>
+      </ThemeModeProvider>,
+    );
+
+    await screen.findByLabelText('订阅链接');
+    fireEvent.click(screen.getByRole('button', { name: '重新生成' }));
+
+    const dialog = await screen.findByRole('dialog');
+    const cancel = within(dialog).getByRole('button', { name: '取消' });
+    const confirm = within(dialog).getByRole('button', { name: '确认' });
+    // 全站只有四种按钮层级：取消 = text inherit，破坏性最终确认 = contained error
+    expect(cancel.className).toMatch(/MuiButton-text/);
+    expect(cancel.className).toMatch(/MuiButton-colorInherit/);
+    expect(confirm.className).toMatch(/MuiButton-contained/);
+    expect(confirm.className).toMatch(/MuiButton-colorError/);
+    // 同一行右对齐，取消在确认左边
+    const actions = cancel.parentElement as HTMLElement;
+    expect(actions).toBe(confirm.parentElement);
+    expect(Array.from(actions.children).indexOf(cancel)).toBeLessThan(
+      Array.from(actions.children).indexOf(confirm),
+    );
+  });
+
+  it('退出登录是危险入口：text error（旧的 outlined + error 已收敛掉）', async () => {
+    vi.stubGlobal('fetch', makeFetchMock());
+    render(
+      <ThemeModeProvider>
+        <MemoryRouter>
+          <SettingsPage />
+        </MemoryRouter>
+      </ThemeModeProvider>,
+    );
+
+    const logout = await screen.findByRole('button', { name: '退出登录' });
+    expect(logout.className).toMatch(/MuiButton-text/);
+    expect(logout.className).toMatch(/MuiButton-colorError/);
+  });
+
+  it('分区标题只有一种样式与位置：面板内顶部的 overline', async () => {
+    vi.stubGlobal('fetch', makeFetchMock());
+    render(
+      <ThemeModeProvider>
+        <MemoryRouter>
+          <SettingsPage />
+        </MemoryRouter>
+      </ThemeModeProvider>,
+    );
+
+    const titles = ['外观', '壁纸', '日历订阅', '提醒事项同步', '账户', '同步', '关于'];
+    for (const title of titles) {
+      const heading = screen.getByRole('heading', { name: title });
+      expect(heading.className, `${title} 应是 overline 字阶`).toMatch(/MuiTypography-overline/);
+      // 标题是面板的第一个子节点（位置统一，不随分区内容变化）
+      const panel = heading.closest('[data-glass="panel"]') as HTMLElement;
+      expect(panel.firstElementChild, `${title} 应是面板首个子元素`).toBe(heading);
+    }
+  });
+
+  it('Snackbar 不再写死自动关闭时长，也不在设置页拼边界色（颜色只来自 theme.palette）', () => {
+    // 4 秒由主题的 MuiSnackbar.defaultProps 统一给（A 路的主题层），调用点不再传
+    expect(settingsPageSource).not.toContain('autoHideDuration');
+    // 组件里不写新的 #hex / rgb 字面量
+    expect(settingsPageSource).not.toMatch(/#[0-9a-fA-F]{3,8}/);
+    expect(settingsPageSource).not.toMatch(/rgba?\(/);
   });
 });
 

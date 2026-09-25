@@ -183,6 +183,34 @@ describe('AccountDetail 同步状态', () => {
     expect(accountDetailSource).not.toContain('<Divider');
   });
 
+  it('「上次同步」与列表行同一角色：同一字阶（caption）与同一颜色（正文色）', () => {
+    render(<Harness initial={makeAccount({ last_sync_at: null })} />);
+
+    const line = screen.getByText('上次同步：从未');
+    expect(line.className).toMatch(/MuiTypography-caption/);
+    // 列表行那一处是 caption + n9；这里不能退回 body2，也不能变淡
+    expect(line.className).not.toMatch(/MuiTypography-body2/);
+    expect(line.getAttribute('color')).toBeNull();
+  });
+
+  it('危险区入口是 text error：进入移除流程的入口不做重色，重的留给最终确认', () => {
+    render(<Harness initial={makeAccount({})} />);
+
+    const remove = screen.getByRole('button', { name: '移除账户…' });
+    expect(remove.className).toMatch(/MuiButton-text/);
+    expect(remove.className).toMatch(/MuiButton-colorError/);
+    // 旧的 outlined + error 写法已收敛掉
+    expect(remove.className).not.toMatch(/MuiButton-outlined/);
+  });
+
+  it('折叠入口是三级动作：text + inherit（不是主题默认的 primary）', () => {
+    render(<Harness initial={makeAccount({})} />);
+
+    const toggle = screen.getByRole('button', { name: '更换应用专用密码' });
+    expect(toggle.className).toMatch(/MuiButton-text/);
+    expect(toggle.className).toMatch(/MuiButton-colorInherit/);
+  });
+
   it('保存名称提交中：文字仍在按钮上（宽度不跳），进度圈作为图标出现', async () => {
     let resolvePatch!: (a: AccountInfo) => void;
     api.patchAccountMock.mockReturnValue(

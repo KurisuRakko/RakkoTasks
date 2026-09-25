@@ -1,9 +1,12 @@
-// MicrosoftAuthGuide 测试：授权引导两步（生成链接 → 粘贴回地址）与复制反馈的生命周期。
+// MicrosoftAuthGuide 测试：授权引导两步（生成链接 → 粘贴回地址）与复制反馈。
 // requestMsAuthUrl / submitMsAuthCode / copyText 全部 mock。
+// 复制零件已全站收敛成「IconButton + ContentCopy + Tooltip『复制』」，反馈走 Snackbar
+// （文案「已复制」/「复制失败」，自动关闭时长由主题默认给），不再有按钮下面的行内提示。
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import MicrosoftAuthGuide from '../src/components/accounts/MicrosoftAuthGuide';
+import guideSource from '../src/components/accounts/MicrosoftAuthGuide.tsx?raw';
 import type { AccountInfo } from '../src/types';
 
 const api = vi.hoisted(() => ({
@@ -43,61 +46,46 @@ async function intoLinkStep(onAuthorized = vi.fn()) {
   api.requestMsAuthUrlMock.mockResolvedValue(AUTH_URI);
   render(<MicrosoftAuthGuide accountId={ACCOUNT.id} onAuthorized={onAuthorized} />);
   fireEvent.click(screen.getByRole('button', { name: '生成授权链接' }));
-  await screen.findByRole('button', { name: '复制链接' });
+  await screen.findByRole('button', { name: '复制' });
   return onAuthorized;
 }
 
+/** 复制按钮全站一种可访问名：aria-label 与 Tooltip 都是「复制」 */
+function copyButton(): HTMLElement {
+  return screen.getByRole('button', { name: '复制' });
+}
+
 describe('MicrosoftAuthGuide 复制反馈', () => {
-  it('复制成功的提示 3 秒后自撤，不会一直挂在按钮下面', async () => {
-    // 自撤计时器在复制那一刻就排好了，假时钟必须先于点击安装，否则排的是真定时器
-    vi.useFakeTimers();
-    try {
-      api.copyTextMock.mockResolvedValue(undefined);
-      api.requestMsAuthUrlMock.mockResolvedValue(AUTH_URI);
-      render(<MicrosoftAuthGuide accountId={ACCOUNT.id} onAuthorized={vi.fn()} />);
+  it('复制按钮是全站唯一那一种零件：IconButton + ContentCopy 图标，可访问名为「复制」', async () => {
+    await intoLinkStep();
 
-      fireEvent.click(screen.getByRole('button', { name: '生成授权链接' }));
-      await act(async () => {});
-      fireEvent.click(screen.getByRole('button', { name: '复制链接' }));
-      await act(async () => {});
-      expect(screen.getByText('已复制链接')).toBeTruthy();
-
-      await act(async () => {
-        vi.advanceTimersByTime(3100);
-      });
-      expect(screen.queryByText('已复制链接')).toBeNull();
-    } finally {
-      vi.useRealTimers();
-    }
+    const button = copyButton();
+    expect(button.className).toMatch(/MuiIconButton-root/);
+    expect(button.querySelector('svg[data-testid="ContentCopyIcon"]')).not.toBeNull();
+    // 旧的「复制链接」文字按钮与行内提示都已删除
+    expect(screen.queryByRole('button', { name: '复制链接' })).toBeNull();
   });
 
-  it('重新生成链接时清掉上一次的复制提示，不把旧话带过去', async () => {
+  it('复制成功：反馈走 Snackbar，文案「已复制」；Snackbar 不再自己写死自动关闭时长', async () => {
     api.copyTextMock.mockResolvedValue(undefined);
     await intoLinkStep();
 
-    fireEvent.click(screen.getByRole('button', { name: '复制链接' }));
-    await screen.findByText('已复制链接');
+    fireEvent.click(copyButton());
 
-    // 流程失效走回第 ① 步：提交一个 no_pending_flow
-    api.submitMsAuthCodeMock.mockRejectedValue({ code: 'no_pending_flow' });
-    fireEvent.change(screen.getByLabelText('把地址栏的完整地址粘贴到这里'), {
-      target: { value: 'https://example.invalid/?code=abc' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: '完成授权' }));
-    await screen.findByText('授权流程已失效，请重新生成链接');
-
-    fireEvent.click(screen.getByRole('button', { name: '生成授权链接' }));
-    await screen.findByRole('button', { name: '复制链接' });
-    expect(screen.queryByText('已复制链接')).toBeNull();
+    // 反馈是 Snackbar（MuiSnackbar-root），由主题统一给 4 秒，组件不再传 autoHideDuration
+    expect(await screen.findByText('已复制')).toBeTruthy();
+    expect(document.querySelector('.MuiSnackbar-root')).not.toBeNull();
+    expect(guideSource).not.toContain('autoHideDuration');
   });
 
   it('复制失败给出失败提示，不谎报成功', async () => {
     api.copyTextMock.mockRejectedValue(new Error('denied'));
     await intoLinkStep();
 
-    fireEvent.click(screen.getByRole('button', { name: '复制链接' }));
+    fireEvent.click(copyButton());
+
     expect(await screen.findByText('复制失败')).toBeTruthy();
-    expect(screen.queryByText('已复制链接')).toBeNull();
+    expect(screen.queryByText('已复制')).toBeNull();
   });
 });
 
