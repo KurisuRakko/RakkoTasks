@@ -589,7 +589,7 @@ export function buildThemeOptions(mode: Mode): ThemeOptions {
           },
         },
       },
-      // 底栏玻璃底色改由外层 Paper 的 data-glass="chrome" 提供（镜像的 chrome 配方
+      // 底栏玻璃底色改由外层 Paper 的 data-glass="chrome" 提供（本地 Aero 版的 chrome 配方
       // 自带纸底与发丝线，不再是本组件兜底的半透明纸底），内层必须保持透明，
       // 否则会挡住玻璃。
       MuiBottomNavigation: {
