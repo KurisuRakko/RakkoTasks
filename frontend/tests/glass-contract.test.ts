@@ -338,6 +338,14 @@ describe('Aero 玻璃配方契约（新材质接线）', () => {
   });
 });
 
+/** rgba(...) 尾部的 alpha：'rgba(255, 255, 255, 0.12)' → 0.12；非法写法直接判失败。
+ *  白层之间的强弱比较全部走它，不比较字符串（'0.1' 与 '0.12' 的字典序会给出反向结论）。 */
+function alphaOf(color: string): number {
+  const m = color.match(/[\d.]+(?=\)$)/);
+  expect(m, `${color} 应是以 alpha 收尾的 rgba()`).not.toBeNull();
+  return parseFloat(m![0]);
+}
+
 describe('玻璃可读性契约', () => {
   it('blur 恒为 3px：Aero 的通透是刻意的，不是待优化项', () => {
     // Aero 玻璃要能透过去看见背景轮廓，糊成一片是 iOS 毛玻璃的路子；
@@ -387,6 +395,23 @@ describe('玻璃可读性契约', () => {
     // 十二个键一个不少：防止将来加 token 只加一边，两套配方错位。
     expect(Object.keys(GLASS_AERO.dark)).toEqual(Object.keys(GLASS_AERO.light));
   });
+
+  it('深色的白层一律不超过浅色：深色只削白，不加白', () => {
+    // 浅色好看的前提是白纸 + 白高光同向；把同样多的白光晕搬到半透明黑纸上，行卡会变成
+    // 一层发灰的雾膜。方向由这条守：深色的每个白层都必须 ≤ 浅色同名的白层
+    // （rim / lip / lip-under / side / sheen-1 / sheen-2），不是「差不多」而是不得反超。
+    // 具体取值钉在 tests/theme-dark-glass.test.ts。
+    const whites = ['rim', 'lip', 'lipUnder', 'side', 'sheen1', 'sheen2'] as const;
+    for (const key of whites) {
+      expect(alphaOf(GLASS_AERO.dark[key]), `dark ${key} 不该比浅色更白`).toBeLessThanOrEqual(
+        alphaOf(GLASS_AERO.light[key]),
+      );
+    }
+    // bloom 是内发光：它在黑纸上是唯一的纯雾源，深色必须归零而不是留一点
+    expect(alphaOf(GLASS_AERO.dark.bloom)).toBe(0);
+    // 白层清单之外，深色的 rim-inner（暗向）必须比浅色更深：厚度边的另一半靠它
+    expect(alphaOf(GLASS_AERO.dark.rimInner)).toBeGreaterThan(alphaOf(GLASS_AERO.light.rimInner));
+  });
 });
 
 // 桌面常驻侧栏（permanent Drawer，data-glass="chrome"）的浅色削白改写：上游只为 ~64px
@@ -395,13 +420,6 @@ describe('玻璃可读性契约', () => {
 // 的 navRailGlassSx，作用范围由 app-shell.test.tsx 守卫）。本组钉的是「削了什么」与
 // 「什么没被顺手削掉」——观感要由真机判定，文本只能钉住这几条不变量。
 describe('桌面侧栏浅色削白契约', () => {
-  /** rgba(...) 尾部的 alpha：'rgba(255, 255, 255, 0.12)' → 0.12；非法写法直接判失败 */
-  function alphaOf(color: string): number {
-    const m = color.match(/[\d.]+(?=\)$)/);
-    expect(m, `${color} 应是以 alpha 收尾的 rgba()`).not.toBeNull();
-    return parseFloat(m![0]);
-  }
-
   it('改写恰好是三个白（sheen-1 / sheen-2 / lip），值逐字写死', () => {
     // 键集逐字相等而不是「包含」：多出一个键就说明动了本次范围外的层（暗端 / 纸色 / rim）。
     expect(Object.keys(GLASS_NAV_RAIL_LIGHT).sort()).toEqual([

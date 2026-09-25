@@ -22,10 +22,12 @@ import {
   FONT_SANS,
   GLASS,
   GLASS_AERO,
+  GLASS_DARK,
   GLASS_SHADOW_WHISPER,
   MOTION,
   NEUTRAL_DARK,
   NEUTRAL_LIGHT,
+  PAPER,
   RADIUS,
   SEMANTIC,
   SEMANTIC_INVERSE_SURFACE,
@@ -36,7 +38,14 @@ import {
   TYPE_SCALE,
   WHISPER_SHADOW,
 } from './rakko-tokens';
-import { DEFAULT_WALLPAPER_URL, SCRIM_COLOR, WALLPAPER_LAYER_ID, WALLPAPER_VAR } from './lib/glass';
+import {
+  DEFAULT_WALLPAPER_URL,
+  SCRIM_COLOR,
+  WALLPAPER_LAYER_ID,
+  WALLPAPER_SHADE_DARK,
+  WALLPAPER_SHADE_VAR,
+  WALLPAPER_VAR,
+} from './lib/glass';
 
 type Mode = 'light' | 'dark';
 
@@ -80,7 +89,8 @@ function typeStyle(scale: keyof typeof TYPE_SCALE): { fontSize: number; lineHeig
  *  要读「主题真的下发了什么」，而不是在测试里手抄一份颜色。 */
 export function buildThemeOptions(mode: Mode): ThemeOptions {
   const n = mode === 'light' ? NEUTRAL_LIGHT : NEUTRAL_DARK;
-  const [n1, n2, , , n5, n6, n7, , n9, n10] = n;
+  // n1 不再取：页面纸色走 PAPER（见下面的 paper）。位置留空以免后续几档错位。
+  const [, n2, , , n5, n6, n7, , n9, n10] = n;
   const accent = mode === 'light' ? ACCENT.light : ACCENT.dark;
   // accent 的 light/dark 是从 main 派生的两档（契约 ACCENT 只给了一个基础色）：浅色主题
   // 向亮侧、暗侧各 15%；深色主题的 accent 本身已是提亮值（#e095a4），dark 档直接沿用
@@ -98,6 +108,11 @@ export function buildThemeOptions(mode: Mode): ThemeOptions {
       ? { light: lift(s.light), main: lift(s.main), dark: lift(s.dark), contrastText: s.contrastText }
       : { ...s };
   const border = BORDER[mode];
+  // 纸色与玻璃纸底分家：中性色阶（上面的 n1..n10）深浅都是契约镜像，纸色是它之外的一支
+  // （深色的暖意只由纸色承担，见 PAPER 的注释）。
+  const paper = PAPER[mode];
+  // 深色三档纸底比浅色更实（见 GLASS_DARK 的注释）；浅色主题仍取 GLASS 原值。
+  const glassOpacity = mode === 'light' ? GLASS : GLASS_DARK;
   // 描边深一档：边框 token 上再叠一层墨色（见 BORDER_STRONG_ALPHA 的说明）
   const borderStrong = alpha(n9, BORDER_STRONG_ALPHA);
 
@@ -111,7 +126,7 @@ export function buildThemeOptions(mode: Mode): ThemeOptions {
         contrastText: '#fff',
       },
       background: {
-        default: n1,
+        default: paper,
         paper: n2,
       },
       text: {
@@ -222,17 +237,17 @@ export function buildThemeOptions(mode: Mode): ThemeOptions {
           // GLASS_SHADOW_WHISPER），深浅主题各自求值。
           // --shadow-whisper 深色加深是契约要求：深底需要更强的阴影托起浮层。
           ':root': {
-            '--color-paper': n1, // 页面纸色 = palette.background.default
+            '--color-paper': paper, // 页面纸色 = palette.background.default
             '--color-border': BORDER[mode],
             '--color-neutral-1': n[0],
             '--color-neutral-9': n[8],
             '--color-neutral-10': n[9],
             '--glass-blur': GLASS.blur,
             '--glass-saturate': GLASS.saturate,
-            '--glass-surface-opacity': GLASS.surfaceOpacity,
-            '--glass-panel-opacity': GLASS.panelOpacity,
+            '--glass-surface-opacity': glassOpacity.surfaceOpacity,
+            '--glass-panel-opacity': glassOpacity.panelOpacity,
             '--glass-scrim-opacity': GLASS.scrimOpacity,
-            '--glass-haze-opacity': GLASS.hazeOpacity,
+            '--glass-haze-opacity': glassOpacity.hazeOpacity,
             '--glass-haze-bleed': GLASS.hazeBleed,
             // Aero 化新增的十二个材质 token（rakko-glass.css 的厚度边/光泽/文字光晕消费，
             // 变量名 rim→--glass-rim、rimInner→--glass-rim-inner … textGlow→--glass-text-glow）。
@@ -249,6 +264,11 @@ export function buildThemeOptions(mode: Mode): ThemeOptions {
             '--glass-lift': GLASS_AERO[mode].lift,
             '--glass-text-glow': GLASS_AERO[mode].textGlow,
             '--shadow-whisper': GLASS_SHADOW_WHISPER[mode],
+            // 壁纸压暗层：浅色 none，深色是 35% 纯黑（见 lib/glass 的两个常量）。
+            // 下发在 :root，由下面的壁纸承载层当 background 的第一层消费——它不是新节点
+            // 也不是伪元素，只往同一个 background 里加一层像，壁纸那一层仍被
+            // backdrop-filter 读得到。
+            [WALLPAPER_SHADE_VAR]: mode === 'light' ? 'none' : WALLPAPER_SHADE_DARK,
           },
           // 不下发 --glass-highlight：chrome / panel / inverse 三档的光泽全部由
           // --glass-sheen-1..3 与 --glass-rim / --glass-lip 承担，没有任何规则读它
@@ -267,20 +287,24 @@ export function buildThemeOptions(mode: Mode): ThemeOptions {
           // - pointerEvents: none：纯背景层，不能吃掉任何点击；
           // - backgroundColor 垫纸色：这一层必须是一块不透明的地板——壁纸尚未解码、
           //   或壁纸带 alpha 时，透过去就是 canvas。今天 canvas 的基色是 CssBaseline 给
-          //   body 设的 background.default 传播上去的，与这里的 n1 同色，垫上去当前观感
+          //   body 设的 background.default 传播上去的，与这里的纸色同色，垫上去当前观感
           //   等价；它的价值是不依赖 body → canvas 这条传播链，body 背景一旦改透明，
           //   这一层就是唯一的不透明地板。这一层今天恒有图：用户壁纸或默认壁纸，
           //   纸色只是图尚未解码时的底。
           // 壁纸图源由 lib/wallpaper 写到 <html> 的 CSS 变量上，不叠驯化层纸色（驯化层已
           // 移除，壁纸显示用户原图）；变量的兜底值是默认壁纸而不是 none——lib/wallpaper
           // 尚未执行时也不该空成纯纸色。
+          // backgroundImage 的第一层是深色压暗层（浅色时它是 none，等于这一层不存在）：
+          // 亮壁纸带着半透明深纸透上来会把黑纸染脏，压暗 35% 后玻璃与正文才落在深色纸上。
+          // 压暗只改本节点 background 的叠层，不新增 DOM 节点或伪元素——新增会改掉这块
+          // 壁纸被 backdrop-filter 采样时的合成层结构，玻璃会连壁纸一起读丢。
           [`#${WALLPAPER_LAYER_ID}`]: {
             position: 'fixed',
             inset: 0,
             zIndex: -1,
             pointerEvents: 'none',
-            backgroundColor: n1,
-            backgroundImage: `var(${WALLPAPER_VAR}, url("${DEFAULT_WALLPAPER_URL}"))`,
+            backgroundColor: paper,
+            backgroundImage: `var(${WALLPAPER_SHADE_VAR}), var(${WALLPAPER_VAR}, url("${DEFAULT_WALLPAPER_URL}"))`,
             backgroundSize: 'cover',
             backgroundPosition: 'center',
             backgroundRepeat: 'no-repeat',

@@ -33,6 +33,20 @@ export const NEUTRAL_DARK: readonly [string, string, string, string, string, str
   '#f8f8f8', // n10 标题/最高强调
 ];
 
+/** 页面纸色（--color-paper）。契约把「暖意」与「中性色阶」分家：深色不反转暖色阶，
+ *  NEUTRAL_DARK 保持纯灰（R=G=B），深色的暖意只由 --color-paper 承担（tokens.md:7）。
+ *  这里就是那一支：浅色沿用暖纸 n1，深色是 Rakko-Design 深色纸色的镜像——
+ *  `git -C ~/GitHub/Rakko-Design show main:design-system/showcase/src/styles/foundation.css`
+ *  的 [data-theme='dark'] { --color-paper }（消费方主题层深色纸色的契约取值）。
+ *  它与浅色纸同色相：浅色纸 #f9f8f5 是 HSL(45°, 25%, 97%)，深色纸 #1a1814 是
+ *  HSL(40°, 13%, 9%)——同一支暖黄灰，色相只差 5°，饱和度不到浅色纸的一半，三通道
+ *  R>G>B 且 R-B ≈ 6/255，在近黑底上读作暖意而不是橄榄绿。裸灰（R=G=B）的深色 n1 与它
+ *  差着整整一支色相，所以纸色不能拿中性色阶顶替。 */
+export const PAPER = {
+  light: '#f9f8f5',
+  dark: '#1a1814',
+} as const;
+
 /** accent（梅 ume）：浅色基础色 #c56473，深色提亮的 桃 近似 #e095a4 */
 export const ACCENT = {
   light: '#c56473',
@@ -207,6 +221,20 @@ export const GLASS = {
   hazeBleed: '28px',
 } as const;
 
+/** 深色主题的纸底不透明度三档（chrome / panel / haze），**本项目扩展，不是上游 token**。
+ *  深色必须比浅色更实：同一档纸色在深色下透出来的是亮壁纸，透光度越高，纸上正文的对比度
+ *  掉得越快——58% 的 `--color-paper`（#1a1814）叠在她那张亮黄葡萄园壁纸上，正文与分组标题
+ *  都在 AA 线附近挣扎；72% 把壁纸的贡献压到不足三成。
+ *  契约不给深色单独的一档（glass.md 的 paper alpha 是一套值两主题通用），上游也没有可镜像
+ *  的深色档，故按「地板只许上调」的约束在浅色档之上重新定：surface 58% / panel 72% /
+ *  haze 66%。三档都严格高于浅色对应档，且 retain 各自档位的相对关系
+ *  （chrome 最透 < haze < panel 最实）。浅色主题一个值都不动。 */
+export const GLASS_DARK = {
+  surfaceOpacity: '58%',
+  panelOpacity: '72%',
+  hazeOpacity: '66%',
+} as const;
+
 /** Aero 玻璃的十一个新增 token（镜像上游 tokens.css 的 --glass-rim … --glass-text-glow）。
  * 键名 camelCase，与 CSS 变量一一对应：rim→--glass-rim、rimInner→--glass-rim-inner、
  * lip→--glass-lip、lipUnder→--glass-lip-under、side→--glass-side、bloom→--glass-bloom、
@@ -233,17 +261,27 @@ export const GLASS_AERO = {
     textGlow: '0 0 2px rgba(255, 255, 255, 0.5), 0 0 6px rgba(255, 255, 255, 0.5)',
   },
   dark: {
-    rim: 'rgba(255, 255, 255, 0.2)',
-    rimInner: 'rgba(0, 0, 0, 0.22)',
-    lip: 'rgba(255, 255, 255, 0.24)',
-    lipUnder: 'rgba(255, 255, 255, 0.08)',
-    side: 'rgba(255, 255, 255, 0.09)',
-    bloom: 'rgba(255, 255, 255, 0.05)',
-    sheen1: 'rgba(255, 255, 255, 0.13)',
-    sheen2: 'rgba(255, 255, 255, 0.05)',
+    // 深色只削白、不加白。浅色好看的前提是白纸 + 白光泽同向；把同样多的白光晕搬到半透明
+    // 黑纸上，行卡会变成一层发灰的雾膜——既不深也不干净。所以深色的白层全部收到「能认出
+    // 这里有一道边」的量级：rim 10% / lip 10% / lip-under 4% / side 4% / sheen-1 6% /
+    // sheen-2 2%；bloom 直接归零（内发光在白纸上加气，在黑纸上是唯一的纯雾源，
+    // 写成 transparent 而不是删键，配方里那层 box-shadow 的层序不动）。
+    // 暗向保留并加深：rim-inner 20% → 26%，那是深色厚度边的另一半，削掉就只剩一圈白边。
+    rim: 'rgba(255, 255, 255, 0.1)',
+    rimInner: 'rgba(0, 0, 0, 0.26)',
+    lip: 'rgba(255, 255, 255, 0.1)',
+    lipUnder: 'rgba(255, 255, 255, 0.04)',
+    side: 'rgba(255, 255, 255, 0.04)',
+    bloom: 'rgba(0, 0, 0, 0)',
+    sheen1: 'rgba(255, 255, 255, 0.06)',
+    sheen2: 'rgba(255, 255, 255, 0.02)',
+    // sheen-3 的语义是「底部的暗」，深色下必须继续指向暗：白纸底 + 白光泽时它是浅色
+    // 立体感的来源，深色下它让玻璃底边不糊进壁纸。
     sheen3: 'rgba(0, 0, 0, 0.05)',
     lift: '0 1px 2px rgba(0, 0, 0, 0.3), 0 6px 18px rgba(0, 0, 0, 0.34)',
-    textGlow: '0 0 2px rgba(0, 0, 0, 0.5), 0 0 6px rgba(0, 0, 0, 0.5)',
+    // 文字光晕必须反相（深色用黑），否则亮色正文与光晕同色会被淹没；强度取浅色的一半，
+    // 深底上本来就有的对比度足够，再压满会让字边发糊。
+    textGlow: '0 0 2px rgba(0, 0, 0, 0.25), 0 0 6px rgba(0, 0, 0, 0.25)',
   },
 } as const;
 
