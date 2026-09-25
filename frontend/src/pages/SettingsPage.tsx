@@ -150,6 +150,9 @@ function ModeSegmentedControl({
       // 的纸色 + whisper 阴影表达，因此这里也不做 overflow: hidden（聚焦圈会被裁）。
       sx={(theme) => ({
         display: 'flex',
+        // 占满所在行：行的 value 槽是 flex 容器，这里把宽度吃满，三段才有等分的空间
+        width: '100%',
+        minWidth: 0,
         boxSizing: 'border-box',
         height: '36px',
         padding: '2px',
@@ -172,8 +175,8 @@ function ModeSegmentedControl({
             onClick={() => onChange(option.value)}
             onKeyDown={(event) => handleKeyDown(event, index)}
             sx={(theme) => ({
-              flexGrow: 1,
-              flexBasis: 0,
+              // 三段等宽：flex: 1 1 0（grow/shrink 相同、basis 0，宽度只由可用空间决定）
+              flex: '1 1 0',
               minWidth: 0,
               display: 'flex',
               alignItems: 'center',
@@ -191,7 +194,11 @@ function ModeSegmentedControl({
               transition: `background-color ${MOTION.state}ms ${MOTION.easeStandard}, box-shadow ${MOTION.state}ms ${MOTION.easeStandard}`,
             })}
           >
-            <Typography variant="body2" sx={{ fontWeight: selected ? 600 : 500 }}>
+            <Typography
+              variant="body2"
+              // 段内文字不换行：折成两行会让三段文字基线错开
+              sx={{ whiteSpace: 'nowrap', fontWeight: selected ? 600 : 500 }}
+            >
               {option.label}
             </Typography>
           </ButtonBase>
@@ -397,9 +404,11 @@ export default function SettingsPage() {
         <Typography variant="overline" component="h2" sx={SECTION_TITLE_SX}>
           外观
         </Typography>
-        {/* 控件坐在一条设置行里：外层行仍保证 ≥48px 的行高与统一内边距，
-            组自身是 36px 高的分段控件（Apple 的分段控件不是通栏满高的控件） */}
+        {/* 控件坐在一条设置行里：外层行仍保证 ≥48px 的行高、统一内边距与同一套分隔线，
+            但这一行是纵排——标签在上、分段控件在下并占满行宽。挤在同一行右侧时，
+            三段只有 180px，最长的一段会被折成两行、三段文字基线不齐。 */}
         <SettingsRow
+          direction="column"
           label={<Typography variant="body2">主题</Typography>}
           value={<ModeSegmentedControl value={mode} options={MODE_OPTIONS} onChange={setMode} />}
         />

@@ -432,6 +432,50 @@ describe('SettingsPage 玻璃分区与按钮配色', () => {
     expect(selectedRule).toContain(`border-radius:${RADIUS.card - 2}px`);
   });
 
+  it('外观分段控件在行内占满宽度：三段等宽、段内文字不换行（375 与 1280 下都单行）', async () => {
+    vi.stubGlobal('fetch', makeFetchMock());
+    render(
+      <AppThemeProvider>
+        <MemoryRouter>
+          <SettingsPage />
+        </MemoryRouter>
+      </AppThemeProvider>,
+    );
+
+    const group = screen.getByRole('radiogroup', { name: '外观' });
+    const row = group.closest('[data-setting-row]') as HTMLElement;
+    const css = allStyleText();
+
+    // 这一行是纵排：标签在上、控件在下并占满行宽——挤在同一行右侧时三段只剩 180px，
+    // 最长的一段会被折行。行的内边距与分隔线规则不变（仍是同一套 SettingsRow）。
+    const rowRule = ownRules(css, row);
+    expect(rowRule).toContain('flex-direction:column');
+    expect(rowRule).toMatch(/padding-left:8px/);
+    expect(rowRule).toContain('min-height:48px');
+    expect(rowRule).toContain('::before');
+
+    // 控件占满行宽，且自己的盒模型是 border-box（36px 高含 2px 内边距）
+    const groupRule = ownRules(css, group);
+    expect(groupRule).toContain('width:100%');
+    expect(groupRule).toContain('box-sizing:border-box');
+    // 占满的宽度来自「值槽是一个 flex 容器」：控件不是靠自身百分比宽度去挤父级
+    expect(getComputedStyle(group.parentElement as HTMLElement).display).toBe('flex');
+    expect(ownRules(css, group.parentElement as HTMLElement)).toContain('width:100%');
+
+    // 三段等宽：flex: 1 1 0（grow/shrink 相同 + basis 0），且每段都一样
+    const segments = screen.getAllByRole('radio');
+    expect(segments).toHaveLength(3);
+    for (const segment of segments) {
+      expect(ownRules(css, segment)).toContain('flex:1 1 0');
+    }
+    // 段内文字不换行：折成两行会让三段文字基线错开
+    for (const label of ['跟随系统', '浅色', '深色']) {
+      const text = screen.getByText(label);
+      expect(text.className).toMatch(/MuiTypography-body2/);
+      expect(getComputedStyle(text).whiteSpace).toBe('nowrap');
+    }
+  });
+
   it('外观三态：方向键切换选中并把焦点移到新选中项，Home / End 到首尾', async () => {
     vi.stubGlobal('fetch', makeFetchMock());
     render(
