@@ -1,7 +1,7 @@
 // 账户详情（桌面 Dialog / 移动端路由页共用）：
 // 顶部账户标识（含状态 Chip）+ 同步状态（上次同步时间；出错时把 last_error 全文摊开——
 // 列表行只能单行截断，详情页是用户点进来查原因的地方，不能再截）；可改名称；
-// Gmail 折叠区换应用专用密码；微软「重新授权」
+// Gmail / QQ 邮箱折叠区换应用专用密码 / 授权码；微软「重新授权」
 // 展开微软授权引导；停用账户只留「启用」（启用后无凭据时提示先补凭据），凭据操作在停用
 // 状态下隐藏（改了没有意义，也避免与「启用」并列造成先后困惑）；底部危险区进入移除二选一。
 // 表单提交中按钮 disabled + 进度；错误一律 Alert，成功反馈用瞬时 Snackbar（与全站一致）。
@@ -23,9 +23,16 @@ import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import { patchAccount } from '../../lib/api';
 import { timeAgo } from '../../lib/time';
-import { apiErrorFields, statusChipMeta } from './meta';
+import {
+  apiErrorFields,
+  credentialsGuide,
+  kindAvatar,
+  passwordLabel,
+  statusChipMeta,
+  usesPassword,
+} from './meta';
 import MicrosoftAuthGuide from './MicrosoftAuthGuide';
-import type { AccountInfo } from '../../types';
+import type { AccountInfo, AccountKind } from '../../types';
 
 interface Props {
   account: AccountInfo;
@@ -35,10 +42,12 @@ interface Props {
   onRemove: () => void;
 }
 
-/** patch 失败的中文提示；密码类错误区分「必填」 */
-function patchErrorMessage(err: unknown, password: boolean): string {
+/** patch 失败的中文提示；密码类错误区分「必填」（叫法随账户类型：应用专用密码 / 授权码） */
+function patchErrorMessage(err: unknown, kind: AccountKind | null): string {
   const { code } = apiErrorFields(err);
-  if (password && code === 'password_required') return '请填写应用专用密码';
+  if (kind !== null && usesPassword(kind) && code === 'password_required') {
+    return `请填写${passwordLabel(kind)}`;
+  }
   if (code === 'invalid_kind') return '该操作对这个类型的账户不可用';
   return '保存失败，请稍后再试';
 }
@@ -56,6 +65,10 @@ export default function AccountDetail({ account, onChanged, onRemove }: Props) {
   const [snack, setSnack] = useState<string | null>(null);
 
   const microsoft = account.kind === 'microsoft';
+  /** 凭据是用户自己生成的密码（Gmail 应用专用密码 / QQ 授权码）：决定折叠区出现与否与怎么叫 */
+  const passwordKind = usesPassword(account.kind);
+  /** 该凭据怎么拿（文案 + 跳转按钮，与向导第 2 步同一份）；微软没有这一项 */
+  const guide = credentialsGuide(account.kind);
   const chip = statusChipMeta(account);
   // 停用态：凭据操作全部隐藏，只留名称 / 启用 / 危险区（见文件头注释）
   const showCredentials = account.enabled;
@@ -77,7 +90,7 @@ export default function AccountDetail({ account, onChanged, onRemove }: Props) {
         setName(resp.name);
         applyPatch(resp, '已保存');
       })
-      .catch((err: unknown) => setError(patchErrorMessage(err, false)))
+      .catch((err: unknown) => setError(patchErrorMessage(err, null)))
       .finally(() => setSavingName(false));
   };
 
@@ -92,7 +105,7 @@ export default function AccountDetail({ account, onChanged, onRemove }: Props) {
         setPasswordOpen(false);
         applyPatch(resp, '已保存');
       })
-      .catch((err: unknown) => setError(patchErrorMessage(err, true)))
+      .catch((err: unknown) => setError(patchErrorMessage(err, account.kind)))
       .finally(() => setSavingPassword(false));
   };
 
@@ -102,7 +115,7 @@ export default function AccountDetail({ account, onChanged, onRemove }: Props) {
     setError(null);
     patchAccount(account.id, { enabled: true })
       .then((resp) => {
-        // 停用会清空凭据：启用后没凭据要提示先补（Gmail 应用专用密码 / 微软重新授权）
+        // 停用会清空凭据：启用后没凭据要提示先补（Gmail / QQ 邮箱填密码类凭据，微软重新授权）
         applyPatch(
           resp,
           '已启用',
@@ -110,7 +123,7 @@ export default function AccountDetail({ account, onChanged, onRemove }: Props) {
             ? undefined
             : microsoft
               ? '账户已启用，但还没有登录凭据：请用「重新授权」完成授权后才会开始同步。'
-              : '账户已启用，但还没有登录凭据：请在下方「更换应用专用密码」里填好密码。',
+              : `账户已启用，但还没有登录凭据：请在下方「更换${passwordLabel(resp.kind)}」里填好${passwordLabel(resp.kind)}。`,
         );
       })
       .catch(() => setError('启用失败，请稍后再试'))
@@ -132,7 +145,7 @@ export default function AccountDetail({ account, onChanged, onRemove }: Props) {
 
       {/* 顶部账户标识 */}
       <Stack direction="row" spacing={1.5} alignItems="center" sx={{ mb: 2 }}>
-        <Avatar>{account.kind === 'gmail' ? 'G' : 'O'}</Avatar>
+        <Avatar>{kindAvatar(account.kind)}</Avatar>
         <Box sx={{ flexGrow: 1, minWidth: 0 }}>
           <Stack direction="row" spacing={1} alignItems="center">
             <Typography variant="subtitle1" noWrap>
@@ -184,21 +197,21 @@ export default function AccountDetail({ account, onChanged, onRemove }: Props) {
         </Button>
       </Stack>
 
-      {showCredentials && account.kind === 'gmail' && (
+      {showCredentials && passwordKind && (
         <>
-          {/* Gmail：更换应用专用密码（折叠） */}
+          {/* Gmail / QQ 邮箱：更换应用专用密码 / 授权码（折叠），文案随类型走 */}
           <Button
             size="small"
             onClick={() => setPasswordOpen((v) => !v)}
             aria-expanded={passwordOpen}
             sx={{ mt: 1.5, alignSelf: 'flex-start' }}
           >
-            更换应用专用密码
+            更换{passwordLabel(account.kind)}
           </Button>
           <Collapse in={passwordOpen}>
             <Stack spacing={1} sx={{ mt: 1 }}>
               <TextField
-                label="新的应用专用密码"
+                label={`新的${passwordLabel(account.kind)}`}
                 type="password"
                 size="small"
                 fullWidth
@@ -206,13 +219,30 @@ export default function AccountDetail({ account, onChanged, onRemove }: Props) {
                 onChange={(e) => setAppPassword(e.target.value)}
                 error={appPassword !== '' && appPassword.trim() === ''}
                 helperText={
-                  appPassword !== '' && appPassword.trim() === '' ? '请填写应用专用密码' : undefined
+                  appPassword !== '' && appPassword.trim() === ''
+                    ? `请填写${passwordLabel(account.kind)}`
+                    : undefined
                 }
                 inputProps={{ autoComplete: 'off' }}
               />
-              <Typography variant="body2" color="text.secondary">
-                Google 账号 → 安全性 → 开启两步验证 → 应用专用密码 → 生成 16 位密码。
-              </Typography>
+              {guide && (
+                <>
+                  <Typography variant="body2" color="text.secondary">
+                    {guide.text}
+                  </Typography>
+                  <Button
+                    variant="text"
+                    size="small"
+                    component="a"
+                    href={guide.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    sx={{ alignSelf: 'flex-start' }}
+                  >
+                    {guide.linkText}
+                  </Button>
+                </>
+              )}
               <Button
                 variant="outlined"
                 onClick={handleSavePassword}

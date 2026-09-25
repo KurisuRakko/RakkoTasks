@@ -307,7 +307,7 @@ export async function createAccount(body: AccountCreate): Promise<AccountInfo> {
   return (await res.json()) as AccountInfo;
 }
 
-/** PATCH /api/accounts/{id}：改名称 / Gmail 应用专用密码 / 启停 */
+/** PATCH /api/accounts/{id}：改名称 / Gmail 应用专用密码与 QQ 邮箱授权码 / 启停 */
 export async function patchAccount(id: number, body: AccountPatch): Promise<AccountInfo> {
   const res = await authedFetch(`${API_BASE}/accounts/${id}`, {
     method: 'PATCH',

@@ -229,6 +229,87 @@ describe('AccountWizard 微软路径', () => {
   });
 });
 
+describe('AccountWizard QQ 邮箱路径', () => {
+  const QQ_ACCOUNT = makeAccount({
+    id: 3,
+    name: 'QQ 邮箱',
+    kind: 'qq',
+    email: 'you@qq.com',
+    has_credentials: true,
+  });
+
+  /** 选 QQ 邮箱 → 下一步 → 填名称邮箱（密码框由用例自己处理） */
+  function fillQqForm() {
+    fireEvent.click(screen.getByRole('button', { name: 'QQ 邮箱' }));
+    fireEvent.click(screen.getByRole('button', { name: '下一步' }));
+    const name = screen.getByLabelText('名称') as HTMLInputElement;
+    expect(name.value).toBe('QQ 邮箱'); // 类型选好后名称默认填好
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'you@qq.com' } });
+  }
+
+  it('选 QQ 邮箱→填授权码→createAccount 收到 kind=qq 且带 app_password，成功后进完成页', async () => {
+    api.createAccountMock.mockResolvedValue(QQ_ACCOUNT);
+    const onDone = vi.fn();
+    renderWizard(onDone);
+
+    fillQqForm();
+    // 密码框在 QQ 邮箱下叫「授权码」，不是「应用专用密码」
+    expect(screen.queryByLabelText('应用专用密码')).toBeNull();
+    fireEvent.change(screen.getByLabelText('授权码'), {
+      target: { value: 'abcdefghijklmnop' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '下一步' }));
+
+    await waitFor(() => expect(api.createAccountMock).toHaveBeenCalledTimes(1));
+    expect(api.createAccountMock).toHaveBeenCalledWith({
+      name: 'QQ 邮箱',
+      kind: 'qq',
+      email: 'you@qq.com',
+      app_password: 'abcdefghijklmnop',
+    });
+
+    // 建好即有凭据：直接进完成页，不经过微软那样的授权步
+    expect(await screen.findByText(/已接入 QQ 邮箱。/)).toBeTruthy();
+    expect(screen.getByText(/开始拉取近期邮件/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '下一步' })).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: '完成' }));
+    expect(onDone).toHaveBeenCalledWith(QQ_ACCOUNT);
+  });
+
+  it('QQ 邮箱未填授权码：「下一步」disabled，碰过之后有红字，写上才放行', async () => {
+    renderWizard();
+
+    fillQqForm();
+    const next = screen.getByRole('button', { name: '下一步' }) as HTMLButtonElement;
+    expect(next.disabled).toBe(true);
+    // 红字只在字段被碰过之后才出现（与 Gmail 同一条规则）
+    fireEvent.blur(screen.getByLabelText('授权码'));
+    expect(screen.getByText('请填写授权码')).toBeTruthy();
+
+    // 只有空格也算空
+    fireEvent.change(screen.getByLabelText('授权码'), { target: { value: '   ' } });
+    expect((screen.getByRole('button', { name: '下一步' }) as HTMLButtonElement).disabled).toBe(true);
+
+    fireEvent.change(screen.getByLabelText('授权码'), {
+      target: { value: 'abcdefghijklmnop' },
+    });
+    expect((screen.getByRole('button', { name: '下一步' }) as HTMLButtonElement).disabled).toBe(false);
+    expect(api.createAccountMock).not.toHaveBeenCalled();
+  });
+
+  it('第 2 步给出 QQ 邮箱的授权码获取指引，并强调不是 QQ 密码', () => {
+    renderWizard();
+
+    fillQqForm();
+
+    expect(screen.getByText(/设置 → 账号与安全 → 安全设置/)).toBeTruthy();
+    expect(screen.getByText(/IMAP\/SMTP 服务/)).toBeTruthy();
+    // 用户最容易踩的坑：把 QQ 密码填进来
+    expect(screen.getByText(/不是 QQ 密码/)).toBeTruthy();
+  });
+});
+
 describe('AccountWizard 基本信息步的表单体验', () => {
   it('刚进第 2 步不显示任何红字：邮箱/密码为空是必然的，无条件报错等于一进门就满屏红', () => {
     renderWizard();
