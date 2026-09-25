@@ -1,5 +1,9 @@
-"""ImapClient 的发件箱与归档专用拉取：LIST 解析、只读 SELECT、BODY.PEEK[]。"""
-from app.imap.client import ImapClient, parse_list_line
+"""ImapClient 的发件箱与归档专用拉取：LIST 解析、只读 SELECT、BODY.PEEK[]、账户连接。"""
+import pytest
+
+from app.config import Settings
+from app.imap.client import ImapClient, connect_account, parse_list_line
+from app.models import Account
 
 # 生产四个账户的真实 LIST 响应形态
 MODIFIED_UTF7 = b'(\\HasNoChildren \\Sent) "/" &XfJT0ZABkK5O9g-'
@@ -179,3 +183,92 @@ def test_client_only_issues_readonly_commands_end_to_end() -> None:
         ("uid", "FETCH", "11", "(BODY.PEEK[])"),
         ("uid", "FETCH", "11", "(BODY.PEEK[])"),
     ]
+
+
+# ── connect_account：密码登录类 kind（gmail / qq）→ IMAP 主机 ──────────
+
+
+class RecorderIMAP4_SSL:
+    """记录 host/port/ssl_context/login 参数的 imaplib.IMAP4_SSL 替身。"""
+
+    instances: list["RecorderIMAP4_SSL"] = []
+
+    def __init__(self, host, port, ssl_context=None):
+        self.host = host
+        self.port = port
+        self.ssl_context = ssl_context
+        self.login_args = None
+        RecorderIMAP4_SSL.instances.append(self)
+
+    def login(self, email, password):
+        self.login_args = (email, password)
+
+    def authenticate(self, mechanism, authobject):
+        raise AssertionError("密码登录类账户不该走 XOAUTH2")
+
+    def logout(self):
+        pass
+
+
+def _password_account(kind: str, **overrides) -> Account:
+    fields = {
+        "user_sub": "u1",
+        "name": "邮箱",
+        "kind": kind,
+        "email": f"u@{kind}.example.com",
+        "app_password": "abcd efgh ijkl mnop",
+    }
+    fields.update(overrides)
+    return Account(**fields)
+
+
+def test_connect_account_qq_uses_imap_qq_host_and_password_login(monkeypatch) -> None:
+    """kind=qq 连 imap.qq.com:993，用 app_password 里的 16 位授权码走 IMAP LOGIN。"""
+    RecorderIMAP4_SSL.instances.clear()
+    monkeypatch.setattr("app.imap.client.imaplib.IMAP4_SSL", RecorderIMAP4_SSL)
+    account = _password_account("qq", email="u@qq.com", app_password="abcd efgh ijkl mnop")
+
+    client, token = connect_account(account, Settings(database_path=":memory:"))
+
+    assert token is None  # 密码登录类不发 access token
+    assert client is not None
+    assert len(RecorderIMAP4_SSL.instances) == 1
+    rec = RecorderIMAP4_SSL.instances[0]
+    assert (rec.host, rec.port) == ("imap.qq.com", 993)
+    assert rec.login_args == ("u@qq.com", "abcd efgh ijkl mnop")
+    assert rec.ssl_context is not None
+
+
+def test_connect_account_gmail_still_uses_imap_gmail_host(monkeypatch) -> None:
+    """回归守卫：gmail 分支改成按映射取主机后，主机与登录参数都不变。"""
+    RecorderIMAP4_SSL.instances.clear()
+    monkeypatch.setattr("app.imap.client.imaplib.IMAP4_SSL", RecorderIMAP4_SSL)
+    account = _password_account("gmail", email="u@gmail.com", app_password="secret")
+
+    client, token = connect_account(account, Settings(database_path=":memory:"))
+
+    assert token is None
+    assert client is not None
+    rec = RecorderIMAP4_SSL.instances[0]
+    assert (rec.host, rec.port) == ("imap.gmail.com", 993)
+    assert rec.login_args == ("u@gmail.com", "secret")
+
+
+def test_connect_account_password_kind_without_credentials_raises(monkeypatch) -> None:
+    """没录授权码的 qq 账户：报通用文案、不建连接（文案不再写死 Gmail）。"""
+    RecorderIMAP4_SSL.instances.clear()
+    monkeypatch.setattr("app.imap.client.imaplib.IMAP4_SSL", RecorderIMAP4_SSL)
+
+    with pytest.raises(RuntimeError) as ei:
+        connect_account(_password_account("qq", app_password=None), Settings(database_path=":memory:"))
+
+    assert "未设置密码/授权码" in str(ei.value)
+    assert RecorderIMAP4_SSL.instances == []
+
+
+def test_connect_account_unknown_kind_raises() -> None:
+    """未知 kind 既不是密码登录类也不是 microsoft：直接抛错。"""
+    with pytest.raises(RuntimeError) as ei:
+        connect_account(_password_account("exchange"), Settings(database_path=":memory:"))
+
+    assert "未知账户类型: exchange" in str(ei.value)
