@@ -3,7 +3,7 @@
 import Box from '@mui/material/Box';
 import Chip from '@mui/material/Chip';
 import Stack from '@mui/material/Stack';
-import { GLASS } from '../rakko-tokens';
+import { GLASS, TYPE_SCALE } from '../rakko-tokens';
 import { CATEGORIES } from '../types';
 import type { Category } from '../types';
 
@@ -11,6 +11,12 @@ interface Props {
   value: Category | null;
   onChange: (value: Category | null) => void;
 }
+
+/** 筛选 chip 的度量：字号锁在契约字阶的 label-12（12px）。行内标签档是 11px 时代
+ *  留下的尾巴，12 是字阶上最小的一档，也是全站 chip 的统一字号。
+ *  高度、圆角不在这里覆盖：高度 = 字号 + 上下内边距（MUI 按 fontSize 算），
+ *  圆角由主题层的 MuiChip.root 统一给 RADIUS.chip，两处都不允许各自写死一份。 */
+const FILTER_CHIP_SX = { fontSize: `${TYPE_SCALE['label-12'].size}px` } as const;
 
 export default function CategoryChips({ value, onChange }: Props) {
   return (
@@ -48,6 +54,7 @@ export default function CategoryChips({ value, onChange }: Props) {
         size="small"
         variant={value === null ? 'filled' : 'outlined'}
         color="primary"
+        sx={FILTER_CHIP_SX}
         onClick={() => onChange(null)}
       />
       {CATEGORIES.map((c) => (
@@ -57,6 +64,7 @@ export default function CategoryChips({ value, onChange }: Props) {
           size="small"
           variant={value === c ? 'filled' : 'outlined'}
           color="primary"
+          sx={FILTER_CHIP_SX}
           onClick={() => onChange(c)}
         />
       ))}

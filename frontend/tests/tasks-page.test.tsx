@@ -17,11 +17,17 @@ import chipsSource from '../src/components/CategoryChips.tsx?raw';
 import tasksSource from '../src/pages/TasksPage.tsx?raw';
 import { resetLists } from '../src/lib/list-cache';
 import { LEAVE_DURATION } from '../src/lib/motion';
-import { cardRowSx } from '../src/lib/surface';
+import { ROW_CHIP_HEIGHT_PX, cardRowSx } from '../src/lib/surface';
 import { MOTION, NEUTRAL_LIGHT, RADIUS } from '../src/rakko-tokens';
 import { DUE_SOON_DAYS } from '../src/lib/grouping';
 import type { AccountInfo, Item } from '../src/types';
-import { allStyleText, ownEmotionClass, renderWithAppTheme, ruleTextOf } from './glass-text-contrast.test-utils';
+import {
+  allStyleText,
+  ownEmotionClass,
+  ownRules,
+  renderWithAppTheme,
+  ruleTextOf,
+} from './glass-text-contrast.test-utils';
 
 // vi.mock 工厂提升到 import 之前执行，只能引用字面量，文案在此内联
 vi.mock('../src/components/AiAddDialog', () => ({
@@ -667,7 +673,7 @@ describe('列表行布局（chip 恒横排在标题首行右侧，且不挤压�
     expect(cbRootRule, '勾选框自身不许带 marginTop 魔数').not.toContain('margin-top');
   });
 
-  it('标签比 MUI 的 small 再小一档：横排时高度不超过标题首行', async () => {
+  it('行内标签走契约字阶：label-12（12px）+ 22px 盒高，压得住标题首行', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => json({ items: ITEMS })));
     render(
       <MemoryRouter useTransitions={false}>
@@ -681,9 +687,74 @@ describe('列表行布局（chip 恒横排在标题首行右侧，且不挤压�
       .getAllByText('重要')[0]
       .closest('.MuiChip-root') as HTMLElement;
     const rule = ownRules(allStyleText(), chipRoot);
-    // MUI size="small" 本身是 24px / 13px，这里再压一档
-    expect(rule, '高度压到 20px').toContain('height:20px');
-    expect(rule, '字号取 caption 档').toContain('font-size:0.6875rem');
+    expect(rule, '没读到 chip 自身的 css-* 规则，断言会空转').not.toBe('');
+    // MUI size="small" 本身是 24px / 13px；行内标签取契约字阶最小的一档 label-12，
+    // 盒高与标题首行（TITLE_LINE_H = 22）同值，三列元素才压在同一条中线上
+    expect(rule, '盒高与标题首行同高（22px）').toContain(`height:${ROW_CHIP_HEIGHT_PX}px`);
+    expect(rule, '字号取契约 label-12（12px）').toContain('font-size:12px');
+    expect(rule, '11px 不在契约字阶上，不许回退').not.toContain('font-size:0.6875rem');
+  });
+
+  it('行体三档状态层按 motion 契约：hover / pressed / focus-visible + primary 描边环', async () => {
+    // jsdom 求不出 :hover/:active 的实际值，但 emotion 把选择器与声明原样插进 <style>，
+    // 可以逐字断言（同本文件其余样式断言的做法）。状态层住在嵌套规则块里
+    // （`.<行体类名>:hover{…}`），ownRules 只到第一个嵌套块结束，所以这里改按
+    // 「以本元素自己的类名开头 + 伪类」直接定位到那一条规则——只认本元素的类，
+    // 别的元素恰好也写了 outline 之类的假通过可以排除。
+    // 用应用真实主题渲染（renderWithAppTheme）：描边色取的是 theme.palette.primary.main，
+    // 默认主题下那是 MUI 的蓝（#1976d2），只有真主题才验得到 Rakko 的梅色
+    vi.stubGlobal('fetch', vi.fn(async () => json({ items: ITEMS })));
+    renderWithAppTheme(
+      <MemoryRouter useTransitions={false}>
+        <TasksPage />
+      </MemoryRouter>,
+    );
+    await screen.findByText('重要任务');
+
+    const rowBtn = screen.getByText('重要任务').closest(
+      '.MuiListItemButton-root',
+    ) as HTMLElement;
+    const classes = Array.from(rowBtn.classList).filter((c) => c.startsWith('css-'));
+    expect(classes, '行体没挂 emotion 局部类，下面的断言会空转').not.toHaveLength(0);
+    const css = allStyleText();
+
+    // 三档状态层：MUI 的 ListItemButton 只有 hover 与 focus，pressed（12%）要自己补。
+    // 逐个状态都要求「行体自己的类名带出该伪类」，别的元素顺带写的选择器不算数。
+    for (const [label, suffix] of [
+      ['hover 状态层', ':hover'],
+      ['pressed 状态层（MUI 没有这一档）', ':active'],
+      ['focus-visible 状态层', '.Mui-focusVisible'],
+    ] as const) {
+      const own = classes.map((cls) => `.${cls}${suffix}`);
+      expect(
+        own.some((sel) => css.includes(sel)),
+        `${label}：需要行体自己的类名带出 ${suffix}`,
+      ).toBe(true);
+    }
+
+    // 某个伪类下的全部声明：emotion 会把同一条规则拆进多个 style 标签（MUI 根样式与
+    // sx 各插一份），所以要按「以本元素的类名 + 伪类开头」把所有片段收起来再断言，
+    // 不能只取第一次出现的那段——第一段可能只有底色、没有描边。
+    const declsFor = (suffix: string): string =>
+      css
+        .split('}\n')
+        .filter((chunk) =>
+          classes.some((cls) => chunk.includes(`.${cls}${suffix}`)),
+        )
+        .join(' ');
+    const hoverDecls = declsFor(':hover');
+    expect(hoverDecls, 'hover 状态层没读到').not.toBe('');
+    expect(hoverDecls, 'hover 状态层必须有底色').toContain('background-color');
+    // 键盘焦点用 primary 描边环，不能只靠 MUI 的涟漪（涟漪只在按下时出现）
+    const focusDecls = declsFor('.Mui-focusVisible');
+    expect(focusDecls, 'focus-visible 规则没读到').not.toBe('');
+    expect(focusDecls, 'focus-visible 用 primary 描边环').toContain('outline:2px solid');
+    expect(focusDecls, '描边的偏移量').toContain('outline-offset:2px');
+    expect(focusDecls, '描边色取主题的 primary.main').toContain('#c56473');
+    // 状态层时长必须来自 motion 契约的 state 档（160ms），不是 MUI 默认的 150ms
+    expect(css, '状态层过渡时长取 motion 契约的 state 档').toContain(
+      'transition:background-color 160ms cubic-bezier(0.4, 0, 0.2, 1)',
+    );
   });
 });
 
@@ -795,6 +866,27 @@ describe('TasksPage haze 底衬（分组标题与 chips 行）', () => {
     expect(stackStart).toBeGreaterThan(-1);
     const stackTag = chipsSource.slice(stackStart, chipsSource.indexOf('>', stackStart));
     expect(stackTag).toContain('overflowX');
+  });
+
+  it('分类筛选 chip 的字号锁在契约字阶 label-12（12px），不再是 11px', async () => {
+    const fetchMock = vi.fn(async () => json({ items: ITEMS }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(
+      <MemoryRouter useTransitions={false}>
+        <TasksPage />
+      </MemoryRouter>,
+    );
+    await screen.findByText('重要任务');
+
+    const chip = screen.getByText('全部').closest('.MuiChip-root') as HTMLElement;
+    expect(chip).not.toBeNull();
+    const rule = ownRules(allStyleText(), chip);
+    expect(rule, '没读到 chip 自身的 css-* 规则，断言会空转').not.toBe('');
+    // 11px（0.6875rem）不在 Rakko 的字阶上；12px 是 label-12，也是全站 chip 的统一字号。
+    // 高度与圆角不在这里断言：它们分别由字号推出的行高与主题层的 MuiChip.root 决定。
+    expect(rule, '筛选 chip 字号取 label-12（12px）').toContain('font-size:12px');
+    expect(rule, '11px 不在契约字阶上，不许回退').not.toContain('font-size:0.6875rem');
   });
 
   it('全页 data-glass="haze" 数量 = 分组数 + 1（chips 行），不多不少', async () => {
@@ -1037,7 +1129,7 @@ describe('TasksPage 空态账户引导', () => {
   });
 });
 
-describe('截止日标记的三档（逾期 / 临期 / 更远）', () => {
+describe('截止日标记的三档（逾期 / 今天 / 更远）', () => {
   /** today + n 天的 YYYY-MM-DD（与列表页读的是同一个「今天」） */
   function inDays(n: number): string {
     const t = new Date();
@@ -1046,10 +1138,13 @@ describe('截止日标记的三档（逾期 / 临期 / 更远）', () => {
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   }
 
-  /** 渲染三条任务：昨天到期 / 一周后到期 / 远期到期，返回各自的截止日 Chip 根元素 */
-  async function renderThree(): Promise<Record<'overdue' | 'soon' | 'far', HTMLElement>> {
+  /** 渲染四条任务：昨天 / 今天 / 一周后 / 远期到期，返回各自的截止日 Chip 根元素 */
+  async function renderThree(): Promise<
+    Record<'overdue' | 'today' | 'soon' | 'far', HTMLElement>
+  > {
     const items: Item[] = [
       makeItem({ id: 11, title: '逾期的', due_date: inDays(-1) }),
+      makeItem({ id: 14, title: '今天的', due_date: inDays(0) }),
       makeItem({ id: 12, title: '快到期的', due_date: inDays(7) }),
       makeItem({ id: 13, title: '还早的', due_date: inDays(DUE_SOON_DAYS + 10) }),
     ];
@@ -1069,24 +1164,39 @@ describe('截止日标记的三档（逾期 / 临期 / 更远）', () => {
       expect(chip, `${title} 应有截止日标记`).not.toBeNull();
       return chip as HTMLElement;
     };
-    return { overdue: chipOf('逾期的'), soon: chipOf('快到期的'), far: chipOf('还早的') };
+    return {
+      overdue: chipOf('逾期的'),
+      today: chipOf('今天的'),
+      soon: chipOf('快到期的'),
+      far: chipOf('还早的'),
+    };
   }
 
-  it('逾期用实心主色（梅），不再用语义 error 色', async () => {
+  it('逾期用实心语义 error：不再用主色（梅）表达「已经出事了」', async () => {
     const { overdue } = await renderThree();
-    expect(overdue.className).toMatch(/MuiChip-colorPrimary/);
+    expect(overdue.className).toMatch(/MuiChip-colorError/);
     expect(overdue.className).toMatch(/MuiChip-filled/);
-    expect(overdue.className).not.toMatch(/colorError/);
+    expect(overdue.className).not.toMatch(/MuiChip-colorPrimary/);
   });
 
-  it('今天起 DUE_SOON_DAYS 天内到期用描边主色：与逾期同色系，但分得出轻重', async () => {
+  it('今天到期用描边 warning：今天之内要处理，但还没出事', async () => {
+    const { today } = await renderThree();
+    expect(today.className).toMatch(/MuiChip-colorWarning/);
+    expect(today.className).toMatch(/MuiChip-outlined/);
+    expect(today.className).not.toMatch(/MuiChip-colorPrimary/);
+  });
+
+  it('窗口内但还没到今天的保持中性：警告不被常态化', async () => {
     const { soon } = await renderThree();
-    expect(soon.className).toMatch(/MuiChip-colorPrimary/);
-    expect(soon.className).toMatch(/MuiChip-outlined/);
+    expect(soon.className).toMatch(/MuiChip-colorDefault/);
+    expect(soon.className).not.toMatch(/MuiChip-colorWarning/);
   });
 
-  it('更远的截止日保持中性：不让所有带截止日的条目糊成一片红', async () => {
+  it('更远的截止日保持中性：不让所有带截止日的条目糊成一片语义色', async () => {
     const { far } = await renderThree();
+    expect(far.className).toMatch(/MuiChip-colorDefault/);
     expect(far.className).not.toMatch(/MuiChip-colorPrimary/);
+    expect(far.className).not.toMatch(/MuiChip-colorWarning/);
+    expect(far.className).not.toMatch(/MuiChip-colorError/);
   });
 });

@@ -5,7 +5,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import ItemDialog from '../src/components/ItemDialog';
 import { VT_NAMES } from '../src/lib/view-transition';
-import { allStyleText, ownRules } from './glass-text-contrast.test-utils';
+import { NEUTRAL_LIGHT } from '../src/rakko-tokens';
+import {
+  allStyleText,
+  ownEmotionClass,
+  ownRules,
+  renderWithAppTheme,
+  ruleTextOf,
+} from './glass-text-contrast.test-utils';
+import source from '../src/components/ItemDialog.tsx?raw';
 import type { Item } from '../src/types';
 
 function makeItem(partial: Partial<Item>): Item {
@@ -385,7 +393,7 @@ describe('ItemDialog 与内容列重合的样式', () => {
 });
 
 describe('ItemDialog 截止日与列表同一口径', () => {
-  it('详情里的截止日也按逾期标主色：此前详情页无论逾期与否都是中性，两处不一致', () => {
+  it('详情里的截止日也按逾期标语义色：此前详情页无论逾期与否都是中性，两处不一致', () => {
     const yesterday = new Date();
     yesterday.setDate(yesterday.getDate() - 1);
     const pad = (x: number) => String(x).padStart(2, '0');
@@ -400,7 +408,118 @@ describe('ItemDialog 截止日与列表同一口径', () => {
 
     const chip = screen.getByLabelText(/^截止 .+，已逾期$/).closest('.MuiChip-root') as HTMLElement;
     expect(chip).not.toBeNull();
-    expect(chip.className).toMatch(/MuiChip-colorPrimary/);
+    expect(chip.className).toMatch(/MuiChip-colorError/);
+    expect(chip.className).not.toMatch(/MuiChip-colorPrimary/);
+  });
+});
+
+describe('ItemDialog 纸面材质与按钮层级', () => {
+  it('对话框 paper 挂 data-glass="panel"：与右键菜单同一档玻璃', () => {
+    vi.stubGlobal('fetch', makeFetchMock());
+
+    render(<ItemDialog item={makeItem({})} onClose={vi.fn()} />);
+
+    const paper = document.querySelector('.MuiDialog-paper') as HTMLElement | null;
+    expect(paper).not.toBeNull();
+    expect(paper!.getAttribute('data-glass')).toBe('panel');
+  });
+
+  it('paper 的材质配置不下发 background / border / boxShadow：写了会盖掉玻璃配方', () => {
+    // 与 row-context-menu.test.tsx 同款源码断言：jsdom 不解析样式表，内联材质断言
+    // 一律落回源码原文（?raw），否则会写出永远为真的假断言。
+    // injectFirst 把 emotion 插在 <head> 最前，同特异性下 rakko-glass.css 的配方赢——
+    // 覆盖配方必须先写成 &[data-glass="panel"] 抬到 (0,2,0)，且 box-shadow 是整条替换。
+    const constStart = source.indexOf('const DIALOG_PAPER_PROPS');
+    expect(constStart).toBeGreaterThan(-1);
+    const constEnd = source.indexOf('};', constStart);
+    expect(constEnd).toBeGreaterThan(-1);
+    const paperProps = source.slice(constStart, constEnd + 2);
+
+    expect(paperProps).toContain("'data-glass': 'panel'");
+    expect(paperProps).toContain('viewTransitionName: VT_NAMES.sheet');
+    expect(paperProps).not.toContain('backgroundColor');
+    expect(paperProps).not.toContain('background');
+    expect(paperProps).not.toContain('boxShadow');
+    expect(paperProps).not.toContain('border');
+  });
+
+  it('段间距统一走同一个常量：三处分隔线不许各写一个 my', () => {
+    // 段与段之间的分隔只用 Divider 一种，间距也只有一个数（gap-4 = 16px）。数一数
+    // 源码里三处 <Divider .../> 用的都是 SECTION_DIVIDER_SX、没有任何行内 my 字面量。
+    const dividerUses = source.match(/<Divider[^>]*\/>/g) ?? [];
+    expect(dividerUses, '分隔线数量变了，重新核对段间距口径').toHaveLength(3);
+    for (const tag of dividerUses) {
+      expect(tag, `分隔线写法必须统一：${tag}`).toContain('sx={SECTION_DIVIDER_SX}');
+      expect(tag, '不许某一处自己写一个行内 my').not.toContain('my:');
+    }
+    expect(source, '段间距常量取 gap-4（16px）').toContain('const SECTION_DIVIDER_SX = { my: 2 }');
+  });
+
+  it('删除确认框的按钮层级：取消 = text inherit，最终确认 = contained error', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (_url: string | URL, init?: RequestInit) => {
+      if (init?.method === 'DELETE') return new Response(null, { status: 204 });
+      return json({}, 404);
+    }));
+
+    render(
+      <ItemDialog
+        item={makeItem({ id: 7, email_id: null, title: '待删任务' })}
+        onClose={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: '删除' }));
+    const prompt = await screen.findByText('删除这条任务？此操作不可撤销。');
+    const confirmDialog = prompt.closest('[role="dialog"]') as HTMLElement;
+
+    const cancel = within(confirmDialog).getByRole('button', { name: '取消' });
+    expect(cancel.className).toMatch(/MuiButton-text/);
+    expect(cancel.className).toMatch(/MuiButton-colorInherit/);
+
+    const confirm = within(confirmDialog).getByRole('button', { name: '删除' });
+    expect(confirm.className).toMatch(/MuiButton-contained/);
+    expect(confirm.className).toMatch(/MuiButton-colorError/);
+  });
+
+  it('标题栏的删除入口用 error 色（进入危险流程的入口），编辑/关闭保持 inherit', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => json({}, 404)));
+
+    render(
+      <ItemDialog
+        item={makeItem({ id: 7, email_id: null, title: '手动任务' })}
+        onClose={vi.fn()}
+      />,
+    );
+    await screen.findByText('手动任务');
+
+    expect(screen.getByRole('button', { name: '删除' }).className).toMatch(/MuiIconButton-colorError/);
+    expect(screen.getByRole('button', { name: '编辑' }).className).toMatch(
+      /MuiIconButton-colorInherit/,
+    );
+    expect(screen.getByRole('button', { name: '关闭' }).className).toMatch(
+      /MuiIconButton-colorInherit/,
+    );
+  });
+});
+
+describe('ItemDialog 玻璃上的次级文字（玻璃没有次级色空间）', () => {
+  it('关联邮件的日期/原因 secondary 取 text.primary（n9），不是 n7', async () => {
+    // 这一行压在对话框自己 data-glass="panel" 的玻璃上：MUI 默认给 ListItemText
+    // secondary 的 text.secondary（n7）在 58% 纸色的玻璃上实测对比度只有 2.4–2.6，
+    // AA 正文要 ≥4.5。层级改由字号/字重承担，颜色必须提到 n9。
+    vi.stubGlobal('fetch', makeFetchMock());
+
+    renderWithAppTheme(<ItemDialog item={makeItem({})} onClose={vi.fn()} />);
+    const subject = await screen.findByText('退款来源');
+    const item = subject.closest('.MuiListItemText-root') as HTMLElement;
+    const secondary = item.querySelector('.MuiListItemText-secondary') as HTMLElement;
+    expect(secondary).not.toBeNull();
+    expect(ownEmotionClass(secondary), '没读到 secondary 的 emotion 局部类，断言会空转').not.toBeNull();
+    const rule = ruleTextOf(allStyleText(), secondary);
+    expect(rule, '玻璃上的次级文字必须是 n9（text.primary）').toContain(`color:${NEUTRAL_LIGHT[8]}`);
+    expect(rule, '不许回落到 MUI 默认的 text.secondary（n7）').not.toContain(
+      `color:${NEUTRAL_LIGHT[6]}`,
+    );
   });
 });
 
