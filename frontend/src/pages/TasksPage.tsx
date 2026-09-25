@@ -594,7 +594,7 @@ export default function TasksPage() {
               <Stack alignItems="center" spacing={0.5} sx={{ py: 6, px: 2 }}>
                 <Typography variant="body1">还没有接入邮箱</Typography>
                 <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center' }}>
-                  接入 Gmail 或 Outlook 后，系统会自动把邮件里的待办整理到这里
+                  接入 Gmail、QQ 邮箱或 Outlook 后，系统会自动把邮件里的待办整理到这里
                 </Typography>
                 <Button variant="contained" onClick={() => go('/settings')} sx={{ mt: 1 }}>
                   前往设置接入

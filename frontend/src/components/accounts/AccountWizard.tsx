@@ -1,7 +1,8 @@
 // 添加邮箱账户向导（桌面 Dialog / 移动端独立路由页共用）：
-// ① 选类型（Gmail / Outlook·Microsoft 365）→ ② 名称邮箱（Gmail 附应用专用密码与生成指引，
-// 微软可展开「高级」填自定义 client_id）→ ③ 微软授权引导（仅微软，复用 MicrosoftAuthGuide）
-// → ④ 完成。Gmail 建好后直接进 ④；微软建好后凭据还没落库，进 ③ 引导两步授权。
+// ① 选类型（Gmail / QQ 邮箱 / Outlook·Microsoft 365）→ ② 名称邮箱（Gmail 与 QQ 邮箱
+// 附各自的凭据字段与获取指引，微软可展开「高级」填自定义 client_id）→ ③ 微软授权引导
+// （仅微软，复用 MicrosoftAuthGuide）→ ④ 完成。Gmail / QQ 邮箱建好后直接进 ④；
+// 微软建好后凭据还没落库，进 ③ 引导两步授权。
 // 错误一律 Alert 展示（可停留阅读）；第 1、2 步可取消，第 3 步可「稍后再授权」（账户已建）。
 
 import { useState } from 'react';
@@ -25,7 +26,8 @@ import useMediaQuery from '@mui/material/useMediaQuery';
 import { useTheme } from '@mui/material/styles';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import { createAccount } from '../../lib/api';
-import { apiErrorFields, defaultNameFor } from './meta';
+import { apiErrorFields, defaultNameFor, kindAvatar, credentialsGuide, passwordLabel, usesPassword } from './meta';
+import CredentialsGuideHint from './CredentialsGuideHint';
 import MicrosoftAuthGuide from './MicrosoftAuthGuide';
 import type { AccountInfo, AccountKind } from '../../types';
 
@@ -34,20 +36,27 @@ interface Props {
   onCancel: () => void;
 }
 
+/** 类型卡片的展示数据；record 的 key 就是 kind，值里不必再写一遍 */
 interface KindOption {
-  kind: AccountKind;
   title: string;
   subtitle?: string;
 }
 
-const KIND_OPTIONS: readonly KindOption[] = [
-  { kind: 'gmail', title: 'Gmail' },
-  {
-    kind: 'microsoft',
+/**
+ * 按 kind 取卡片数据。用 Record<AccountKind, …> 而不是数组 + find：加了新 kind 却忘了
+ * 补卡片时编译期就报错，find 只会安静地给 undefined，界面上表现为第 1 步少一张卡片。
+ */
+const KIND_OPTIONS: Record<AccountKind, KindOption> = {
+  gmail: { title: 'Gmail' },
+  qq: { title: 'QQ 邮箱', subtitle: 'foxmail.com、vip.qq.com 地址也选这个' },
+  microsoft: {
     title: 'Outlook · Microsoft 365',
     subtitle: '个人 Outlook、学校与公司邮箱都选这个',
   },
-];
+};
+
+/** 第 1 步的类型卡片顺序（QQ 邮箱放在 Gmail 与 Outlook 之间） */
+const KIND_ORDER: readonly AccountKind[] = ['gmail', 'qq', 'microsoft'];
 
 /** POST /api/accounts 的错误码 → 中文；未列出的码给兜底文案（password_required 只剩服务端兜底，
  *  客户端在下一步已拦截空密码） */
@@ -57,7 +66,9 @@ function createErrorMessage(err: unknown): string {
     case 'account_exists':
       return '这个邮箱已经添加过了';
     case 'password_required':
-      return '请填写应用专用密码';
+      // 后端只按「这个类型要不要密码」报错，不知道用户选的是 Gmail 还是 QQ 邮箱；
+      // 两种叫法都列上，比在这里猜 kind 更稳（前端下一步已拦空值，这里是兜底）
+      return '请填写应用专用密码或授权码';
     case 'bad_email':
       return '邮箱格式不对';
     case 'too_many_accounts':
@@ -108,6 +119,11 @@ export default function AccountWizard({ onDone, onCancel }: Props) {
   const [error, setError] = useState<string | null>(null);
 
   const microsoft = kind === 'microsoft';
+  // 要不要用户填密码类凭据由 meta 说了算（Gmail / QQ 邮箱要，微软走 OAuth 不要）：
+  // 决定第 2 步有没有密码框、创建请求带不带 app_password
+  const needsPassword = kind !== null && usesPassword(kind);
+  const pwdLabel = kind !== null ? passwordLabel(kind) : '';
+  const guide = kind !== null ? credentialsGuide(kind) : undefined;
   // 步骤条随类型伸缩：微软多一段「微软授权」；activeStep 的语义由 created/kind 推导
   const stepLabels = microsoft
     ? (['账户类型', '基本信息', '微软授权', '完成'] as const)
@@ -138,21 +154,21 @@ export default function AccountWizard({ onDone, onCancel }: Props) {
       setActiveStep(1);
       return;
     }
-    // 第 2 步：先建账户；Gmail 建好即有凭据直接进完成页，微软进第 3 步授权
+    // 第 2 步：先建账户；Gmail / QQ 邮箱建好即有凭据直接进完成页，微软进第 3 步授权
     if (!kind) return;
     const body: { name: string; kind: AccountKind; email: string; app_password?: string; ms_client_id?: string } = {
       name: name.trim(),
       kind,
       email: email.trim(),
     };
-    if (kind === 'gmail') body.app_password = appPassword;
+    if (needsPassword) body.app_password = appPassword;
     else if (msClientId.trim() !== '') body.ms_client_id = msClientId.trim();
     setSubmitting(true);
     setError(null);
     createAccount(body)
       .then((account) => {
         setCreated(account);
-        // gmail 跳完成页；微软进授权步
+        // 有密码类凭据的类型跳完成页；微软进授权步
         setActiveStep(microsoft ? 2 : doneStep);
       })
       .catch((err: unknown) => setError(createErrorMessage(err)))
@@ -161,8 +177,8 @@ export default function AccountWizard({ onDone, onCancel }: Props) {
 
   const nameInvalid = name.trim() === '';
   const emailInvalid = !looksLikeEmail(email);
-  // Gmail 的应用专用密码在客户端就拦空值（密码框有红字提示，见第 2 步），不靠后端绕一圈
-  const passwordMissing = kind === 'gmail' && appPassword.trim() === '';
+  // 密码类凭据在客户端就拦空值（密码框有红字提示，见第 2 步），不靠后端绕一圈
+  const passwordMissing = needsPassword && appPassword.trim() === '';
   const nextDisabled =
     activeStep === 0
       ? kind === null
@@ -192,11 +208,12 @@ export default function AccountWizard({ onDone, onCancel }: Props) {
             role="group"
             aria-label="账户类型"
           >
-            {KIND_OPTIONS.map((opt) => {
-              const selected = kind === opt.kind;
+            {KIND_ORDER.map((k) => {
+              const opt = KIND_OPTIONS[k];
+              const selected = kind === k;
               return (
                 <Card
-                  key={opt.kind}
+                  key={k}
                   variant="outlined"
                   sx={{
                     flex: 1,
@@ -209,13 +226,13 @@ export default function AccountWizard({ onDone, onCancel }: Props) {
                   }}
                 >
                   <CardActionArea
-                    onClick={() => pickKind(opt.kind)}
+                    onClick={() => pickKind(k)}
                     aria-label={opt.title}
                     aria-pressed={selected}
                   >
                     <CardContent>
                       <Stack direction="row" spacing={1} alignItems="center">
-                        <Avatar>{opt.kind === 'gmail' ? 'G' : 'O'}</Avatar>
+                        <Avatar>{kindAvatar(k)}</Avatar>
                         <Box sx={{ minWidth: 0 }}>
                           <Typography variant="subtitle1" noWrap>
                             {opt.title}
@@ -260,10 +277,10 @@ export default function AccountWizard({ onDone, onCancel }: Props) {
               helperText={touched.email && emailInvalid ? '请填写正确的邮箱地址' : undefined}
               inputProps={{ autoComplete: 'off' }}
             />
-            {kind === 'gmail' ? (
+            {needsPassword ? (
               <>
                 <TextField
-                  label="应用专用密码"
+                  label={pwdLabel}
                   type="password"
                   size="small"
                   fullWidth
@@ -271,23 +288,10 @@ export default function AccountWizard({ onDone, onCancel }: Props) {
                   onChange={(e) => setAppPassword(e.target.value)}
                   onBlur={() => touch('password')}
                   error={touched.password && passwordMissing}
-                  helperText={touched.password && passwordMissing ? '请填写应用专用密码' : undefined}
+                  helperText={touched.password && passwordMissing ? `请填写${pwdLabel}` : undefined}
                   inputProps={{ autoComplete: 'off' }}
                 />
-                <Typography variant="body2" color="text.secondary">
-                  Google 账号 → 安全性 → 开启两步验证 → 应用专用密码 → 生成 16 位密码。
-                </Typography>
-                <Button
-                  variant="text"
-                  size="small"
-                  component="a"
-                  href="https://myaccount.google.com/apppasswords"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  sx={{ alignSelf: 'flex-start' }}
-                >
-                  打开 Google 应用专用密码页面
-                </Button>
+                {guide && <CredentialsGuideHint guide={guide} />}
               </>
             ) : (
               <>
