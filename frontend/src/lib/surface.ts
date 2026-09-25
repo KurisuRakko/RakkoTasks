@@ -14,7 +14,7 @@
 
 import type { Theme } from '@mui/material/styles';
 import type { SystemStyleObject } from '@mui/system';
-import { RADIUS } from '../rakko-tokens';
+import { MOTION, RADIUS, STATE_OPACITY, TYPE_SCALE } from '../rakko-tokens';
 
 /** 列表行玻璃之间的竖向间距（px）。离场折叠时必须跟着归零：
  *  间距做在 ListItem 的 padding 上（见 motion.rowSx），折叠收行高时一并收起。 */
@@ -32,6 +32,61 @@ export const ROW_MIN_HEIGHT_PX = 48;
  *  36px，字符串才原样进 CSS。 */
 export function cardRowSx(): SystemStyleObject<Theme> {
   return { borderRadius: `${RADIUS.card}px` };
+}
+
+/** 行内小标签的高度（px）：契约 label-12 的行高（12 × 1.5 = 18）加上下各 2px 内边距。
+ *  与行左侧「标题首行」中线基准 TITLE_LINE_H / 今日点的包裹盒同值——三个元素压在同一条
+ *  中线上，chip 高了低了都会看出一列歪。 */
+export const ROW_CHIP_HEIGHT_PX = 22;
+
+/** 行内小标签的度量：label-12 字阶（12px）+ ROW_CHIP_HEIGHT_PX 盒高 + label 左右 6px。
+ *  TasksPage 的「重要」与 DueChip 共用这一份——同一角色只允许一种尺寸。 */
+export function rowChipSx(): SystemStyleObject<Theme> {
+  return {
+    height: ROW_CHIP_HEIGHT_PX,
+    fontSize: `${TYPE_SCALE['label-12'].size}px`,
+    '& .MuiChip-label': { px: 0.75 },
+  };
+}
+
+/** 列表行的状态层：叠在纸面之上的一层（::after + opacity），不替换任何背景。
+ *  hover/focus/pressed 取 STATE_OPACITY，层色取控件前景色，时长取 motion 的 state 档。
+ *  焦点另加 primary 描边环——涟漪只在按下时出现，键盘 Tab 必须立刻看得见焦点在哪一行。 */
+export function rowStateLayerSx(): SystemStyleObject<Theme> {
+  return {
+    // ButtonBase 自带 position: relative；这里重申一次，保证 ::after 的包含块就是行本身
+    position: 'relative',
+    '&::after': {
+      content: '""',
+      position: 'absolute',
+      inset: 0,
+      borderRadius: 'inherit',
+      pointerEvents: 'none',
+      backgroundColor: (theme: Theme) => theme.palette.text.primary,
+      opacity: 0,
+      transition: `opacity ${MOTION.state}ms ${MOTION.easeStandard}`,
+    },
+    '&:hover::after': { opacity: STATE_OPACITY.hover },
+    '&.Mui-focusVisible::after': { opacity: STATE_OPACITY.focus },
+    '&:active::after': { opacity: STATE_OPACITY.pressed },
+    '&.Mui-focusVisible': {
+      outline: (theme: Theme) => `2px solid ${theme.palette.primary.main}`,
+      outlineOffset: '2px',
+    },
+  };
+}
+
+/** 行玻璃纸色的重申，抬到 (0,3,0) 才压得住 MUI：ListItemButton 根样式自带 `&:hover`
+ *  与 `&.Mui-focusVisible` 的 background-color（(0,2,0)），高于配方 [data-glass='panel']
+ *  的 (0,1,0)，悬停/聚焦会把 58% 纸色换成 4%/8% 的近透明色。值钉回配方同一表达式
+ *  （同两个 CSS 变量，不写死数值），纸色地板在任何状态下都不下调。 */
+export function rowGlassPaperSx(): SystemStyleObject<Theme> {
+  const paper =
+    'color-mix(in srgb, var(--color-paper) var(--glass-panel-opacity), transparent)';
+  return {
+    '&[data-glass="panel"]:hover': { backgroundColor: paper },
+    '&[data-glass="panel"].Mui-focusVisible': { backgroundColor: paper },
+  };
 }
 
 /** 触控命中区下限（px）：WCAG 2.5.5 目标尺寸（AAA）与 iOS HIG 的 44pt 同值 */

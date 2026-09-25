@@ -5,17 +5,17 @@
 // ③ 把地址栏完整地址（或裸授权码）粘回 → submitMsAuthCode 换 token 落库。
 // auth_failed 按 kind 给中文提示；expired / no_pending_flow 视为流程失效，重置回 ① 重新生成。
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import Alert from '@mui/material/Alert';
 import Button from '@mui/material/Button';
+import Snackbar from '@mui/material/Snackbar';
 import Stack from '@mui/material/Stack';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
-import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import { requestMsAuthUrl, submitMsAuthCode } from '../../lib/api';
-import { copyText } from '../../lib/clipboard';
 import { apiErrorFields } from './meta';
+import CopyButton from './CopyButton';
 import type { AccountInfo } from '../../types';
 
 interface Props {
@@ -30,19 +30,13 @@ export default function MicrosoftAuthGuide({ accountId, onAuthorized }: Props) {
   const [generating, setGenerating] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [copyMsg, setCopyMsg] = useState<string | null>(null);
-
-  // 复制反馈是瞬时的：不自撤就会一直挂在按钮下面，重新生成链接时还带着上一次那句话
-  useEffect(() => {
-    if (copyMsg === null) return;
-    const timer = window.setTimeout(() => setCopyMsg(null), 3000);
-    return () => window.clearTimeout(timer);
-  }, [copyMsg]);
+  // 复制反馈与全站同一载体（Snackbar），不再在按钮下面挂一行常驻提示
+  const [snack, setSnack] = useState<string | null>(null);
 
   const handleGenerate = () => {
     setGenerating(true);
     setError(null);
-    setCopyMsg(null);
+    setSnack(null);
     requestMsAuthUrl(accountId)
       .then((u) => setUrl(u))
       .catch(() => setError('生成授权链接失败，请稍后再试'))
@@ -52,13 +46,6 @@ export default function MicrosoftAuthGuide({ accountId, onAuthorized }: Props) {
   const handleOpen = () => {
     if (!url) return;
     window.open(url, '_blank', 'noopener');
-  };
-
-  const handleCopy = () => {
-    if (!url) return;
-    copyText(() => Promise.resolve(url))
-      .then(() => setCopyMsg('已复制链接'))
-      .catch(() => setCopyMsg('复制失败'));
   };
 
   /** 流程失效类错误：保留错误提示、回到 ① 重新生成链接 */
@@ -108,7 +95,7 @@ export default function MicrosoftAuthGuide({ accountId, onAuthorized }: Props) {
       {error && <Alert severity="error">{error}</Alert>}
       {!url ? (
         <>
-          <Typography variant="body2">
+          <Typography variant="caption">
             Microsoft 365 使用第三方公共客户端登录，授权完成后浏览器会停在空白页。
             先在这里生成授权链接，再按下面步骤操作。
           </Typography>
@@ -118,20 +105,14 @@ export default function MicrosoftAuthGuide({ accountId, onAuthorized }: Props) {
         </>
       ) : (
         <>
-          <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap' }}>
+          <Stack direction="row" spacing={1} alignItems="center" sx={{ flexWrap: 'wrap' }}>
             <Button variant="contained" startIcon={<OpenInNewIcon />} onClick={handleOpen}>
               在新标签页打开微软登录
             </Button>
-            <Button variant="outlined" startIcon={<ContentCopyIcon />} onClick={handleCopy}>
-              复制链接
-            </Button>
+            {/* 复制只有一种零件：IconButton + ContentCopy + Tooltip，反馈走 Snackbar */}
+            <CopyButton getText={() => url} onFeedback={(ok) => setSnack(ok ? '已复制' : '复制失败')} />
           </Stack>
-          {copyMsg && (
-            <Typography variant="caption" color="text.secondary">
-              {copyMsg}
-            </Typography>
-          )}
-          <Typography variant="body2" color="text.secondary">
+          <Typography variant="caption">
             用该邮箱登录并完成多因素验证。登录成功后浏览器会停在一个<strong>空白页</strong>
             ，地址以 login.microsoftonline.com/common/oauth2/nativeclient 开头——这是正常的。
           </Typography>
@@ -156,6 +137,8 @@ export default function MicrosoftAuthGuide({ accountId, onAuthorized }: Props) {
           </Button>
         </>
       )}
+      {/* 自动关闭时长由主题的 MuiSnackbar.defaultProps 统一给（4 秒） */}
+      <Snackbar open={snack !== null} onClose={() => setSnack(null)} message={snack} />
     </Stack>
   );
 }

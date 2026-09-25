@@ -30,6 +30,7 @@ import ListSubheader from '@mui/material/ListSubheader';
 import Snackbar from '@mui/material/Snackbar';
 import Stack from '@mui/material/Stack';
 import Typography from '@mui/material/Typography';
+import type { SxProps, Theme } from '@mui/material/styles';
 import AddIcon from '@mui/icons-material/Add';
 import { createItem, fetchItems, fetchStatus, parseTask, patchItem, quickAddTask } from '../lib/api';
 import { groupItems, isNewToday } from '../lib/grouping';
@@ -43,7 +44,13 @@ import {
 } from '../lib/motion';
 import { useLongPress } from '../lib/long-press';
 import { useNavigateTo } from '../lib/nav';
-import { cardRowSx, hitSlopSx } from '../lib/surface';
+import {
+  cardRowSx,
+  hitSlopSx,
+  rowChipSx,
+  rowGlassPaperSx,
+  rowStateLayerSx,
+} from '../lib/surface';
 import { todayIso } from '../lib/time';
 import { GLASS, MOTION, TYPE_SCALE } from '../rakko-tokens';
 import type { Category, Item, ItemFields } from '../types';
@@ -72,19 +79,13 @@ type Snack = { text: string; item: Item | null };
 /** 行右键 / 长按菜单的弹出位置（视口坐标） */
 type Point = { x: number; y: number };
 
-/** 行内元信息标签：比 MUI 的 size="small"（24px / 13px）再小一档。标签横排在标题
- *  首行右侧，高度（20px）必须不超过 TITLE_LINE_H（22）才能与首行压在同一条中线上，
- *  不把行撑高；字号取 caption 档，label 左右内边距收到 6px。 */
-const META_CHIP_H = 20;
-// 间距取 Rakko Design CHEATSHEET §Spacing & radius 的 gap-1（4px，inline icon ↔ text）：
-// 同一行内相邻小元素就该用这一档；3px 不在任何间距梯度上，是随手写下的数。
-const META_CHIP_GAP = '4px';
+/** 行内元信息标签：与 DueChip 同源（lib/surface 的 rowChipSx）——label-12 字阶 +
+ *  22px 盒高，与今日点、勾选框共用标题首行中线；chip 圆角由主题层的 MuiChip.root 给。 */
+const META_CHIP_SX = rowChipSx();
 
-const META_CHIP_SX = {
-  height: META_CHIP_H,
-  fontSize: '0.6875rem',
-  '& .MuiChip-label': { px: 0.75 },
-} as const;
+// 间距取 Rakko Design CHEATSHEET §Spacing & radius 的 gap-1（4px，inline icon ↔ text）；
+// 3px 不在任何间距梯度上，是随手写下的数。
+const META_CHIP_GAP = '4px';
 
 /** 标题首行的行盒高度：行左侧的今日点与勾选框都以它为中线基准。与 theme 的
  *  body1 同源（copy-14），不另开一份数字。 */
@@ -121,6 +122,47 @@ function TaskRow({
   // 长按 500ms 弹菜单（touch 路径与桌面 contextmenu 分开，理由见 lib/long-press.ts）；
   // 触发点坐标给菜单定位。长按与点击各自独立：长按不吞行点击，弹菜单后由菜单项接手
   const longPress = useLongPress((point) => onMenuOpen(item, point));
+  // 行体 sx 的静态部分：圆角 / 纸色重申 / 状态层 / 网格布局（机制见 lib/surface 各函数）
+  const buttonSx: SxProps<Theme> = [
+    cardRowSx(),
+    // MUI 的 ListItemButton 自带 :hover 与 .Mui-focusVisible 的 background-color，
+    // 特异性高于玻璃配方，会把纸色抹掉——先把它钉回纸色，状态层再叠在纸面之上
+    rowGlassPaperSx(),
+    rowStateLayerSx(),
+    {
+      // 行内是四列单行 grid：今日点(12px) / 勾选(auto) / 标题+摘要(可收缩 1fr) /
+      // 元信息列(按内容)。标签此前独占第二行，可绝大多数条目只有一两枚
+      // chip——整整一行高度里九成是空的。改成横排在标题首行右侧后那段留白消失，
+      // 行高由标题决定。
+      //
+      // 元信息列写 max-content 而不是 auto，是「chip 不许被压扁截断」的结构性保证：
+      // auto 轨道的最小尺寸是 min-content，而 .MuiChip-label 带 overflow: hidden，
+      // 它作为 flex 项的自动最小尺寸会解析成 0——于是窄宽度下 chip 是可以被压成
+      // 一个省略号的。max-content 轨道不可压缩，chip 拿到的永远是完整宽度；被挤的
+      // 只能是标题列。宽度分档的特判不需要，也不该有。
+      //
+      // 标题列写 minmax(0, 1fr) 而不是 1fr：grid 项默认 min-width 是 auto，不写
+      // minmax(0,…) 的话长标题会把自己撑出去、反过来挤扁 meta 列（此前那版把整组
+      // 标签 flexShrink: 0 放在标题右侧，窄屏上标题被挤成竖排碎字，不能退回去）。
+      // ListItemText 自身能收缩到轨道下限靠的是 MUI 根样式自带的 min-width: 0，
+      // tasks-page 测试钉着它，上游若删掉那里会红。
+      display: 'grid',
+      gridTemplateColumns: '12px auto minmax(0, 1fr) max-content',
+      gridTemplateAreas: '"dot cb text meta"',
+      alignItems: 'start',
+      // align-items: start 让四列内部都以标题首行对齐；align-content: center 管的是
+      // 另一件事——这里是单行隐式轨道，row-min-height 撑出富余高度时整条轨道居中，
+      // 无摘要的单行任务因此不会贴在行顶。多行行的轨道自然填满，这条声明对它们无效。
+      alignContent: 'center',
+      columnGap: '8px',
+      // 长按行体时 iOS 会弹系统文本选择菜单（触摸保持 500ms 即触发），行内文字
+      // 也不是可选中文本——userSelect 与 WebkitTouchCallout 一并关掉，长按只走
+      // 我们自己的手势。
+      WebkitTouchCallout: 'none',
+      userSelect: 'none',
+      // 竖向内边距不覆盖：ListItemButton 的 MUI 默认值 8px 正好落在 8px 网格上
+    },
+  ];
   return (
     <ListItem
       disablePadding
@@ -136,45 +178,7 @@ function TaskRow({
           rowSx padding-bottom 提供；容器变换名字留在 ListItem */}
       <ListItemButton
         data-glass="panel"
-        sx={[
-          cardRowSx(),
-          {
-            // 行内是四列单行 grid：今日点(12px) / 勾选(auto) / 标题+摘要(可收缩 1fr) /
-            // 元信息列(按内容)。标签此前独占第二行，可绝大多数条目只有一两枚
-            // chip——整整一行高度里九成是空的。改成横排在标题首行右侧后那段留白消失，
-            // 行高由标题决定。
-            //
-            // 元信息列写 max-content 而不是 auto，是「chip 不许被压扁截断」的结构性保证：
-            // auto 轨道的最小尺寸是 min-content，而 .MuiChip-label 带 overflow: hidden，
-            // 它作为 flex 项的自动最小尺寸会解析成 0——于是窄宽度下 chip 是可以被压成
-            // 一个省略号的。max-content 轨道不可压缩，chip 拿到的永远是完整宽度；被挤的
-            // 只能是标题列。宽度分档的特判不需要，也不该有。
-            //
-            // 标题列写 minmax(0, 1fr) 而不是 1fr：grid 项默认 min-width 是 auto，不写
-            // minmax(0,…) 的话长标题会把自己撑出去、反过来挤扁 meta 列（此前那版把整组
-            // 标签 flexShrink: 0 放在标题右侧，窄屏上标题被挤成竖排碎字，不能退回去）。
-            // ListItemText 自身能收缩到轨道下限靠的是 MUI 根样式自带的 min-width: 0，
-            // tasks-page 测试钉着它，上游若删掉那里会红。
-            display: 'grid',
-            gridTemplateColumns: '12px auto minmax(0, 1fr) max-content',
-            gridTemplateAreas: '"dot cb text meta"',
-            alignItems: 'start',
-            // align-items: start 让四列内部都以标题首行对齐；align-content: center 管的是
-            // 另一件事——这里是单行隐式轨道，row-min-height 撑出富余高度时整条轨道居中，
-            // 无摘要的单行任务因此不会贴在行顶。多行行的轨道自然填满，这条声明对它们无效。
-            alignContent: 'center',
-            columnGap: '8px',
-            // 长按行体时 iOS 会弹系统文本选择菜单（触摸保持 500ms 即触发），行内文字
-            // 也不是可选中文本——userSelect 与 WebkitTouchCallout 一并关掉，长按只走
-            // 我们自己的手势（合并进 cardRowSx 的 sx 数组，surface.ts 不动）
-            WebkitTouchCallout: 'none',
-            userSelect: 'none',
-            // 竖向内边距不再覆盖：ListItemButton 的 MUI 默认值就是 8px，正好落在 8px
-            // 网格上。此前压到 6px 是想把行压矮，可行高现在由 ROW_MIN_HEIGHT_PX 决定，
-            // 6px 只对**带摘要的多行行**有效——而那恰恰是最需要留白的行，删掉。
-            // （6px 本身也不在任何间距梯度上。）
-          },
-        ]}
+        sx={buttonSx}
         onClick={() => onOpen(item)}
         onContextMenu={(e) => {
           e.preventDefault(); // 不让浏览器弹系统菜单，改弹行上下文菜单
@@ -254,8 +258,9 @@ function TaskRow({
             「重要」约 40px、最宽的截止日 12月31日约 47px，加 4px 间隙 ≈ 91px，宽度由
             内容自然封顶，列宽交给 grid 的 max-content，不需要 maxWidth 护栏。盒高取
             TITLE_LINE_H（22）：与今日点、勾选框共用「标题首行」这条中线，chip 以
-            20px 居中压在同一条线上。分类不在这里重复显示——顶部的 CategoryChips
-            过滤器已经承担分类切换，行内再放一枚只占高度、没有信息量。
+            22px（= 行高本身，ROW_CHIP_HEIGHT_PX）居中压在同一条线上。分类不在这里
+            重复显示——顶部的 CategoryChips 过滤器已经承担分类切换，行内再放一枚只占
+            高度、没有信息量。
 
             现在这个方向有三条写死的保证，各防一件事，缺一条就退回旧故障：
             · 列宽 max-content（行按钮 sx，机制见那里）：chip 不被压扁截断；
@@ -588,7 +593,11 @@ export default function TasksPage() {
             onMenuOpen={openRowMenu}
           />
           {/* 空态：条目为空时立刻给「没有待办任务」（不等账户探测），只有确认没接入邮箱
-              才切换成引导块——有账户/探测失败/探测中都不打断原有文案 */}
+              才切换成引导块——有账户/探测失败/探测中都不打断原有文案。
+              这里两处说明文字保留 text.secondary（n7）：玻璃三档之外没有玻璃，空态直接
+              落在壁纸承载层上，n7 压纸底的对比度是达标的（实测 2.4–2.6 那组数字来自
+              58% 纸色的 panel 玻璃，不是这里）。真正压在 data-glass="panel" 上的次级
+              文字才必须提到 text.primary——见列表行摘要与 ItemDialog。 */}
           {(items ?? []).length === 0 &&
             (accountsExist === false ? (
               <Stack alignItems="center" spacing={0.5} sx={{ py: 6, px: 2 }}>
@@ -688,7 +697,7 @@ export default function TasksPage() {
       />
       <Snackbar
         open={snack !== null}
-        autoHideDuration={3000}
+        // 自动关闭时长由主题层 MuiSnackbar.defaultProps 统一给
         onClose={() => setSnack(null)}
         message={snack ? snack.text : null}
         action={

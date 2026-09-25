@@ -1,13 +1,27 @@
 // 主题模式：system / light / dark 三态，localStorage 持久化。
 // 读写一律 try/catch：隐私模式等场景访问会抛异常，失败回落 'system'。
+//
+// 还负责一处副作用：把 <meta name="theme-color"> 改写成当前解析模式下的页面背景色。
+// PWA standalone 下这条 meta 就是 iOS/Android 状态栏的字面底色，index.html 里它是写死的
+// 浅色纸色（#f9f8f5，与 NEUTRAL_LIGHT[0] 同值），深色用户会看到状态栏与页面之间有一道
+// 浅色横条。取值与主题层同源：两支都是 palette.background.default，也就是 CssBaseline
+// 下发的 --color-paper——所以两支都取 PAPER 而不是中性色阶（深色纸色不是深色 n1，
+// 见 PAPER 的注释；两边不同源会让状态栏与页面之间出现一道异色横条）。
 
-import { createContext, useCallback, useContext, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import type { ReactNode } from 'react';
+import { PAPER } from '../rakko-tokens';
 
 export type ThemeMode = 'system' | 'light' | 'dark';
 
 const STORAGE_KEY = 'rakkotasks.theme-mode';
+
+/** 状态栏底色：解析后的模式 → 该模式的页面背景色（= palette.background.default） */
+const THEME_COLOR_BY_MODE = {
+  light: PAPER.light,
+  dark: PAPER.dark,
+} as const;
 
 function readStoredMode(): ThemeMode {
   try {
@@ -43,6 +57,13 @@ export function ThemeModeProvider({ children }: { children: ReactNode }) {
     setModeState(m);
     writeStoredMode(m);
   }, []);
+  useEffect(() => {
+    // 不重写 index.html：那边是模块系统之外的静态首帧值，这里只负责随模式改写。
+    // 查询放在 effect 内而不是模块顶层：测试与嵌入场景可能没有这条 meta。
+    document
+      .querySelector('meta[name="theme-color"]')
+      ?.setAttribute('content', THEME_COLOR_BY_MODE[resolved]);
+  }, [resolved]);
   const value = useMemo(() => ({ mode, setMode, resolved }), [mode, setMode, resolved]);
   return <ThemeModeContext.Provider value={value}>{children}</ThemeModeContext.Provider>;
 }

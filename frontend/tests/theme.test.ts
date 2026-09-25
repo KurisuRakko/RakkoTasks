@@ -10,14 +10,22 @@ import AppBar from '@mui/material/AppBar';
 import CssBaseline from '@mui/material/CssBaseline';
 import { ThemeProvider } from '@mui/material/styles';
 import { ThemeModeProvider } from '../src/lib/theme-mode';
-import { DEFAULT_WALLPAPER_URL, WALLPAPER_LAYER_ID, WALLPAPER_VAR } from '../src/lib/glass';
+import {
+  DEFAULT_WALLPAPER_URL,
+  WALLPAPER_LAYER_ID,
+  WALLPAPER_SHADE_VAR,
+  WALLPAPER_VAR,
+} from '../src/lib/glass';
 import {
   ACCENT,
   GLASS,
+  GLASS_DARK,
   GLASS_SHADOW_WHISPER,
   MOTION,
   NEUTRAL_DARK,
   NEUTRAL_LIGHT,
+  PAPER,
+  PAPER_RAISED,
   STATE_OPACITY,
   TYPE_SCALE,
   WHISPER_SHADOW,
@@ -26,6 +34,8 @@ import { useAppTheme } from '../src/theme';
 import { allStyleText, renderWithAppTheme } from './glass-text-contrast.test-utils';
 
 const MODE_KEY = 'rakkotasks.theme-mode';
+
+type Mode = 'light' | 'dark';
 
 function wrapper(props: { children?: ReactNode }) {
   return createElement(ThemeModeProvider, null, props.children);
@@ -61,8 +71,11 @@ describe('Rakko Design token 主题', () => {
   it('palette 对齐 accent 与中性色（深色）', () => {
     const theme = themeOf('dark');
     expect(theme.palette.primary.main).toBe(ACCENT.dark);
-    expect(theme.palette.background.default).toBe(NEUTRAL_DARK[0]);
-    expect(theme.palette.background.paper).toBe(NEUTRAL_DARK[1]);
+    // 深色纸色是 PAPER.dark 而不是 NEUTRAL_DARK[0]：契约让深色中性阶保持纯灰，
+    // 暖意只由纸色承担（见 rakko-tokens 的 PAPER）
+    expect(theme.palette.background.default).toBe(PAPER.dark);
+    // 实体浮层的底走 PAPER_RAISED（暖色系抬升一档），不是纯冷灰的深色 n2
+    expect(theme.palette.background.paper).toBe(PAPER_RAISED.dark);
     expect(theme.palette.text.primary).toBe(NEUTRAL_DARK[8]);
     expect(theme.palette.text.secondary).toBe(NEUTRAL_DARK[6]);
     expect(theme.palette.text.disabled).toBe(NEUTRAL_DARK[4]);
@@ -174,22 +187,45 @@ function rootVars(mode: 'light' | 'dark'): Record<string, string> {
 }
 
 describe('玻璃材质变量下发与让位', () => {
-  it('5a. :root 的 --glass-* 值与 GLASS 常量逐项一致（浅/深两套）', () => {
-    const expected: Record<string, string> = {
-      '--glass-blur': GLASS.blur,
-      '--glass-saturate': GLASS.saturate,
-      '--glass-surface-opacity': GLASS.surfaceOpacity,
-      '--glass-panel-opacity': GLASS.panelOpacity,
-      '--glass-scrim-opacity': GLASS.scrimOpacity,
-      '--glass-highlight': GLASS.highlight,
-      '--glass-haze-opacity': GLASS.hazeOpacity,
-      '--glass-haze-bleed': GLASS.hazeBleed,
+  it('5a. :root 的 --glass-* 值与 GLASS（浅色）/ GLASS_DARK（深色）逐项一致', () => {
+    // 三档纸底 opacity 深浅取值不同：浅色是 GLASS 的实测底线，深色另有一套更实的档位
+    // （见 GLASS_DARK）。blur / saturate / scrim / bleed 两主题共用同一支。
+    const expected: Record<Mode, Record<string, string>> = {
+      light: {
+        '--glass-blur': GLASS.blur,
+        '--glass-saturate': GLASS.saturate,
+        '--glass-surface-opacity': GLASS.surfaceOpacity,
+        '--glass-panel-opacity': GLASS.panelOpacity,
+        '--glass-scrim-opacity': GLASS.scrimOpacity,
+        '--glass-haze-opacity': GLASS.hazeOpacity,
+        '--glass-haze-bleed': GLASS.hazeBleed,
+      },
+      dark: {
+        '--glass-blur': GLASS.blur,
+        '--glass-saturate': GLASS.saturate,
+        '--glass-surface-opacity': GLASS_DARK.surfaceOpacity,
+        '--glass-panel-opacity': GLASS_DARK.panelOpacity,
+        '--glass-scrim-opacity': GLASS.scrimOpacity,
+        '--glass-haze-opacity': GLASS_DARK.hazeOpacity,
+        '--glass-haze-bleed': GLASS.hazeBleed,
+      },
     };
     for (const mode of ['light', 'dark'] as const) {
       const vars = rootVars(mode);
-      for (const [cssVar, tokenValue] of Object.entries(expected)) {
+      for (const [cssVar, tokenValue] of Object.entries(expected[mode])) {
         expect(vars[cssVar], `${mode} ${cssVar}`).toBe(tokenValue);
       }
+    }
+  });
+
+  it('5a2. GLASS 里没有 highlight，:root 也不下发 --glass-highlight', () => {
+    // 镜面高光是「左上透镜」配方的角色；本套玻璃的光泽全部由 --glass-sheen-1..3 与
+    // --glass-rim / --glass-lip 出，没有任何规则读这个变量。留着只会让测试替一个死键护航。
+    expect(Object.keys(GLASS)).not.toContain('highlight');
+    for (const mode of ['light', 'dark'] as const) {
+      expect(rootVars(mode), `${mode} 不该再下发 --glass-highlight`).not.toHaveProperty(
+        '--glass-highlight',
+      );
     }
   });
 
@@ -198,17 +234,15 @@ describe('玻璃材质变量下发与让位', () => {
     expect(rootVars('dark')['--shadow-whisper']).toBe(GLASS_SHADOW_WHISPER.dark);
   });
 
-  it('5c. --color-paper 等于该主题 palette.background.default', () => {
+  it('5c. --color-paper 等于该主题 palette.background.default 与 PAPER token', () => {
     for (const mode of ['light', 'dark'] as const) {
       const theme = themeOf(mode);
       expect(rootVars(mode)['--color-paper']).toBe(theme.palette.background.default);
-      expect(rootVars(mode)['--color-paper']).toBe(
-        mode === 'light' ? NEUTRAL_LIGHT[0] : NEUTRAL_DARK[0],
-      );
+      expect(rootVars(mode)['--color-paper']).toBe(PAPER[mode]);
     }
   });
 
-  it('5d. 壁纸原图单层背景位于顶层键 #rtk-wallpaper 承载层（var(--rtk-wallpaper)，驯化层已移除不含 color-mix）', () => {
+  it('5d. 壁纸原图位于顶层键 #rtk-wallpaper 承载层（var(--rtk-wallpaper)，驯化层已移除不含 color-mix）', () => {
     for (const mode of ['light', 'dark'] as const) {
       const styles = globalStyles(mode);
       const layer = styles[`#${WALLPAPER_LAYER_ID}`] as Record<string, unknown> | undefined;
@@ -216,8 +250,14 @@ describe('玻璃材质变量下发与让位', () => {
       const bg = layer!.backgroundImage;
       expect(typeof bg).toBe('string');
       expect(bg as string).toContain('var(--rtk-wallpaper');
-      // 驯化层已移除：不再有纸色 color-mix 叠加层，壁纸显示用户原图
+      // 壁纸层不带纸色 color-mix 叠加：壁纸显示用户原图
       expect(bg as string).not.toContain('color-mix');
+      // 压暗层（第一层的变量）必须压在壁纸之上，不能反过来盖在壁纸下面。
+      // 定位壁纸那一段时按「变量名 + 逗号」找：压暗变量名是壁纸变量名的前缀，裸变量名
+      // 会命中同一处，位移比较无从谈起。
+      expect(bg as string, `${mode}: 压暗层应在壁纸之上`).toContain(
+        `var(${WALLPAPER_SHADE_VAR}), var(${WALLPAPER_VAR},`,
+      );
     }
   });
 
@@ -294,12 +334,12 @@ describe('玻璃材质变量下发与让位', () => {
     expect(rootStyles.backgroundColor).toBe('transparent');
   });
 
-  it('5j. 壁纸层由 #rtk-wallpaper 真实 DOM 节点承载：body 不再带背景，承载层 fixed / inset 0 / z-index -1 / pointer-events none，且无 backgroundAttachment', () => {
+  it('5j. 壁纸层由 #rtk-wallpaper 真实 DOM 节点承载：body 不带背景，承载层 fixed / inset 0 / z-index -1 / pointer-events none，且无 backgroundAttachment', () => {
     for (const mode of ['light', 'dark'] as const) {
       const styles = globalStyles(mode);
       const body = styles.body as Record<string, unknown>;
-      // 背景已挪进真实 DOM 承载层，body 只剩排版属性；backgroundAttachment: fixed 整条删除——
-      // 固定由 position: fixed 提供，留着是死代码
+      // 背景在真实 DOM 承载层上，body 只剩排版属性；backgroundAttachment 不设——
+      // 固定由 position: fixed 提供，写了是死代码
       expect(body['&::before']).toBeUndefined();
       expect(body.backgroundImage).toBeUndefined();
       expect(body.backgroundAttachment).toBeUndefined();
@@ -342,9 +382,8 @@ describe('玻璃材质变量下发与让位', () => {
   });
 });
 
-describe('玻璃高光恒为一档（不再按有没有壁纸分流）', () => {
-  // 「没有壁纸」已不是一种状态：用户没设时背景是默认壁纸，玻璃身后永远有图像可透，
-  // 因此主题层不再下发任何按图源分流 --glass-highlight 的选择器。
+describe('玻璃高光不按图源分流，也不下发', () => {
+  // 「没有壁纸」不是一种状态：用户没设时背景是默认壁纸，玻璃身后永远有图像可透。
   it('6a. 两个模式都不存在按图源分流的高光改写块', () => {
     for (const mode of ['light', 'dark'] as const) {
       const keys = Object.keys(globalStyles(mode));
@@ -355,8 +394,8 @@ describe('玻璃高光恒为一档（不再按有没有壁纸分流）', () => {
     }
   });
 
-  it('6b. :root 块高光恒为 GLASS.highlight', () => {
-    expect(rootVars('light')['--glass-highlight']).toBe(GLASS.highlight);
-    expect(rootVars('dark')['--glass-highlight']).toBe(GLASS.highlight);
+  it('6b. 两个模式的 :root 都不含 --glass-highlight', () => {
+    expect(rootVars('light')).not.toHaveProperty('--glass-highlight');
+    expect(rootVars('dark')).not.toHaveProperty('--glass-highlight');
   });
 });

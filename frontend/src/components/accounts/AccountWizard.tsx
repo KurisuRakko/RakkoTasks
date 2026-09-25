@@ -238,7 +238,7 @@ export default function AccountWizard({ onDone, onCancel }: Props) {
                             {opt.title}
                           </Typography>
                           {opt.subtitle && (
-                            <Typography variant="body2" color="text.secondary">
+                            <Typography variant="caption" sx={{ display: 'block' }}>
                               {opt.subtitle}
                             </Typography>
                           )}
@@ -295,11 +295,13 @@ export default function AccountWizard({ onDone, onCancel }: Props) {
               </>
             ) : (
               <>
-                <Typography variant="body2" color="text.secondary">
+                <Typography variant="caption">
                   使用这个邮箱登录微软并完成授权。默认使用 Thunderbird 公共客户端，学校或公司租户
                   通常不允许自注册应用——保持默认即可；只有需要自己注册应用的场景才填下面的 client_id。
                 </Typography>
                 <Button
+                  variant="text"
+                  color="inherit"
                   size="small"
                   onClick={() => setAdvancedOpen((v) => !v)}
                   aria-expanded={advancedOpen}
@@ -337,7 +339,7 @@ export default function AccountWizard({ onDone, onCancel }: Props) {
                 setActiveStep(3);
               }}
             />
-            <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
+            <Typography variant="caption" sx={{ display: 'block', mt: 2 }}>
               暂时不方便授权？可先保存账户，稍后在账户详情里重新授权。
             </Typography>
           </>
@@ -366,7 +368,7 @@ export default function AccountWizard({ onDone, onCancel }: Props) {
                 上一步
               </Button>
             )}
-            <Button variant="outlined" onClick={onCancel} disabled={submitting}>
+            <Button variant="text" color="inherit" onClick={onCancel} disabled={submitting}>
               取消
             </Button>
             <Button

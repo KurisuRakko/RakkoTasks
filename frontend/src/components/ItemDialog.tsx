@@ -7,6 +7,12 @@
 // 移动端全屏、桌面端限宽（md）；paper 挂 VT_NAMES.sheet，与来源列表行做容器变换。
 // md 起经 columnDialogSx 与内容列重合（同宽、居中于主内容区），列表行长成对话框时
 // 容器只在纵向生长，不再露出空白条。
+// 纸面是不透明实色（见下面的 DIALOG_PAPER_PROPS）：详情是长文阅读面，可读性优先，
+// 不用毛玻璃。段与段之间的分隔只用 Divider 一种（颜色走 theme.palette.divider），
+// 段间距统一取 CHEATSHEET §Spacing 的 gap-4（16px，夹在 12px 的卡内间距与 24px 的
+// 分区间距之间），不再各段一个数。实色纸面上恢复正常文字层级：标题 text.primary，
+// 辅助文字 text.secondary——深浅两套下 text.secondary 对 background.paper 都过
+// AA 4.5（浅 6.01 / 深 10.01，守卫用例在 tests/item-dialog.test.tsx 里）。
 
 import { useEffect, useState } from 'react';
 import AppBar from '@mui/material/AppBar';
@@ -31,6 +37,7 @@ import Toolbar from '@mui/material/Toolbar';
 import Typography from '@mui/material/Typography';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import { useTheme } from '@mui/material/styles';
+import type { Theme } from '@mui/material/styles';
 import CloseIcon from '@mui/icons-material/Close';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
@@ -63,6 +70,27 @@ interface Props {
   /** 条目删除成功（父组件用它把条目移出列表；仅手动条目会触发） */
   onDeleted?: (id: number) => void;
 }
+
+// 详情对话框纸面：不透明实色纸（详情是长文，可读性优先于材质）。底色取
+// background.paper，backgroundImage 压成 none（MUI 深色会给 Paper 叠一层 overlay
+// 渐变，留着就不是纯实色了）；文字不用光晕（textShadow: 'none'）；阴影交回主题的
+// Dialog 默认档（elevation 24 走 theme.shadows，这里不覆写）。
+//
+// 提成模块级常量与 RowContextMenu 的 MENU_PAPER_PROPS 同理：slotProps 的类型对行内
+// 字面量做 excess property check，常量赋值可绕过该检查。VT_NAMES.sheet 保留——行↔
+// 详情的容器变换不随纸面材质改变。
+const DIALOG_PAPER_PROPS = {
+  sx: (theme: Theme) => ({
+    viewTransitionName: VT_NAMES.sheet,
+    backgroundColor: theme.palette.background.paper,
+    backgroundImage: 'none',
+    textShadow: 'none',
+  }),
+};
+
+// 段与段之间只有一种分隔：MUI 的 Divider（颜色默认取 theme.palette.divider，不重写）。
+// 间距也只有一个数——CHEATSHEET §Spacing 的 gap-4（theme.spacing(2) = 16px）。
+const SECTION_DIVIDER_SX = { my: 2 } as const;
 
 export default function ItemDialog({ item, onClose, onChanged, onDeleted }: Props) {
   // 渲染一律读 current：编辑/删除会更新它，父组件列表经 onChanged/onDeleted 同步
@@ -185,9 +213,7 @@ export default function ItemDialog({ item, onClose, onChanged, onDeleted }: Prop
       fullWidth
       sx={columnDialogSx}
       {...dialogTransitionProps()}
-      slotProps={{
-        paper: { sx: { viewTransitionName: VT_NAMES.sheet } },
-      }}
+      slotProps={{ paper: DIALOG_PAPER_PROPS }}
       open
       onClose={onClose}
     >
@@ -199,12 +225,13 @@ export default function ItemDialog({ item, onClose, onChanged, onDeleted }: Prop
           <Typography variant="h6" sx={{ ml: 1, flexGrow: 1 }} noWrap>
             任务详情
           </Typography>
-          {/* 编辑：任何条目都能改字段与提醒；删除：仅手动条目（邮件条目后端仍拒删） */}
+          {/* 编辑：任何条目都能改字段与提醒；删除：仅手动条目（邮件条目后端仍拒删）。
+              删除是进入危险流程的入口，色取 error；最终确认在下面的确认框里。 */}
           <IconButton color="inherit" aria-label="编辑" onClick={() => setEditorOpen(true)}>
             <EditIcon />
           </IconButton>
           {manual && (
-            <IconButton color="inherit" aria-label="删除" onClick={() => setConfirmDelete(true)}>
+            <IconButton color="error" aria-label="删除" onClick={() => setConfirmDelete(true)}>
               <DeleteOutlineIcon />
             </IconButton>
           )}
@@ -216,7 +243,7 @@ export default function ItemDialog({ item, onClose, onChanged, onDeleted }: Prop
         </Typography>
         <Stack direction="row" spacing={1} sx={{ mb: 1.5 }}>
           <Chip label={current.category} size="small" variant="outlined" />
-          {/* 与列表行同一个 DueChip：逾期/临期的配色口径只有一处，不会两边分叉 */}
+          {/* 与列表行同一个 DueChip：逾期/今天/更远的三档配色口径只有一处，不会两边分叉 */}
           <DueChip item={current} today={new Date()} />
         </Stack>
         {/* 提醒列表：只读展示。任何条目点右上角「编辑」都能改字段与提醒——ItemEditor
@@ -244,12 +271,12 @@ export default function ItemDialog({ item, onClose, onChanged, onDeleted }: Prop
               {current.summary ? (
                 <SafeMarkdown breaks>{current.summary}</SafeMarkdown>
               ) : (
-                <Typography variant="body2" color="text.secondary">
+                <Typography variant="body2" sx={{ color: 'text.secondary' }}>
                   暂无详情
                 </Typography>
               )}
             </Box>
-            <Divider sx={{ my: 1.5 }} />
+            <Divider sx={SECTION_DIVIDER_SX} />
             <Stack direction="row" spacing={1}>
               <Button
                 variant="outlined"
@@ -264,15 +291,15 @@ export default function ItemDialog({ item, onClose, onChanged, onDeleted }: Prop
           </>
         ) : (
           <>
-            <Typography variant="body2" color="text.secondary" gutterBottom>
+            <Typography variant="body2" gutterBottom sx={{ color: 'text.secondary' }}>
               来源账户：{accountName ?? '…'}
             </Typography>
             {current.summary && (
-              <Typography variant="body2" color="text.secondary" paragraph>
+              <Typography variant="body2" paragraph>
                 {current.summary}
               </Typography>
             )}
-            <Divider sx={{ my: 1.5 }} />
+            <Divider sx={SECTION_DIVIDER_SX} />
             <Typography variant="subtitle2" gutterBottom>
               AI 详情
             </Typography>
@@ -284,7 +311,7 @@ export default function ItemDialog({ item, onClose, onChanged, onDeleted }: Prop
               </Stack>
             ) : detailError ? (
               <Stack alignItems="center" spacing={1} sx={{ py: 2 }}>
-                <Typography variant="body2" color="text.secondary">
+                <Typography variant="body2" sx={{ color: 'text.secondary' }}>
                   详情生成失败
                 </Typography>
                 <Button
@@ -303,7 +330,7 @@ export default function ItemDialog({ item, onClose, onChanged, onDeleted }: Prop
                 <SafeMarkdown>{detail}</SafeMarkdown>
               </Box>
             ) : (
-              <Typography variant="body2" color="text.secondary">
+              <Typography variant="body2" sx={{ color: 'text.secondary' }}>
                 暂无详情
               </Typography>
             )}
@@ -329,6 +356,7 @@ export default function ItemDialog({ item, onClose, onChanged, onDeleted }: Prop
                             secondary={[r.sent_at ? r.sent_at.slice(0, 10) : '', r.reason]
                               .filter(Boolean)
                               .join(' · ')}
+                            // 日期/原因是次级信息，实色纸面上取默认 text.secondary
                           />
                         </ListItemButton>
                         {open && (
@@ -342,7 +370,7 @@ export default function ItemDialog({ item, onClose, onChanged, onDeleted }: Prop
                 </List>
               </>
             )}
-            <Divider sx={{ my: 1.5 }} />
+            <Divider sx={SECTION_DIVIDER_SX} />
             <Stack direction="row" spacing={1}>
               <Button
                 variant="outlined"
@@ -395,7 +423,7 @@ export default function ItemDialog({ item, onClose, onChanged, onDeleted }: Prop
           onClose={() => setEditorOpen(false)}
         />
       )}
-      {/* 删除确认框（仅手动条目会打开） */}
+      {/* 删除确认框（仅手动条目会打开）：取消在左、确认在右，都在 DialogActions 这一行里 */}
       <Dialog
         open={confirmDelete}
         onClose={deleting ? undefined : () => setConfirmDelete(false)}
@@ -405,17 +433,22 @@ export default function ItemDialog({ item, onClose, onChanged, onDeleted }: Prop
           <DialogContentText>删除这条任务？此操作不可撤销。</DialogContentText>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setConfirmDelete(false)} disabled={deleting}>
+          <Button
+            variant="text"
+            color="inherit"
+            onClick={() => setConfirmDelete(false)}
+            disabled={deleting}
+          >
             取消
           </Button>
-          <Button color="error" onClick={handleConfirmDelete} disabled={deleting}>
+          <Button variant="contained" color="error" onClick={handleConfirmDelete} disabled={deleting}>
             删除
           </Button>
         </DialogActions>
       </Dialog>
       <Snackbar
         open={snack !== null}
-        autoHideDuration={3000}
+        // 自动关闭时长由主题层 MuiSnackbar.defaultProps 统一给
         onClose={() => setSnack(null)}
         message={snack}
       />

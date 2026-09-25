@@ -1,5 +1,6 @@
 // 玻璃材质契约守卫（纯文本断言，不渲染任何组件）：
-// rakko-glass.css 是上游 design-system/src/glass.css 的逐字镜像，全项目 backdrop-filter
+// rakko-glass.css 是 design-system/src/glass.css 的**本地 Aero 定制版**（基线为上游 main，
+// 光泽与厚度边在本地改过，偏离记录见该文件头），全项目 backdrop-filter
 // 的唯一合法宿主。本文件守住：四档配方、两条退化路径、滚动渐显规则都在位；
 // 「-webkit- 前缀写法不得与无前缀 backdrop-filter 声明并列在同一规则块，前缀兜底
 // 独立在 @supports 块里」；「backdrop-filter 只允许出现在一个样式表里」；以及
@@ -154,11 +155,12 @@ describe('变量下发守卫', () => {
   it('4e. rakko-glass.css 消费的每个 CSS 变量都能在 theme.ts 里找到下发', async () => {
     const glassCss = (await loadFs()).readFileSync('src/rakko-glass.css', 'utf-8');
 
-    // 任务书 3a 的 :root 下发清单（原 14 键）+ Aero 化新增的 11 个（--glass-rim …
-    // --glass-text-glow，--glass-sheen-4 已随三段光泽改版删除），共 25 键，逐字断言。
-    // css 实际消费的非 --rk- 变量为 22 个；--glass-scrim-opacity（主题层 MuiBackdrop 消费）、
-    // --glass-highlight（新配方已不消费，主题层仍下发）与 --shadow-whisper（haze 等场景仍用）
-    // 不在玻璃样式表里，故总下发数比 css 消费数多 3。
+    // :root 的下发清单，逐字断言，共 24 键：--color-* 四键 + --glass-* 十八键 + --shadow-whisper。
+    // 不含 --glass-highlight：镜面高光那一档由 sheen 承担，本文件没有任何规则读它，
+    // 下发就是死键（下方动态守卫只看 css 里 var() 真正消费到的变量，本来也扫不到它）。
+    // css 实际消费的非 --rk- 变量为 22 个：--glass-scrim-opacity（主题层 MuiBackdrop
+    // 消费）与 --shadow-whisper（haze 等场景仍用）不在玻璃样式表里，
+    // 故总下发数比 css 消费数多 2。
     const providedByTheme = [
       '--color-paper',
       '--color-border',
@@ -170,7 +172,6 @@ describe('变量下发守卫', () => {
       '--glass-surface-opacity',
       '--glass-panel-opacity',
       '--glass-scrim-opacity',
-      '--glass-highlight',
       '--glass-haze-opacity',
       '--glass-haze-bleed',
       '--glass-rim',
@@ -214,17 +215,17 @@ describe('Aero 玻璃配方契约（新材质接线）', () => {
     for (const v of ['--glass-rim', '--glass-lip', '--glass-bloom', '--glass-lift', '--glass-text-glow']) {
       expect(panel, `panel 配方应含 ${v}`).toContain(v);
     }
-    // 旧「左上透镜」radial 已被 sheen 光泽取代：不得残留为第二层，否则上半部过曝
+    // 不得残留「左上透镜」radial 作第二层：它与 sheen 叠起来上半部会过曝
     expect(panel).not.toContain('120% 90% at 18% 0%');
     expect(panel).not.toContain('--glass-highlight');
   });
 
-  it('5b. chrome 与 panel 共用同一线性光泽，chrome 不再用 radial 弧光', async () => {
+  it('5b. chrome 与 panel 共用同一线性光泽，chrome 不用 radial 弧光', async () => {
     const glassCss = (await loadFs()).readFileSync('src/rakko-glass.css', 'utf-8');
     const chrome = blockOf(glassCss, "[data-glass='chrome'] {");
     const panel = blockOf(glassCss, "[data-glass='panel'] {");
-    // 高光改版：chrome 从左上角 radial 弧光换成与 panel 同款的线性光泽（横贯整条顶栏），
-    // 两档共用同一表达式——都消费 --glass-sheen-1/2/3
+    // chrome 与 panel 共用同一份线性光泽（横贯整条顶栏），都消费 --glass-sheen-1/2/3：
+    // 共用一份表达式，顶栏与浮层在壁纸上才是同一种材质
     for (const [name, block] of [
       ['chrome', chrome],
       ['panel', panel],
@@ -337,6 +338,14 @@ describe('Aero 玻璃配方契约（新材质接线）', () => {
   });
 });
 
+/** rgba(...) 尾部的 alpha：'rgba(255, 255, 255, 0.12)' → 0.12；非法写法直接判失败。
+ *  白层之间的强弱比较全部走它，不比较字符串（'0.1' 与 '0.12' 的字典序会给出反向结论）。 */
+function alphaOf(color: string): number {
+  const m = color.match(/[\d.]+(?=\)$)/);
+  expect(m, `${color} 应是以 alpha 收尾的 rgba()`).not.toBeNull();
+  return parseFloat(m![0]);
+}
+
 describe('玻璃可读性契约', () => {
   it('blur 恒为 3px：Aero 的通透是刻意的，不是待优化项', () => {
     // Aero 玻璃要能透过去看见背景轮廓，糊成一片是 iOS 毛玻璃的路子；
@@ -386,6 +395,24 @@ describe('玻璃可读性契约', () => {
     // 十二个键一个不少：防止将来加 token 只加一边，两套配方错位。
     expect(Object.keys(GLASS_AERO.dark)).toEqual(Object.keys(GLASS_AERO.light));
   });
+
+  it('深色的白层一律不超过浅色：深色只削白，不加白', () => {
+    // 浅色好看的前提是白纸 + 白高光同向；把同样多的白光晕搬到半透明黑纸上，行卡会变成
+    // 一层发灰的雾膜。方向由这条守：深色的每个白层都必须 ≤ 浅色同名的白层
+    // （rim / lip / lip-under / side / sheen-1 / sheen-2），不是「差不多」而是不得反超。
+    // 具体取值钉在 tests/theme-dark-glass.test.ts。
+    const whites = ['rim', 'lip', 'lipUnder', 'side', 'sheen1', 'sheen2'] as const;
+    for (const key of whites) {
+      expect(alphaOf(GLASS_AERO.dark[key]), `dark ${key} 不该比浅色更白`).toBeLessThanOrEqual(
+        alphaOf(GLASS_AERO.light[key]),
+      );
+    }
+    // bloom 是内发光：它在黑纸上是最容易过量的一层，深色必须收到很低的量级（具体取值钉在
+    // tests/theme-dark-glass.test.ts），但不再归零——归零会让面板中心失去透镜感
+    expect(alphaOf(GLASS_AERO.dark.bloom), '深色 bloom 应远低于浅色').toBeLessThanOrEqual(0.05);
+    // 白层清单之外，深色的 rim-inner（暗向）必须比浅色更深：厚度边的另一半靠它
+    expect(alphaOf(GLASS_AERO.dark.rimInner)).toBeGreaterThan(alphaOf(GLASS_AERO.light.rimInner));
+  });
 });
 
 // 桌面常驻侧栏（permanent Drawer，data-glass="chrome"）的浅色削白改写：上游只为 ~64px
@@ -394,13 +421,6 @@ describe('玻璃可读性契约', () => {
 // 的 navRailGlassSx，作用范围由 app-shell.test.tsx 守卫）。本组钉的是「削了什么」与
 // 「什么没被顺手削掉」——观感要由真机判定，文本只能钉住这几条不变量。
 describe('桌面侧栏浅色削白契约', () => {
-  /** rgba(...) 尾部的 alpha：'rgba(255, 255, 255, 0.12)' → 0.12；非法写法直接判失败 */
-  function alphaOf(color: string): number {
-    const m = color.match(/[\d.]+(?=\)$)/);
-    expect(m, `${color} 应是以 alpha 收尾的 rgba()`).not.toBeNull();
-    return parseFloat(m![0]);
-  }
-
   it('改写恰好是三个白（sheen-1 / sheen-2 / lip），值逐字写死', () => {
     // 键集逐字相等而不是「包含」：多出一个键就说明动了本次范围外的层（暗端 / 纸色 / rim）。
     expect(Object.keys(GLASS_NAV_RAIL_LIGHT).sort()).toEqual([

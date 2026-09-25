@@ -33,18 +33,77 @@ export const NEUTRAL_DARK: readonly [string, string, string, string, string, str
   '#f8f8f8', // n10 标题/最高强调
 ];
 
+/** 页面纸色（--color-paper）。契约把「暖意」与「中性色阶」分家：深色不反转暖色阶，
+ *  NEUTRAL_DARK 保持纯灰（R=G=B），深色的暖意只由 --color-paper 承担（tokens.md:7）。
+ *  这里就是那一支：浅色沿用暖纸 n1，深色是 Rakko-Design 深色纸色的镜像——
+ *  `git -C ~/GitHub/Rakko-Design show main:design-system/showcase/src/styles/foundation.css`
+ *  的 [data-theme='dark'] { --color-paper }（消费方主题层深色纸色的契约取值）。
+ *  它与浅色纸同色相：浅色纸 #f9f8f5 是 HSL(45°, 25%, 97%)，深色纸 #1a1814 是
+ *  HSL(40°, 13%, 9%)——同一支暖黄灰，色相只差 5°，饱和度不到浅色纸的一半，三通道
+ *  R>G>B 且 R-B ≈ 6/255，在近黑底上读作暖意而不是橄榄绿。裸灰（R=G=B）的深色 n1 与它
+ *  差着整整一支色相，所以纸色不能拿中性色阶顶替。 */
+export const PAPER = {
+  light: '#f9f8f5',
+  dark: '#1a1814',
+} as const;
+
+/** 抬升一档的实体面（background.paper）：卡片、菜单、对话框这类**不透明实色浮层**的底。
+ *  它必须比页面纸色亮一档（浮层要浮起来），但深色的 n2（#242424）是纯冷灰——页面纸色
+ *  已经是暖近黑，两者并置就是「暖底上压一层冷灰」。
+ *  深色取值 #262420：由 PAPER.dark 与白色按固定比例线性混合得到——白占 5.13%
+ *  （逐通道 sRGB 取整）时明度与深色 n2 相等（CIE L* 14.28 对 14.20，差 0.08；相对亮度
+ *  0.01778 对 0.01764），色相保持 PAPER.dark 的 40°（HSL 13.0% → 8.6% 饱和度，混白必然
+ *  降饱和），三通道 R>G>B 且 R-B = 6，与 PAPER.dark 相同。即「同明度、同色相的抬升一档」。
+ *  浅色沿用 n2 原值（暖纸体系里的浅灰，本来就同色相）。 */
+export const PAPER_RAISED = {
+  light: '#f0efeb', // 浅色 n2，原值
+  dark: '#262420', // mix(PAPER.dark, #fff, 94.87% / 5.13%)；HSL(40°, 8.6%, 13.7%)
+} as const;
+
 /** accent（梅 ume）：浅色基础色 #c56473，深色提亮的 桃 近似 #e095a4 */
 export const ACCENT = {
   light: '#c56473',
   dark: '#e095a4',
 } as const;
 
-/** 语义色（和色体系）；深色主题下各提亮约 15%（MUI lighten(c, 0.15)） */
+/** 语义四色的完整 MUI 色阶：每档 { light, main, dark, contrastText } 都是显式 token，
+ * 四档齐全，组件层不会拿到 MUI 用 grey/orange 兜出的默认值（缺档的漏值对照断言在
+ * tests/theme-palette.test.ts）。
+ * 依据：references/tokens.md:62-73 每个语义色只定义**一个**基础 hex，它是浅色主题的
+ * main，也是另外两档的派生种子；`consumer app theme layer` 在深色把整个色阶上提约
+ * 15%（tokens.md:71「lifts each one ~15% in dark mode」）。main 之外的两档契约没给，
+ * 按同一条 ±15% 亮度档从 main 派生：light 提亮 15%、dark 压暗 15%（与真实 hex 的
+ * 对应关系写在每个值后面）。深色主题自己的取值由 theme.ts 用 lighten(main, 0.15)
+ * 求值（先例：theme.test.ts 的「深色语义色较浅色提亮」用例），那里只换 main 及其
+ * 派生档的相对关系不变。
+ * contrastText 取 pairings 的实测对比度（tokens.md:56-60 的「填充 + 白字」配对）：
+ * 两个深色墨底给 #fff，两个中等亮度底给 #000（小字与常规字都过 WCAG AA）。
+ * 四色同为状态色（tokens.md:73 不得当装饰色），不自造第五个语义色。 */
 export const SEMANTIC = {
-  info: '#3d6896', // 縹 hanada
-  success: '#5e9f7e', // 若竹 wakatake
-  warning: '#a87a3d', // 朽葉 kuchiba
-  error: '#a64953', // 蘇芳 suoh
+  info: {
+    light: '#5a7ea5', // lighten(#3d6896, 15%)
+    main: '#3d6896', // 縹 hanada（tokens.md:66）
+    dark: '#33587f', // darken(#3d6896, 15%)
+    contrastText: '#fff', // 6.90:1
+  },
+  success: {
+    light: '#76ad91', // lighten(#5e9f7e, 15%)
+    main: '#5e9f7e', // 若竹 wakatake（tokens.md:67）
+    dark: '#4f876b', // darken(#5e9f7e, 15%)
+    contrastText: '#000', // 7.16:1
+  },
+  warning: {
+    light: '#b58d5a', // lighten(#a87a3d, 15%)
+    main: '#a87a3d', // 朽葉 kuchiba（tokens.md:68）
+    dark: '#8e6733', // darken(#a87a3d, 15%)
+    contrastText: '#000', // 5.87:1
+  },
+  error: {
+    light: '#b3646c', // lighten(#a64953, 15%)
+    main: '#a64953', // 蘇芳 suoh（tokens.md:69）
+    dark: '#8d3e46', // darken(#a64953, 15%)
+    contrastText: '#fff', // 6.62:1
+  },
 } as const;
 
 /** 默认边框：浅色 rgba(24,24,27,0.1)；深色用白色 12%。
@@ -115,35 +174,88 @@ export const STATE_OPACITY = {
   pressed: 0.12,
 } as const;
 
+/** 语义色描边芯片的底色档：同色、比中性档更浓一点的浅填充。
+ *  语义由「同色描边 + 同色淡填充」传达，12px 的标签文字另走 n9（见下面的
+ *  TEXT_CONTRAST_MIN）。比中性档重：这一档要和描边一起扛「这是哪一类状态」，
+ *  太淡就只剩一根细线。 */
+export const SEMANTIC_TINT_ALPHA = { light: 0.14, dark: 0.2 } as const;
+
+/** 文字可读性的对比度地板：12px 标签无论压在纸色还是玻璃上都按 WCAG AA 正文档取值。
+ *  芯片之类的小字零件用它当硬约束（filled 底配 contrastText 不够线就降档）。 */
+export const TEXT_CONTRAST_MIN = 4.5;
+
+/** 反相面（Tooltip / Snackbar）的墨底色与面上文字色。
+ *  Tooltip 契约是「保持 n-10 实底（对比度优先、面积小、存活短）」
+ *  （references/components.md:20），Snackbar 契约是「n-10 底、n-1 字」
+ *  （rakko-glass.css 的 inverse 档定义）。
+ *  这里取**浅色**中性档而不是当前主题的 n10/n1：深色主题的 n-1 是近黑、n-10 是近白，
+ *  照当前主题直接取会得到一块近白的高亮气泡，既不是「墨色实底」也不是反向强调。
+ *  浅色 n1 落在浅色 n10 上是 17.35:1，主题无关地恒成立。（PWA <meta name="theme-color">
+ *  的深浅取值见 theme.ts / lib/theme-mode.tsx，是另一回事。） */
+export const SEMANTIC_INVERSE_SURFACE = {
+  bg: NEUTRAL_LIGHT[9], // 浅色 n10
+  fg: NEUTRAL_LIGHT[0], // 浅色 n1
+} as const;
+
+/** 共享间距档（px）：与 Tailwind 默认档对齐（tokens.md:127-132 的四基准）
+ *  4 / 8 / 12 / 16 / 24；组件主题层只消费这几档，不写裸数字。 */
+export const SPACING = {
+  xs: 4,
+  sm: 8,
+  md: 12,
+  lg: 16,
+  xl: 24,
+} as const;
+
 /** whisper 阴影：禁硬阴影（阴影只允许此档，其余用 1px 边框分层） */
 export const WHISPER_SHADOW = '0 1px 2px rgba(20, 19, 18, 0.06)';
 
-/** 玻璃材质数值（镜像自上游 tokens.css 的 --glass-*）。配方本身在 rakko-glass.css，
- * 是 design-system/src/glass.css 的逐字镜像；这里只放它消费的值，由主题层下发到 :root。 */
+/** 玻璃材质数值（取自上游 tokens.css 的 --glass-*）。配方本身在 rakko-glass.css，
+ * 是 design-system/src/glass.css 的**本地 Aero 定制版**（基于上游改过光泽与厚度边，
+ * 偏离记录见该文件头部）；这里放它消费的值，由主题层下发到 :root。 */
 export const GLASS = {
   blur: '3px',
   saturate: '193%',
   // chrome 是四档里最透的，压在它上面的是 12px/500 的底栏导航标签。实测（真实中文字形 +
   // 反相光晕，文字色 n9，取最差点）：浅色主题下 45% 时三张实测壁纸有两张够不到 AA 4.5，
   // 彩色天空只有 3.80；52% 是全部过线的最小值（4.62–5.45），且 45% 与 52% 的顶栏通透度
-  // 截图对比无可见差别（与上游 Rakko Design 同步，原 45%）。
+  // 截图对比无可见差别。
   surfaceOpacity: '52%',
   panelOpacity: '58%',
   scrimOpacity: '34%',
-  highlight: 'rgba(255, 255, 255, 0.59)',
-  // haze 纸色 55%（与上游 Rakko Design 同步，原 51%）：12px/600 的分组标题压在 haze 上，
-  // 51% 时在三张实测壁纸中最低只有 3.96（彩色天空），够不到 WCAG AA 4.5；55% 是全部过线
-  // 的最小值（4.53–4.98），且 51% 与 55% 的雾浓淡在真实版面上无可见差别。
+  // 这里不放 highlight：上游 CHEATSHEET.md:154 / tokens.md:160 的 --glass-highlight 是
+  // 「左上透镜」配方的镜面高光，本套玻璃（chrome / panel / inverse）的光泽全部由
+  // --glass-sheen-1..3 + --glass-rim / --glass-lip 出，没有规则读它，下发也只是个死键。
+  //
+  // haze 纸色 55%：12px/600 的分组标题压在 haze 上，51% 时三张实测壁纸中最低只有 3.96
+  // （彩色天空），够不到 WCAG AA 4.5；55% 是全部过线的最小值（4.53–4.98），且 51% 与 55%
+  // 的雾浓淡在真实版面上无可见差别。不许下调。
   hazeOpacity: '55%',
   hazeBleed: '28px',
+} as const;
+
+/** 深色主题的纸底不透明度三档（chrome / panel / haze），**本项目扩展，不是上游 token**。
+ *  深色必须比浅色更实：同一档纸色在深色下透出来的是亮壁纸，透光度越高，纸上正文的对比度
+ *  掉得越快——58% 的 `--color-paper`（#1a1814）叠在她那张亮黄葡萄园壁纸上，正文与分组标题
+ *  都在 AA 线附近挣扎；72% 把壁纸的贡献压到不足三成。
+ *  契约不给深色单独的一档（glass.md 的 paper alpha 是一套值两主题通用），上游也没有可镜像
+ *  的深色档，故按「地板只许上调」的约束在浅色地板附近取：surface 52% / panel 60% /
+ *  haze 55%。放到 58/72/66 时整屏读作一块黑板（壁纸透不出来），压回地板附近才既保住
+ *  正文对比度、又让壁纸看得见；panel 取 60% 而不是地板 58%：浮层落在任意内容之上，正文
+ *  要在它上面可读，比 chrome 实两档。三档都严格不低于浅色地板，且保留档位相对关系
+ *  （chrome 最透 = haze < panel 最实）。浅色主题一个值都不动。 */
+export const GLASS_DARK = {
+  surfaceOpacity: '52%',
+  panelOpacity: '60%',
+  hazeOpacity: '55%',
 } as const;
 
 /** Aero 玻璃的十一个新增 token（镜像上游 tokens.css 的 --glass-rim … --glass-text-glow）。
  * 键名 camelCase，与 CSS 变量一一对应：rim→--glass-rim、rimInner→--glass-rim-inner、
  * lip→--glass-lip、lipUnder→--glass-lip-under、side→--glass-side、bloom→--glass-bloom、
  * sheen1…sheen3→--glass-sheen-1…3、lift→--glass-lift、textGlow→--glass-text-glow。
- * 旧光泽的尾段键已删除（两个主题都删）：光泽改版后是上白下暗的三段（sheen-1 → sheen-2 45% →
- * sheen-3 100%），sheen-3 的语义是「底部的暗」——取代了旧版 46/47% 的陡变 + 四段尾键。
+ * 光泽是上白下暗的三段（sheen-1 → sheen-2 45% → sheen-3 100%），sheen-3 的语义是
+ * 「底部的暗」：止点必须落在 45% / 100% 这两个结构边界上，中间不许再出现陡变止点。
  * 浅色必须显式给暗：浅色是白纸底 + 白高光（rim/lip/side/bloom 全白）+ 白光泽（sheen-1/2），
  * 三层全白时通篇没有暗的一侧，卡片边界会溶进亮壁纸；所以 sheen-3 与 rim-inner 的暗段是浅色
  * 立体感的来源，写成白色就退回「无暗侧」的老问题。
@@ -164,17 +276,30 @@ export const GLASS_AERO = {
     textGlow: '0 0 2px rgba(255, 255, 255, 0.5), 0 0 6px rgba(255, 255, 255, 0.5)',
   },
   dark: {
-    rim: 'rgba(255, 255, 255, 0.2)',
-    rimInner: 'rgba(0, 0, 0, 0.22)',
-    lip: 'rgba(255, 255, 255, 0.24)',
-    lipUnder: 'rgba(255, 255, 255, 0.08)',
-    side: 'rgba(255, 255, 255, 0.09)',
-    bloom: 'rgba(255, 255, 255, 0.05)',
-    sheen1: 'rgba(255, 255, 255, 0.13)',
-    sheen2: 'rgba(255, 255, 255, 0.05)',
+    // 深色只削白、不加白。浅色好看的前提是白纸 + 白光泽同向；把同样多的白光晕搬到半透明
+    // 黑纸上，行卡会变成一层发灰的雾膜——既不深也不干净。所以深色的白层都收在「能认出
+    // 这里有一道边与一点玻璃感」的量级：rim 14% / lip 16% / lip-under 6% / side 6% /
+    // sheen-1 9% / sheen-2 3%。这一档是深色独有的平衡点，不是浅色的缩放：
+    // 收到 rim/lip 10%、sheen-1 6%、bloom 0 时，黑纸上的玻璃感一起没了，卡片读作一块平板；
+    // 放回浅色那套（.58/.6/.34）又退回发灰的雾膜。改动这里要同时看两个方向。
+    // bloom 取 3% 而不是 0：内发光在白纸上加气，在黑纸上是最容易过量的一层，但完全归零会
+    // 让面板中心失去透镜感；3% 是"看得见但不成雾"的量级。
+    // 暗向保留并加深：rim-inner 26%，那是深色厚度边的另一半，削掉就只剩一圈白边。
+    rim: 'rgba(255, 255, 255, 0.14)',
+    rimInner: 'rgba(0, 0, 0, 0.26)',
+    lip: 'rgba(255, 255, 255, 0.16)',
+    lipUnder: 'rgba(255, 255, 255, 0.06)',
+    side: 'rgba(255, 255, 255, 0.06)',
+    bloom: 'rgba(255, 255, 255, 0.03)',
+    sheen1: 'rgba(255, 255, 255, 0.09)',
+    sheen2: 'rgba(255, 255, 255, 0.03)',
+    // sheen-3 的语义是「底部的暗」，深色下必须继续指向暗：白纸底 + 白光泽时它是浅色
+    // 立体感的来源，深色下它让玻璃底边不糊进壁纸。
     sheen3: 'rgba(0, 0, 0, 0.05)',
     lift: '0 1px 2px rgba(0, 0, 0, 0.3), 0 6px 18px rgba(0, 0, 0, 0.34)',
-    textGlow: '0 0 2px rgba(0, 0, 0, 0.5), 0 0 6px rgba(0, 0, 0, 0.5)',
+    // 文字光晕必须反相（深色用黑），否则亮色正文与光晕同色会被淹没；强度取浅色的 80%，
+    // 比压到一半更能从亮壁纸上把字拎出来，又不至让字边发糊（浅色是 100%）。
+    textGlow: '0 0 2px rgba(0, 0, 0, 0.4), 0 0 6px rgba(0, 0, 0, 0.4)',
   },
 } as const;
 
@@ -190,7 +315,7 @@ export const GLASS_AERO = {
  *
  *  取值：sheen-1 34% → 12%，顶端白覆盖度 68.3% → 57.8%，顶→中落差 11.5 点 → 3.4 点，
  *  白纱振幅削掉约七成而「上亮下暗」的方向仍在；sheen-2 10% → 5%，让中段只比纸色地板高
- *  2.4 点，接进 sheen-3 的暗端时是连续过渡、45% 那道止点不再看得出来。
+ *  2.4 点，接进 sheen-3 的暗端时是连续过渡、45% 那道止点看不出来。
  *  lip 60% → 22%：22% 是浅色 lipUnder 的现值，直接复用而不是再造一个白常数；侧栏顶边与
  *  顶栏顶边在屏幕上缘首尾相接，两条 60% 的白发丝线会连成一道通白线，弱化成 22% 后它回到
  *  「一道倒角」而不是「一条亮边」。

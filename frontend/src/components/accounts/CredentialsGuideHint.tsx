@@ -13,7 +13,8 @@ interface Props {
 export default function CredentialsGuideHint({ guide }: Props) {
   return (
     <>
-      <Typography variant="body2" color="text.secondary">
+      {/* 与设置页说明文字同一字阶；落在玻璃面板上，不用 text.secondary */}
+      <Typography variant="caption">
         {guide.text}
       </Typography>
       <Button

@@ -31,6 +31,7 @@ import {
   statusChipMeta,
   usesPassword,
 } from './meta';
+import SettingsRow from './SettingsRow';
 import MicrosoftAuthGuide from './MicrosoftAuthGuide';
 import CredentialsGuideHint from './CredentialsGuideHint';
 import type { AccountInfo, AccountKind } from '../../types';
@@ -154,7 +155,7 @@ export default function AccountDetail({ account, onChanged, onRemove }: Props) {
             </Typography>
             <Chip label={chip.label} size="small" color={chip.color} variant="outlined" />
           </Stack>
-          <Typography variant="body2" color="text.secondary" noWrap>
+          <Typography variant="caption" sx={{ display: 'block' }} noWrap>
             {account.email}
           </Typography>
         </Box>
@@ -164,7 +165,9 @@ export default function AccountDetail({ account, onChanged, onRemove }: Props) {
           与上面 error/notice 两个 Alert 是两回事（那两个说的是本次操作），可以同时出现。
           账户停用时后端会清空 last_error，所以停用态这条自然不出现，不需要额外条件。 */}
       <Stack spacing={1} sx={{ mb: 2 }}>
-        <Typography variant="body2" color="text.secondary">
+        {/* 「上次同步」是与列表行同一角色的一种元信息：同一字阶（caption）、同一颜色
+            （正文色 n9），两处不能一处 body2 一处 caption */}
+        <Typography variant="caption" sx={{ display: 'block' }}>
           上次同步：{account.last_sync_at ? timeAgo(account.last_sync_at) : '从未'}
         </Typography>
         {account.last_error && (
@@ -200,8 +203,10 @@ export default function AccountDetail({ account, onChanged, onRemove }: Props) {
 
       {showCredentials && passwordKind && (
         <>
-          {/* Gmail / QQ 邮箱：更换应用专用密码 / 授权码（折叠），文案随类型走 */}
+          {/* Gmail / QQ 邮箱：更换应用专用密码 / 授权码（折叠），文案随类型走；折叠入口是三级动作：text + inherit */}
           <Button
+            variant="text"
+            color="inherit"
             size="small"
             onClick={() => setPasswordOpen((v) => !v)}
             aria-expanded={passwordOpen}
@@ -265,7 +270,7 @@ export default function AccountDetail({ account, onChanged, onRemove }: Props) {
       {/* 停用账户：启用入口（停用会清空凭据，启用后通常需要补凭据） */}
       {!account.enabled && (
         <Stack direction="row" spacing={1.5} alignItems="center" sx={{ mt: 2 }}>
-          <Typography variant="body2" color="text.secondary" sx={{ flexGrow: 1 }}>
+          <Typography variant="body2" sx={{ flexGrow: 1 }}>
             该账户已停用，邮件与任务都保留着。
           </Typography>
           <Button
@@ -280,22 +285,31 @@ export default function AccountDetail({ account, onChanged, onRemove }: Props) {
       )}
 
       {/* 危险区：不用硬横线切（全站已改为靠间距与材质分层，见设置页改版），
-          用一段间距 + 一行说明划边界 */}
+          用一段间距 + 一个设置行划边界。入口是 text error（进入破坏性流程），
+          最终确认才升级成 contained error（在移除二选一里）。 */}
       <Box sx={{ mt: 4 }}>
-        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
-          停用或删除这个邮箱账户
-        </Typography>
-        <Button variant="outlined" color="error" startIcon={<DeleteOutlineIcon />} onClick={onRemove}>
-          移除账户…
-        </Button>
+        <SettingsRow
+          label={
+            <Typography variant="caption" sx={{ display: 'block' }}>
+              停用或删除这个邮箱账户
+            </Typography>
+          }
+          value={
+            <Button
+              variant="text"
+              color="error"
+              startIcon={<DeleteOutlineIcon />}
+              onClick={onRemove}
+            >
+              移除账户…
+            </Button>
+          }
+          sx={{ px: 0 }}
+        />
       </Box>
 
-      <Snackbar
-        open={snack !== null}
-        autoHideDuration={3000}
-        onClose={() => setSnack(null)}
-        message={snack}
-      />
+      {/* 自动关闭时长由主题的 MuiSnackbar.defaultProps 统一给（4 秒） */}
+      <Snackbar open={snack !== null} onClose={() => setSnack(null)} message={snack} />
     </Box>
   );
 }

@@ -136,6 +136,37 @@ describe('RemoveAccountChoice', () => {
   });
 });
 
+describe('RemoveAccountChoice 按钮层级', () => {
+  it('彻底删除的最终确认是 contained error，「返回」是 text inherit（取消只有一种变体）', () => {
+    renderChoice();
+
+    const back = screen.getByRole('button', { name: '返回' });
+    expect(back.className).toMatch(/MuiButton-text/);
+    expect(back.className).toMatch(/MuiButton-colorInherit/);
+
+    fireEvent.click(screen.getByRole('button', { name: '彻底删除' }));
+    const confirm = screen.getByRole('button', { name: '确认彻底删除' });
+    expect(confirm.className).toMatch(/MuiButton-contained/);
+    expect(confirm.className).toMatch(/MuiButton-colorError/);
+
+    // 取消在左、确认在右，同一行右对齐
+    const actions = back.parentElement as HTMLElement;
+    expect(actions).toBe(confirm.parentElement);
+    expect(Array.from(actions.children).indexOf(back)).toBeLessThan(
+      Array.from(actions.children).indexOf(confirm),
+    );
+  });
+
+  it('停用（可恢复）的确认是主操作 contained primary，不借用危险色', () => {
+    renderChoice();
+
+    const confirm = screen.getByRole('button', { name: '确认停用' });
+    expect(confirm.className).toMatch(/MuiButton-contained/);
+    expect(confirm.className).toMatch(/MuiButton-colorPrimary/);
+    expect(confirm.className).not.toMatch(/MuiButton-colorError/);
+  });
+});
+
 describe('RemoveAccountChoice 选项卡片不铺纸', () => {
   it('未选中的选项卡背景是 transparent：移动端它坐在玻璃面板上，铺纸会把玻璃闷掉', () => {
     renderChoice();

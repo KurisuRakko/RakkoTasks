@@ -20,18 +20,22 @@ import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 import useMediaQuery from "@mui/material/useMediaQuery";
 import { useTheme } from "@mui/material/styles";
+import type { Theme } from "@mui/material/styles";
 import { fetchStatus } from "../../lib/api";
 import { mainAreaDialogSx, EMPTY_STATE_BOX_SX } from "../../lib/layout";
 import { enterSx, usePrefersReducedMotion } from "../../lib/motion";
 import { useNavigateTo } from "../../lib/nav";
 import { cardRowSx } from "../../lib/surface";
+import { dialogPanelGlassSx } from "./dialog-glass";
 import { timeAgo } from "../../lib/time";
 import { MOTION } from "../../rakko-tokens";
 import { statusChipMeta, kindLabel, kindAvatar } from "./meta";
+import SettingsRow, { HINT_SX, ROW_MIN_HEIGHT_PX, rowSeparatorSx } from "./SettingsRow";
 import AccountDetail from "./AccountDetail";
 import AccountWizard from "./AccountWizard";
 import RemoveAccountChoice from "./RemoveAccountChoice";
 import type { AccountInfo, StatusResponse } from "../../types";
+import type { SystemStyleObject } from "@mui/system";
 import { SlideUp } from "../DialogTransition";
 
 /** 桌面 Dialog 的三种内容：添加向导 / 账户详情 / 移除二选一，同一个 Dialog 切换 */
@@ -51,6 +55,11 @@ function dialogTitle(dialog: AccountDialog | null): string {
       return "移除账户";
   }
 }
+
+/** 对话框纸面的 panel 材质 props：'data-glass' 取配方（见 dialog-glass.ts 的接线）。
+ *  提成模块级常量而不是行内字面量：MUI 的 slotProps 类型对行内字面量做 excess property
+ *  check，data-* 不在其类型里，常量赋值可绕过（同 RowContextMenu 的 MENU_PAPER_PROPS）。 */
+const ACCOUNTS_DIALOG_PAPER_PROPS = { 'data-glass': 'panel' };
 
 export default function AccountsSection() {
   const theme = useTheme();
@@ -115,11 +124,18 @@ export default function AccountsSection() {
 
   return (
     <Box>
-      <Stack direction="row" alignItems="center" sx={{ mb: 1 }}>
-        <Typography variant="overline" sx={{ flexGrow: 1 }}>
+      {/* 标题行与设置行同一最小高度：分区标题（无论带不带右侧按钮）落在同一条基线上 */}
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={1}
+        sx={{ mb: 0.5, minHeight: `${ROW_MIN_HEIGHT_PX}px` }}
+      >
+        <Typography variant="overline" component="h2" sx={{ flexGrow: 1, minWidth: 0 }}>
           邮箱账户
         </Typography>
-        <Button variant="outlined" size="small" onClick={openAdd}>
+        {/* 添加邮箱是这一分区的主操作：全站主操作只有 contained 一种 */}
+        <Button variant="contained" size="small" onClick={openAdd}>
           添加邮箱
         </Button>
       </Stack>
@@ -131,17 +147,16 @@ export default function AccountsSection() {
       ) : error && !data ? (
         <Alert severity="error">加载账户失败</Alert>
       ) : data ? (
-        <Stack spacing={1.5}>
+        // 列表不再靠 Stack 的间距分行：账户行与设置页其余分区同一套行结构，行与行之间
+        // 是一条 inset 发丝线而不是 12px 空隙（两者同时存在就等于两种节奏叠在一起）。
+        // 这里的 8px 只作用于「最后一行 → AI 待处理行」这一段。
+        <Stack spacing={1}>
           {data.accounts.length === 0 ? (
-            <Typography
-              variant="body2"
-              color="text.secondary"
-              sx={{ textAlign: "center", py: 2 }}
-            >
+            <Typography variant="body2" sx={{ textAlign: "center", py: 2 }}>
               还没有接入邮箱账户，点右上角「添加邮箱」开始接入。
             </Typography>
           ) : (
-            <>
+            <Box>
               {data.accounts.map((a, index) => {
                 const chip = statusChipMeta(a);
                 const disabled = !a.enabled;
@@ -152,56 +167,79 @@ export default function AccountsSection() {
                     onClick={() => openDetail(a)}
                     // 行不再是 outlined 卡片：外层分区已是玻璃面板，再套一层带边框的卡片
                     // 就是两层框。行直接坐在面板玻璃上，按压反馈由 ButtonBase 的 state
-                    // layer 给，只补圆角（与列表行同一 RADIUS.card）。
+                    // layer 给。
+                    //
+                    // 行结构（左右内边距、最小高度、相邻行之间的 inset 发丝线）与设置页
+                    // 其余分区共用 SettingRow 那一套：账户列表也是设置行的一种，只是左侧
+                    // 多一个头像、右侧是状态 Chip。行自己不写行高与间距，两处不一致就是
+                    // 节奏不一致。
                     //
                     // 变暗用 filter 而非 opacity：入场动画 animation-fill-mode: both
                     // 会把关键帧终态 opacity: 1 保持在元素上（动画值优先级高于普通声明），
                     // 静态 opacity 会被压掉；filter 与动画互不干扰（见 accounts-section.test）。
-                    sx={{
-                      ...enterSx(index, reduced),
-                      ...cardRowSx(),
-                      filter: disabled ? "opacity(0.6)" : "none",
-                      display: "block",
-                      width: "100%",
-                      textAlign: "left",
-                      px: 1.5,
-                      py: 1.25,
-                    }}
+                    sx={[
+                      // enterSx 的签名是 SxProps<Theme>（可为回调/字符串），这里只取它
+                      // 实际返回的对象形态：与下面的行几何、rowSeparatorSx 拼成同一个
+                      // SystemStyleObject 数组，ButtonBase 的 sx 才收得下
+                      enterSx(index, reduced) as SystemStyleObject<Theme>,
+                      rowSeparatorSx,
+                      {
+                        ...cardRowSx(),
+                        filter: disabled ? "opacity(0.6)" : "none",
+                        display: "block",
+                        width: "100%",
+                        textAlign: "left",
+                        px: 1,
+                        minHeight: `${ROW_MIN_HEIGHT_PX}px`,
+                        py: 1,
+                      },
+                    ]}
                   >
-                    <Stack direction="row" spacing={1.5} alignItems="center">
-                      <Avatar>{kindAvatar(a.kind)}</Avatar>
-                      <Box sx={{ flexGrow: 1, minWidth: 0 }}>
-                        <Typography variant="subtitle1" noWrap>
-                          {a.name}
-                        </Typography>
-                        <Typography
-                          variant="body2"
-                          color="text.secondary"
-                          noWrap
-                        >
-                          {a.email}
-                        </Typography>
-                        <Typography variant="caption" color="text.secondary">
-                          {kindLabel(a.kind)} · 上次同步：
-                          {a.last_sync_at ? timeAgo(a.last_sync_at) : "从未"}
-                        </Typography>
-                      </Box>
-                      <Chip
-                        label={chip.label}
-                        size="small"
-                        color={chip.color}
-                        variant="outlined"
-                      />
-                    </Stack>
+                    <SettingsRow
+                      leading={<Avatar>{kindAvatar(a.kind)}</Avatar>}
+                      label={
+                        <>
+                          <Typography variant="subtitle1" noWrap>
+                            {a.name}
+                          </Typography>
+                          <Typography variant="caption" sx={{ display: "block" }} noWrap>
+                            {a.email}
+                          </Typography>
+                          {/* 元信息只用一种字阶（caption）+ 正文色 n9：玻璃上的次级文字
+                              n7 实测对比度只有 2.4–2.6，层级靠字号拉开而不是靠变淡 */}
+                          <Typography variant="caption" sx={HINT_SX}>
+                            {kindLabel(a.kind)} · 上次同步：
+                            {a.last_sync_at ? timeAgo(a.last_sync_at) : "从未"}
+                          </Typography>
+                        </>
+                      }
+                      value={
+                        // 状态用语义色：正常 success / 出错 error / 等首次同步 info /
+                        // 待授权 warning / 已停用 default，一律 outlined 小芯片
+                        <Chip
+                          label={chip.label}
+                          size="small"
+                          color={chip.color}
+                          variant="outlined"
+                        />
+                      }
+                    />
                     {a.enabled && a.last_error && (
+                      // 错误行是同一行的追加信息：不占一整行的高度，贴着上行往下排。
+                      // 它不参与分隔线（行结构里只有设置行画线，这段是行内追加内容），
+                      // 也没有自己的 min-height；缩进 = 头像 40px + gap 12px
                       <Typography
-                        variant="body2"
+                        variant="caption"
                         color="error"
                         sx={{
-                          mt: 1,
+                          display: "block",
+                          pl: "52px",
+                          pr: 1,
+                          pb: 0.75,
                           overflow: "hidden",
                           textOverflow: "ellipsis",
                           whiteSpace: "nowrap",
+                          textAlign: "left",
                         }}
                       >
                         {a.last_error}
@@ -216,7 +254,7 @@ export default function AccountsSection() {
                   AI 待处理 {data.pending_llm} 封
                 </Alert>
               )}
-            </>
+            </Box>
           )}
         </Stack>
       ) : null}
@@ -227,7 +265,7 @@ export default function AccountsSection() {
         onClose={closeDialog}
         maxWidth="sm"
         fullWidth
-        sx={mainAreaDialogSx}
+        sx={[mainAreaDialogSx, dialogPanelGlassSx]}
         // 固定用 SlideUp，两个方向都由 MUI 自己跑：这个对话框不是从某一行经 View
         // Transitions 容器变换长出来的（openAdd / openDetail 只是 setDialog），
         // 用 dialogTransitionProps() 会在支持 VT 的浏览器上把 MUI 过渡设成 0ms
@@ -235,6 +273,9 @@ export default function AccountsSection() {
         TransitionComponent={SlideUp}
         transitionDuration={reduced ? 0 : { enter: MOTION.large, exit: MOTION.largeExit }}
         TransitionProps={{ onExited: () => setExiting(null) }}
+        // 纸面与移动端 AccountPages 的 <Box data-glass="panel"> 同一档材质：同一个「账户
+        // 详情」不该因为断点不同就换一种质感。走 slotProps.paper（MUI 6.5 的现行写法）。
+        slotProps={{ paper: ACCOUNTS_DIALOG_PAPER_PROPS }}
         aria-labelledby="accounts-dialog-title"
       >
         <DialogTitle id="accounts-dialog-title">
