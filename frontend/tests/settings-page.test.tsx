@@ -11,8 +11,9 @@ import SettingsPage from '../src/pages/SettingsPage';
 import { ThemeModeProvider } from '../src/lib/theme-mode';
 import { readWallpaper, setWallpaper } from '../src/lib/wallpaper';
 import type { WallpaperArea } from '../src/lib/wallpaper';
-import { MOTION } from '../src/rakko-tokens';
-import { ROW_MIN_HEIGHT_PX, SEPARATOR_INSET_PX } from '../src/components/accounts/SettingsRow';
+import { MOTION, RADIUS } from '../src/rakko-tokens';
+import { ROW_MIN_HEIGHT_PX } from '../src/components/accounts/SettingsRow';
+import { AppThemeProvider, allStyleText, ownRules } from './glass-text-contrast.test-utils';
 import type { StatusResponse } from '../src/types';
 import settingsPageSource from '../src/pages/SettingsPage.tsx?raw';
 
@@ -305,11 +306,32 @@ describe('SettingsPage 玻璃分区与按钮配色', () => {
     const rows = Array.from(calendar.querySelectorAll('[data-setting-row]')) as HTMLElement[];
     expect(rows.length).toBeGreaterThanOrEqual(3);
 
-    // 行本身不画线（线由 `& + &` 给相邻行），这一条挡的是「首行上方/末行下方出现硬横线」
-    expect(getComputedStyle(rows[0]).borderTopWidth).not.toBe('1px');
-    // 相邻行：1px 发丝线 + 左端内缩到文字左缘
-    expect(getComputedStyle(rows[1]).borderTopWidth).toBe('1px');
-    expect(getComputedStyle(rows[1]).paddingLeft).toBe(`${SEPARATOR_INSET_PX}px`);
+    // 线画在伪元素上，不占盒子的边框：行自己不带 border-top，也就没有
+    // 「首行上方 / 末行下方多一条线」以及「边框从行最左端画起」的问题
+    for (const row of rows) {
+      expect(getComputedStyle(row).borderTopWidth).not.toBe('1px');
+    }
+
+    // 所有行的左内边距完全一致，且只有 ROW_SX 那一条（px:1 → 8px）；
+    // 旧写法会给相邻行补一条 padding-left:8px 把标签右推，这个序列不会出现。
+    // 分隔线也不再落在行的边框上（border-top 由伪元素取代，盒子不带 border）。
+    const css = allStyleText();
+    for (const row of rows) {
+      const own = ownRules(css, row);
+      expect(own).not.toBe('');
+      const paddings = own.match(/padding-left:[^;}]*/g) ?? [];
+      expect(paddings).toEqual(['padding-left:8px']);
+      expect(own).not.toContain('border-top');
+    }
+    // 线本身：第二行上的 `& + &::before` 规则存在，并且带 left（从文字左缘起，
+    // 不靠给相邻行补内边距）与 height:1px（发丝线）。
+    // 「首行上方不画线」由两条锁定：行的规则里没有任何 border-top 声明（上面已断言），
+    // 而伪元素的定位是 `& + &::before`——不相邻任何行的首行不会命中该选择器。
+    const second = ownRules(css, rows[1]);
+    expect(second).toContain('::before');
+    expect(second).toContain('left:8px');
+    expect(second).toContain('height:1px');
+    expect(second).toContain('pointer-events:none');
   });
 
   it('设置行是统一结构：最小高度 48px，标签 13px、值/说明 12px（字阶区分层级而不是变淡文字）', async () => {
@@ -365,6 +387,49 @@ describe('SettingsPage 玻璃分区与按钮配色', () => {
     // 单选组只有一个 tab 停点（APG 的 roving tabindex）
     expect(screen.getByRole('radio', { name: '跟随系统' }).getAttribute('tabindex')).toBe('0');
     expect(screen.getByRole('radio', { name: '深色' }).getAttribute('tabindex')).toBe('-1');
+  });
+
+  it('外观分段控件是「中性轨道 + 抬起的滑块」：组无边框、段无边框无竖线、选中项才抬起', async () => {
+    vi.stubGlobal('fetch', makeFetchMock());
+    // 这一条要断言色值，必须用应用真实主题渲染（token 原值；ThemeModeProvider 之外的
+    // MUI Provider 用默认主题时 background.paper 是白色，断言会空转）
+    render(
+      <AppThemeProvider>
+        <MemoryRouter>
+          <SettingsPage />
+        </MemoryRouter>
+      </AppThemeProvider>,
+    );
+
+    const group = screen.getByRole('radiogroup', { name: '外观' });
+    const css = allStyleText();
+    const groupRule = ownRules(css, group);
+
+    // 组：无外框、浅填充轨道、2px 内边距、36px 高
+    expect(groupRule).not.toBe('');
+    expect(groupRule).not.toMatch(/border(-top|-right|-bottom|-left)?:\s*1px/);
+    expect(groupRule).toContain('background-color:rgba(20, 19, 18, 0.04)'); // action.hover = alpha(n10, 4%)
+    expect(groupRule).toContain('padding:2px');
+    expect(groupRule).toContain('height:36px');
+    // 段间竖线已删除（旧写法是相邻选择器的 border-left）
+    expect(groupRule).not.toContain('border-left');
+
+    // 段：不描边；选中项 = 纸色滑块 + whisper 阴影 + 字重 600，未选中 = 透明底 + 字重 500
+    const selected = screen.getByRole('radio', { name: '跟随系统' });
+    const idle = screen.getByRole('radio', { name: '深色' });
+    const selectedRule = ownRules(css, selected);
+    const idleRule = ownRules(css, idle);
+    expect(selectedRule).not.toMatch(/border:\s*1px/);
+    expect(idleRule).not.toMatch(/border:\s*1px/);
+    expect(selectedRule).toContain('background-color:#f0efeb'); // background.paper = n2
+    expect(selectedRule).toContain('box-shadow:0 1px 2px rgba(20, 19, 18, 0.06)'); // shadows[1] = whisper 一档
+    expect(idleRule).toContain('background-color:transparent');
+    expect(idleRule).toContain('box-shadow:none');
+    // 切换的过渡走 motion.md 的短时长 + 标准缓动
+    expect(selectedRule).toContain(`background-color ${MOTION.state}ms ${MOTION.easeStandard}`);
+    expect(selectedRule).toContain(`box-shadow ${MOTION.state}ms ${MOTION.easeStandard}`);
+    // 段圆角 = RADIUS.card - 2
+    expect(selectedRule).toContain(`border-radius:${RADIUS.card - 2}px`);
   });
 
   it('外观三态：方向键切换选中并把焦点移到新选中项，Home / End 到首尾', async () => {

@@ -24,14 +24,9 @@ import type { Theme } from '@mui/material/styles';
  *  控件行与文字行落在同一个节奏上，不会因为内容只有一行字就塌下去 */
 export const ROW_MIN_HEIGHT_PX = 48;
 
-/** 分隔线左端相对行左缘的内缩（px）：8 = 行自己的左内边距，
- *  两者相加让线的起点与左上角第一个字的左缘对齐（HIG 的 inset 分隔线）。
- *  行本身没有全局 box-sizing reset，1px 底线会把行撑高 1px——48 是下限而不是定值，
- *  多出这 1px 不影响对齐，故不做 border-box 补偿。 */
-export const SEPARATOR_INSET_PX = 8;
-
-/** 行自身：左右内边距 + 最小高度 + 垂直居中 */
+/** 行自身：左右内边距 + 最小高度 + 垂直居中 + 定位上下文（伪元素分隔线的包含块） */
 export const ROW_SX = {
+  position: 'relative',
   px: 1,
   minHeight: `${ROW_MIN_HEIGHT_PX}px`,
   display: 'flex',
@@ -39,14 +34,28 @@ export const ROW_SX = {
   gap: 1.5,
 } as const;
 
-/** 相邻两行之间的发丝分隔线。色值取 theme.palette.divider（本项目 BORDER token：
- *  浅色 n10 10% / 深色白 12%），不另造颜色。左内边距在相邻行上额外内缩，
- *  线的起点因此与文字左缘对齐。 */
+/**
+ * 相邻两行之间的发丝分隔线：线从文字左缘起、画在相邻行之间。
+ *
+ * 用伪元素而不是 `border-top`：边框画在整个盒子的边框上，从行的最左端到最右端，
+ * 内边距不会让它内缩（内边距在边框内侧），只会把相邻行的标签整体右推。伪元素可以
+ * 单独定位在内容左缘（left = 行的左内边距），而所有行的内边距完全一致。
+ * 色值取 theme.palette.divider（本项目 BORDER token：浅色 n10 10% / 深色白 12%）。
+ * 位置相对行定位，`& + &::before` 保证只有相邻行之间才有一条，首行上方与末行下方不画。
+ */
 export function rowSeparatorSx(theme: Theme): SystemStyleObject<Theme> {
   return {
-    '& + &': {
-      borderTop: `1px solid ${theme.palette.divider}`,
-      paddingLeft: `${SEPARATOR_INSET_PX}px`,
+    '& + &::before': {
+      content: '""',
+      position: 'absolute',
+      top: 0,
+      // 与行自身的左内边距同源（theme.spacing(1) = 8px），两处不会各自漂移
+      left: theme.spacing(1),
+      right: 0,
+      height: '1px',
+      backgroundColor: theme.palette.divider,
+      // 纯装饰、不接收指针事件：压在相邻行上也不改变点击目标
+      pointerEvents: 'none',
     },
   };
 }

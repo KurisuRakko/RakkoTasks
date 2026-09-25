@@ -323,7 +323,7 @@ describe('AccountsSection 状态语义色', () => {
 });
 
 describe('AccountsSection 行结构与桌面 Dialog 玻璃', () => {
-  it('账户行用与设置页同一套行形状：最小高度 48px、左右 8px、相邻行一条 inset 发丝线', async () => {
+  it('账户行用与设置页同一套行形状：最小高度 48px、左右 8px、相邻行一条 inset 伪元素发丝线', async () => {
     api.fetchStatusMock.mockResolvedValue(STATUS);
     const { container } = renderSection();
     await screen.findByText('Outlook');
@@ -336,9 +336,10 @@ describe('AccountsSection 行结构与桌面 Dialog 玻璃', () => {
       expect(cs.paddingLeft).toBe('8px');
       expect(cs.alignItems).toBe('center');
     }
-    // 分隔线由行的相邻兄弟选择器画（`& + &`）：行自己不带 border，也就没有
-    // 「首行上方 / 末行下方多一条线」的边界特判。jsdom 的 getComputedStyle 不在
-    // 每个 ButtonBase 包装层内部解析兄弟选择器，所以这里断言的是规则本身在位。
+    // 分隔线由 `& + &::before` 的伪元素画：行自己不带 border，也就没有
+    // 「首行上方 / 末行下方多一条线」的边界特判，线的左端由伪元素的 left 定位而不是
+    // 给相邻行补内边距。jsdom 的 getComputedStyle 不在每个 ButtonBase 包装层内部
+    // 解析兄弟选择器，所以这里断言的是规则本身在位。
     expect(accountsSectionSource).toContain('rowSeparatorSx');
   });
 

@@ -42,7 +42,7 @@ import { logout, startLogin } from '../lib/phainon';
 import { checkForUpdate } from '../lib/pwa-update';
 import { useSession } from '../lib/session';
 import { ROW_GAP_PX } from '../lib/surface';
-import { RADIUS } from '../rakko-tokens';
+import { MOTION, RADIUS } from '../rakko-tokens';
 import { syncLastSummary, useSyncStatus } from '../lib/sync-status';
 import { useThemeMode } from '../lib/theme-mode';
 import { loadWallpaperSource, renderWallpaper, setWallpaper, useWallpaper } from '../lib/wallpaper';
@@ -83,8 +83,9 @@ interface ModeOption {
  * 键盘行为按 ARIA APG 的 radio group：一组里只有一个 tab 停点（选中项 tabIndex 0、
  * 其余 -1），← / → 与 ↑ / ↓ 切换并同时移动焦点，Home / End 到首尾。
  *
- * 选中态同时靠描边、填充与文字颜色三重表达（契约：selected 不能只靠颜色）；颜色全部取自
- * theme.palette，不在组件里写新的色值字面量。
+ * 视觉是 Apple 分段控件：一条中性浅填充轨道 + 一块抬起的滑块（纸色 + whisper 阴影，
+ * 选中项同时加粗到 600），不画外框也不画段间竖线。颜色与阴影全部取自 theme.palette /
+ * theme.shadows，不在组件里写新的色值字面量。
  */
 function ModeSegmentedControl({
   value,
@@ -143,16 +144,17 @@ function ModeSegmentedControl({
     <Box
       role="radiogroup"
       aria-label="外观"
+      // Apple 分段控件的做法：一条无边框的中性浅填充轨道，选中项是一块抬起的滑块。
+      // 不画组外框、不画段间竖线——「外框 + 竖线 + 选中项再描一圈」就是框里套框。
+      // 底色用 action.hover（主题层已按深浅两套给好的中性浅填充）；选区由滑块本身
+      // 的纸色 + whisper 阴影表达，因此这里也不做 overflow: hidden（聚焦圈会被裁）。
       sx={(theme) => ({
         display: 'flex',
-        minHeight: '48px',
-        border: `1px solid ${theme.palette.divider}`,
+        boxSizing: 'border-box',
+        height: '36px',
+        padding: '2px',
         borderRadius: `${RADIUS.card}px`,
-        // 组不做 overflow: hidden：聚焦圈（MuiButtonBase 的 2px outline + 2px offset）
-        // 会被裁掉。分段之间的分隔线改由相邻选择器的左描边画，同样收在组边框内。
-        '& > * + *': {
-          borderLeft: `1px solid ${theme.palette.divider}`,
-        },
+        backgroundColor: theme.palette.action.hover,
       })}
     >
       {options.map((option, index) => {
@@ -177,14 +179,19 @@ function ModeSegmentedControl({
               alignItems: 'center',
               justifyContent: 'center',
               px: 1.5,
-              borderRadius: `${RADIUS.card}px`,
-              color: selected ? theme.palette.primary.main : theme.palette.text.primary,
-              backgroundColor: selected ? theme.palette.action.selected : 'transparent',
-              // 未选中态给一层同色透明描边：选中后换成主色描边时布局不跳
-              border: `1px solid ${selected ? theme.palette.primary.main : 'transparent'}`,
+              // 段圆角比组小 2px（= 组的内边距），滑块才不会顶到轨道圆角外
+              borderRadius: `${RADIUS.card - 2}px`,
+              // 段自身不描边、不画竖线：层次全部由滑块（纸色 + 阴影）表达。
+              // 选中与未选中的文字都是正文色，字重 600/500 拉开层级（主题已禁 700）。
+              color: theme.palette.text.primary,
+              backgroundColor: selected ? theme.palette.background.paper : 'transparent',
+              // 抬起的滑块：whisper 一档阴影（rakko-tokens 的 WHISPER_SHADOW，
+              // 也就是本主题 shadows[1]），不是新的数值
+              boxShadow: selected ? theme.shadows[1] : 'none',
+              transition: `background-color ${MOTION.state}ms ${MOTION.easeStandard}, box-shadow ${MOTION.state}ms ${MOTION.easeStandard}`,
             })}
           >
-            <Typography variant="body2" sx={{ fontWeight: selected ? 500 : 400 }}>
+            <Typography variant="body2" sx={{ fontWeight: selected ? 600 : 500 }}>
               {option.label}
             </Typography>
           </ButtonBase>
@@ -390,7 +397,12 @@ export default function SettingsPage() {
         <Typography variant="overline" component="h2" sx={SECTION_TITLE_SX}>
           外观
         </Typography>
-        <ModeSegmentedControl value={mode} options={MODE_OPTIONS} onChange={setMode} />
+        {/* 控件坐在一条设置行里：外层行仍保证 ≥48px 的行高与统一内边距，
+            组自身是 36px 高的分段控件（Apple 的分段控件不是通栏满高的控件） */}
+        <SettingsRow
+          label={<Typography variant="body2">主题</Typography>}
+          value={<ModeSegmentedControl value={mode} options={MODE_OPTIONS} onChange={setMode} />}
+        />
       </Box>
 
       {/* 壁纸：本机背景图，localStorage 持久化（不传后端） */}

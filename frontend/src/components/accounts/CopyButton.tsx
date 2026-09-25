@@ -34,8 +34,6 @@ export default function CopyButton({ getText, onFeedback, disabled }: Props) {
         // 命中区补齐到 44×44：IconButton size="small" 自身只有 30×30，
         // 够不到 WCAG 2.5.5 的触控下限（见 lib/surface.hitSlopSx）
         sx={hitSlopSx()}
-        // 图标按钮的涟漪从中心扩散（契约的 data-ripple-centered 语义）
-        data-ripple-centered
         onClick={() => {
           copyText(() => Promise.resolve(getText()))
             .then(() => onFeedback(true))
