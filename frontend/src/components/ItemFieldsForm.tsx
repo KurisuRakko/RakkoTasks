@@ -151,6 +151,7 @@ export default function ItemFieldsForm({
         label="第一行是标题，从第二行开始是详情"
         multiline
         minRows={6}
+        variant="outlined"
         autoFocus={autoFocus}
         fullWidth
         value={text}
@@ -160,7 +161,11 @@ export default function ItemFieldsForm({
         inputRef={inputRef}
         inputProps={{ 'aria-label': '任务内容' }}
       />
-      {/* 分类：单选 chip 行，radiogroup/radio 语义 */}
+      {/* 分类：单选 chip 行，radiogroup/radio 语义。
+          选中 = filled primary（「就是这个」的确定态），未选中 = outlined 中性色：
+          未选中的那几枚不是「待点的主操作」，给它们描上 primary 会让整行看着像一排
+          主按钮，accent 覆盖面也远超 5% 的纪律上限。选中态另由 aria-checked 表达，
+          不靠颜色单独承担信息。 */}
       <Stack
         direction="row"
         spacing={1}
@@ -173,7 +178,7 @@ export default function ItemFieldsForm({
             key={c}
             label={c}
             variant={category === c ? 'filled' : 'outlined'}
-            color="primary"
+            color={category === c ? 'primary' : 'default'}
             onClick={() => onCategoryChange(c)}
             role="radio"
             aria-checked={category === c}
@@ -181,7 +186,8 @@ export default function ItemFieldsForm({
         ))}
       </Stack>
       {/* 重要度：与分类同款三档 chip 单选（radiogroup/radio 语义），数据源换
-          成 IMPORTANCE_OPTIONS。位置在分类之后、截止日期之前。 */}
+          成 IMPORTANCE_OPTIONS。位置在分类之后、截止日期之前；描边/填充的口径与
+          分类完全一致（同一角色的两种单选只允许一种样式）。 */}
       <Stack
         direction="row"
         spacing={1}
@@ -194,18 +200,21 @@ export default function ItemFieldsForm({
             key={opt.value}
             label={opt.label}
             variant={importance === opt.value ? 'filled' : 'outlined'}
-            color="primary"
+            color={importance === opt.value ? 'primary' : 'default'}
             onClick={() => onImportanceChange(opt.value)}
             role="radio"
             aria-checked={importance === opt.value}
           />
         ))}
       </Stack>
-      {/* 截止日期：原生 date input + 条件显示的清除按钮 */}
+      {/* 截止日期：原生 date input + 条件显示的清除按钮。字段区所有输入框统一
+          outlined + size="small"（date / datetime-local / 多行文本框），行高与
+          标签位置才对得齐 */}
       <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 2 }}>
         <TextField
           type="date"
           label="截止日期"
+          variant="outlined"
           fullWidth
           size="small"
           value={date}
@@ -229,9 +238,10 @@ export default function ItemFieldsForm({
           「敲人」。仅在父组件接了 onRemindersChange 时渲染（见文件头说明） */}
       {hasReminderEditor && (
         <Box sx={{ mt: 2 }}>
-          <Typography variant="caption" color="text.secondary">
-            提醒
-          </Typography>
+          {/* 区块小标题：字阶已经比输入文字低一档（label-12），颜色不再降级——本表单
+              所属的对话框（ItemDialog）纸面是 data-glass="panel" 玻璃，n7 压 58%
+              纸色只有 2.4–2.6 的对比度。层级靠字阶，不靠次级色。 */}
+          <Typography variant="caption">提醒</Typography>
           {rows.map((wall, index) => (
             <Stack
               key={index}
@@ -242,6 +252,7 @@ export default function ItemFieldsForm({
             >
               <TextField
                 type="datetime-local"
+                variant="outlined"
                 size="small"
                 fullWidth
                 value={wall}
@@ -271,9 +282,8 @@ export default function ItemFieldsForm({
               加提醒
             </Button>
             {rows.length >= REMINDERS_MAX && (
-              <Typography variant="caption" color="text.secondary">
-                最多 {REMINDERS_MAX} 个
-              </Typography>
+              // 与上面的区块标题同一口径：caption 字阶已经比输入文字低一档，颜色不降级
+              <Typography variant="caption">最多 {REMINDERS_MAX} 个</Typography>
             )}
           </Stack>
         </Box>
