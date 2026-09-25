@@ -342,7 +342,7 @@ def run_once(
             fetch_failed = 0
             for account in accounts:
                 if not has_credentials(account):
-                    # 刚添加/停用后尚未设置凭据（gmail 未录应用密码、微软未完成授权）的账户：
+                    # 刚添加/停用后尚未设置凭据（gmail/qq 未录应用密码或授权码、微软未完成授权）的账户：
                     # 跳过不同步，也不标 error——连不上是预期状态，凭据就绪后下一轮自动开始回补
                     summary["accounts"][account.email] = {"status": "pending", "error": None}
                     progress.account(account.email, "skipped")

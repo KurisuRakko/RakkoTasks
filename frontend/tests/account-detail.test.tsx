@@ -145,6 +145,70 @@ describe('AccountDetail Gmail 更换应用专用密码', () => {
   });
 });
 
+describe('AccountDetail QQ 邮箱更换授权码', () => {
+  const qqAccount = makeAccount({
+    id: 7,
+    name: 'QQ 邮箱',
+    kind: 'qq',
+    email: 'you@qq.com',
+  });
+
+  it('凭据区显示「更换授权码」，保存后提交 app_password 并清空收起', async () => {
+    api.patchAccountMock.mockResolvedValue(qqAccount);
+    render(<Harness initial={qqAccount} />);
+
+    // 叫法随 kind：QQ 邮箱是「授权码」，不是「应用专用密码」
+    expect(screen.queryByRole('button', { name: '更换应用专用密码' })).toBeNull();
+    const toggle = screen.getByRole('button', { name: '更换授权码' });
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(toggle);
+    const pwd = screen.getByLabelText('新的授权码') as HTMLInputElement;
+    fireEvent.change(pwd, { target: { value: 'abcdefghijklmnop' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存密码' }));
+
+    await waitFor(() =>
+      expect(api.patchAccountMock).toHaveBeenCalledWith(7, { app_password: 'abcdefghijklmnop' }),
+    );
+    await waitFor(() =>
+      expect((screen.getByLabelText('新的授权码') as HTMLInputElement).value).toBe(''),
+    );
+    expect(screen.getByRole('button', { name: '更换授权码' }).getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('QQ 账户不出现微软的「重新授权」入口（两种凭据模式互斥）', () => {
+    render(<Harness initial={qqAccount} />);
+
+    expect(screen.queryByRole('button', { name: '重新授权' })).toBeNull();
+  });
+
+  it('停用 QQ 账户：凭据区整体隐藏，点启用后的补凭据提示按 kind 取词', async () => {
+    const disabled = makeAccount({ ...qqAccount, enabled: false, has_credentials: false });
+    api.patchAccountMock.mockResolvedValue(makeAccount({ ...qqAccount, has_credentials: false }));
+
+    render(<Harness initial={disabled} />);
+
+    expect(screen.queryByRole('button', { name: '更换授权码' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '启用' }));
+
+    await waitFor(() => expect(api.patchAccountMock).toHaveBeenCalledWith(7, { enabled: true }));
+    // 提示里的凭据叫法跟着账户类型走，不能写死「应用专用密码」
+    expect(await screen.findByText(/请在下方「更换授权码」里填好授权码/)).toBeTruthy();
+  });
+
+  it('保存授权码被后端判为空：错误文案用 QQ 的叫法（patchErrorMessage 按 kind 取词）', async () => {
+    api.patchAccountMock.mockRejectedValue(
+      Object.assign(new Error('HTTP 400'), { code: 'password_required' }),
+    );
+    render(<Harness initial={qqAccount} />);
+
+    fireEvent.click(screen.getByRole('button', { name: '更换授权码' }));
+    fireEvent.change(screen.getByLabelText('新的授权码'), { target: { value: 'abcdefghijklmnop' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存密码' }));
+
+    expect(await screen.findByText('请填写授权码')).toBeTruthy();
+  });
+});
+
 describe('AccountDetail 同步状态', () => {
   /** 一条真实长度的 IMAP 报错：列表行只能单行截断，详情页必须能看全 */
   const LONG_ERROR =

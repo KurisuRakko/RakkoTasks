@@ -76,8 +76,8 @@ export interface RelatedEmail {
   reason: string;
 }
 
-/** 账户类型 */
-export type AccountKind = 'gmail' | 'microsoft';
+/** 账户类型；qq 走 IMAP + 授权码（IMAP 服务器由后端内置，前端不问用户） */
+export type AccountKind = 'gmail' | 'qq' | 'microsoft';
 
 /** 账户状态 */
 export type AccountStatusValue = 'ok' | 'error' | 'pending';
@@ -91,7 +91,7 @@ export interface AccountInfo {
   status: AccountStatusValue;
   /** false 表示已停用，不再同步 */
   enabled: boolean;
-  /** Gmail 已存应用专用密码 / 微软已拿到 token：响应永远不含凭据本体，只有这个布尔 */
+  /** Gmail / QQ 邮箱已存密码类凭据（应用专用密码 / 授权码）、微软已拿到 token：响应永远不含凭据本体，只有这个布尔 */
   has_credentials: boolean;
   /** 微软账户的自定义 OAuth client_id（默认 Thunderbird 公共客户端时为 null） */
   ms_client_id: string | null;
@@ -99,7 +99,7 @@ export interface AccountInfo {
   last_error: string | null;
 }
 
-/** POST /api/accounts 请求体：kind=gmail 时 app_password 必填，microsoft 忽略该字段 */
+/** POST /api/accounts 请求体：kind=gmail / qq 时 app_password 必填（放的是应用专用密码 / 授权码），microsoft 忽略该字段 */
 export interface AccountCreate {
   name: string;
   kind: AccountKind;
@@ -108,7 +108,7 @@ export interface AccountCreate {
   ms_client_id?: string;
 }
 
-/** PATCH /api/accounts/{id} 请求体：app_password 只对 gmail 开放 */
+/** PATCH /api/accounts/{id} 请求体：app_password 对 gmail 与 qq 开放 */
 export interface AccountPatch {
   name?: string;
   app_password?: string;

@@ -160,6 +160,70 @@ def test_post_microsoft_ignores_app_password_and_strips_client_id(session_factor
         assert row.ms_client_id == "cid-123"
 
 
+# ── QQ 邮箱（与 gmail 同一种密码登录） ──────────────────────────────
+
+
+def test_post_qq_201_authorization_code_stored_never_returned(session_factory):
+    """QQ 与 gmail 同一种认证：授权码必填、真实落库，响应只给 has_credentials。"""
+    _seed_users(session_factory, ["user-A"])
+    client = _client_as(session_factory, "user-A", "a@x.com", "甲")
+    resp = client.post(
+        "/api/accounts",
+        json={"name": "  我的 QQ 邮箱  ", "kind": "qq", "email": " me@qq.com ",
+              "app_password": "  abcd efgh ijkl mnop  "},
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["kind"] == "qq"
+    assert data["status"] == "pending"
+    assert data["enabled"] is True
+    assert data["has_credentials"] is True
+    assert data["name"] == "我的 QQ 邮箱"
+    assert data["email"] == "me@qq.com"
+    assert "app_password" not in resp.text
+    assert "abcd efgh ijkl mnop" not in resp.text
+    with session_factory() as s:
+        row = s.execute(select(Account).where(Account.email == "me@qq.com")).scalars().one()
+        assert row.app_password == "abcd efgh ijkl mnop"  # 首尾空白去掉后落库
+        assert row.status == "pending"
+
+
+def test_post_qq_requires_authorization_code(session_factory):
+    _seed_users(session_factory, ["user-A"])
+    client = _client_as(session_factory, "user-A")
+    for extra in ({}, {"app_password": "   "}):
+        resp = client.post(
+            "/api/accounts", json={"name": "QQ", "kind": "qq", "email": "q@qq.com", **extra}
+        )
+        assert resp.status_code == 400, extra
+        assert resp.json() == {"code": "password_required"}, extra
+
+
+def test_patch_app_password_and_disable_for_qq(session_factory):
+    """qq 属密码登录类：PATCH app_password 可用；停用照样清掉授权码。"""
+    _seed_users(session_factory, ["user-A"])
+    client = _client_as(session_factory, "user-A")
+    resp = client.post(
+        "/api/accounts", json={"name": "QQ", "kind": "qq", "email": "q@qq.com", "app_password": "old-code"}
+    )
+    assert resp.status_code == 201
+    acc_id = resp.json()["id"]
+
+    resp = client.patch(f"/api/accounts/{acc_id}", json={"app_password": "  new-code  "})
+    assert resp.status_code == 200
+    assert resp.json()["has_credentials"] is True
+    assert resp.json()["status"] == "pending"
+    assert "new-code" not in resp.text
+    assert _account_of(session_factory, acc_id).app_password == "new-code"
+
+    resp = client.patch(f"/api/accounts/{acc_id}", json={"enabled": False})
+    assert resp.status_code == 200
+    assert resp.json()["has_credentials"] is False
+    row = _account_of(session_factory, acc_id)
+    assert row.app_password is None
+    assert row.enabled is False
+
+
 # ── PATCH ───────────────────────────────────────────────────────────
 
 

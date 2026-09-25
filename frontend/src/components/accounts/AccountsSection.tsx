@@ -27,7 +27,7 @@ import { useNavigateTo } from "../../lib/nav";
 import { cardRowSx } from "../../lib/surface";
 import { timeAgo } from "../../lib/time";
 import { MOTION } from "../../rakko-tokens";
-import { statusChipMeta, kindLabel } from "./meta";
+import { statusChipMeta, kindLabel, kindAvatar } from "./meta";
 import AccountDetail from "./AccountDetail";
 import AccountWizard from "./AccountWizard";
 import RemoveAccountChoice from "./RemoveAccountChoice";
@@ -169,7 +169,7 @@ export default function AccountsSection() {
                     }}
                   >
                     <Stack direction="row" spacing={1.5} alignItems="center">
-                      <Avatar>{a.kind === "gmail" ? "G" : "O"}</Avatar>
+                      <Avatar>{kindAvatar(a.kind)}</Avatar>
                       <Box sx={{ flexGrow: 1, minWidth: 0 }}>
                         <Typography variant="subtitle1" noWrap>
                           {a.name}

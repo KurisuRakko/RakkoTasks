@@ -1,7 +1,7 @@
 """账户与用户 CLI：python -m app.cli accounts add/connect/auth-url/auth-code/list/set-password/remove、users list、reclassify、regen-details、archive-backfill。
 
 accounts 子命令（connect 除外）复用 app/accounts.py 服务层，与网页 /api/accounts* 语义一致；
-网页已提供自助管理，CLI 保留为运维兜底。Gmail 应用专用密码仅经 getpass 交互录入，
+网页已提供自助管理，CLI 保留为运维兜底。应用专用密码 / QQ 授权码仅经 getpass 交互录入，
 绝不进命令行参数或日志。
 """
 from __future__ import annotations
@@ -20,12 +20,12 @@ from app.models import Account, Email, Item, User
 # AccountError code → 中文说明（_die_account_error 统一打到 stderr；auth_failed 的
 # 分 kind 详细提示另见 _print_auth_failure，此处只是总括句）
 _ACCOUNT_ERR_TEXT = {
-    "bad_kind": "不支持的账户类型（仅支持 gmail / microsoft）",
+    "bad_kind": "不支持的账户类型（仅支持 gmail / qq / microsoft）",
     "bad_name": "账户名称需为 1-128 个字符",
     "bad_email": "邮箱地址无效（需包含 @ 且不超过 256 个字符）",
-    "password_required": "应用专用密码不能为空",
+    "password_required": "应用专用密码 / 授权码不能为空",
     "account_exists": "该邮箱账户已存在（含已停用账户）",
-    "invalid_kind": "账户类型与操作不匹配（应用专用密码仅 gmail；OAuth 授权仅 microsoft）",
+    "invalid_kind": "账户类型与操作不匹配（应用专用密码/授权码仅 gmail、qq；OAuth 授权仅 microsoft）",
     "bad_redirect": "不支持的 OAuth 重定向地址",
     "bad_request": "请求参数无效",
     "no_pending_flow": "未找到进行中的授权流程，请先运行 accounts auth-url",
@@ -122,6 +122,11 @@ def _die_account_error(
     sys.exit(1 if exc.code in _FLOW_ERROR_CODES else 2)
 
 
+def _password_prompt(kind: str) -> str:
+    """密码类账户的 getpass 提示：QQ 用的是 16 位授权码，说成「密码」会让人填 QQ 登录密码。"""
+    return "QQ 邮箱授权码（输入不回显）：" if kind == "qq" else "应用专用密码（输入不回显）："
+
+
 def _cmd_accounts_add(args: argparse.Namespace, settings: Settings) -> None:
     from getpass import getpass as _getpass
 
@@ -137,7 +142,7 @@ def _cmd_accounts_add(args: argparse.Namespace, settings: Settings) -> None:
                 kind=args.kind,
                 email=args.email,
                 app_password=(
-                    _getpass("Gmail 应用专用密码（输入不回显）：") if args.kind == "gmail" else None
+                    _getpass(_password_prompt(args.kind)) if args.kind in accounts.PASSWORD_KINDS else None
                 ),
                 ms_client_id=args.client_id,
             )
@@ -160,7 +165,11 @@ def _cmd_accounts_set_password(args: argparse.Namespace, settings: Settings) -> 
         try:
             accounts.set_app_password(
                 account,
-                _getpass("Gmail 应用专用密码（输入不回显）：") if account.kind == "gmail" else None,
+                (
+                    _getpass(_password_prompt(account.kind))
+                    if account.kind in accounts.PASSWORD_KINDS
+                    else None
+                ),
             )
         except accounts.AccountError as exc:
             _die_account_error(exc)
@@ -502,13 +511,13 @@ def main() -> None:
 
     add = accounts_sub.add_parser("add", help="添加账户")
     add.add_argument("--user", required=True, help="用户 sub 或邮箱")
-    add.add_argument("--kind", required=True, choices=["gmail", "microsoft"])
+    add.add_argument("--kind", required=True, choices=["gmail", "qq", "microsoft"])
     add.add_argument("--name", required=True, help="显示名")
     add.add_argument("--email", required=True, help="邮箱地址")
     add.add_argument("--client-id", dest="client_id", default=None, help="微软 OAuth client id（默认官方公共客户端）")
     add.set_defaults(handler=_cmd_accounts_add)
 
-    setpwd = accounts_sub.add_parser("set-password", help="重新录入 Gmail 应用专用密码（getpass 交互）")
+    setpwd = accounts_sub.add_parser("set-password", help="重新录入应用专用密码 / QQ 授权码（getpass 交互）")
     setpwd.add_argument("--user", required=True, help="用户 sub 或邮箱")
     setpwd.add_argument("email", help="邮箱地址")
     setpwd.set_defaults(handler=_cmd_accounts_set_password)
