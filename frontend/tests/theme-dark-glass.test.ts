@@ -173,7 +173,7 @@ describe('D2 深色玻璃去雾：白层收敛，暗向保留', () => {
   });
 
   it('深色 rim-inner 比浅色更深（厚度边的暗向那一半）', () => {
-    expect(GLASS_AERO.dark.rimInner).toBe('rgba(0, 0, 0, 0.26)');
+    expect(GLASS_AERO.dark.rimInner).toBe('rgba(0, 0, 0, 0.3)');
     expect(alphaOf(GLASS_AERO.dark.rimInner)).toBeGreaterThan(alphaOf(GLASS_AERO.light.rimInner));
   });
 
