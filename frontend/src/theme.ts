@@ -24,6 +24,7 @@ import {
   GLASS,
   GLASS_AERO,
   GLASS_DARK,
+  GLASS_DARK_EDGE,
   GLASS_SHADOW_WHISPER,
   MOTION,
   NEUTRAL_DARK,
@@ -269,6 +270,9 @@ export function buildThemeOptions(mode: Mode): ThemeOptions {
             '--glass-sheen-3': GLASS_AERO[mode].sheen3,
             '--glass-lift': GLASS_AERO[mode].lift,
             '--glass-text-glow': GLASS_AERO[mode].textGlow,
+            // 深色专属的顶边受光（见 rakko-tokens 的 GLASS_DARK_EDGE）。浅色不下发，配方回退到
+            // --glass-rim：浅色 :root 的键集与取值都不变。
+            ...(mode === 'dark' ? { '--glass-rim-top': GLASS_DARK_EDGE.rimTop } : {}),
             '--shadow-whisper': GLASS_SHADOW_WHISPER[mode],
             // 壁纸压暗层：浅色 none，深色是 12% 纯黑的实心渐变（见 lib/glass 的两个常量）。
             // 下发在 :root，由下面的壁纸承载层当 background-image 的第一层消费——它不是新

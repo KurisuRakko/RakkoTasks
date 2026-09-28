@@ -21,8 +21,9 @@ if (jsdomWindow) {
   });
 }
 
-// jsdom 未实现 matchMedia（MUI useMediaQuery 依赖它），提供永不匹配的 stub
-if (typeof window.matchMedia !== 'function') {
+// jsdom 未实现 matchMedia（MUI useMediaQuery 依赖它），提供永不匹配的 stub。
+// 少数测试声明 @vitest-environment node（没有 window），这里跳过
+if (typeof window !== 'undefined' && typeof window.matchMedia !== 'function') {
   window.matchMedia = (query: string): MediaQueryList => ({
     matches: false,
     media: query,

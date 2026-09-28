@@ -336,6 +336,24 @@ describe('Aero 玻璃配方契约（新材质接线）', () => {
     // 雾边 = 九团并集 ∩ 分形噪声
     expect(glassCss).toContain('mask-composite: intersect');
   });
+
+  it('5h. 顶边受光只落在 panel 上沿，缺省回退到 --glass-rim（浅色四边同色）', async () => {
+    const glassCss = (await loadFs()).readFileSync('src/rakko-glass.css', 'utf-8');
+    const panel = blockOf(glassCss, "[data-glass='panel'] {");
+    const decl = 'border-top-color: var(--glass-rim-top, var(--glass-rim));';
+    expect(panel).toContain(decl);
+    // 只此一处消费，回退值必须恰好是 --glass-rim：浅色不下发 --glass-rim-top，
+    // 回退值写成别的颜色，浅色顶边就会变
+    expect(glassCss.match(/var\(--glass-rim-top\b/g)).toHaveLength(1);
+    // 顶边声明必须在 border 简写之后，否则会被简写重置回 --glass-rim
+    expect(panel.indexOf(decl)).toBeGreaterThan(panel.indexOf('border: 1px solid var(--glass-rim);'));
+    for (const selector of ["[data-glass='chrome'] {", "[data-glass='inverse'] {", "[data-glass='haze'] {"]) {
+      expect(blockOf(glassCss, selector), `${selector} 不消费顶边受光`).not.toContain('--glass-rim-top');
+    }
+    const { supports, reduce } = degradeRegions(glassCss);
+    expect(supports, '退化块不碰顶边').not.toContain('--glass-rim-top');
+    expect(reduce, 'reduce 块不碰顶边').not.toContain('--glass-rim-top');
+  });
 });
 
 /** rgba(...) 尾部的 alpha：'rgba(255, 255, 255, 0.12)' → 0.12；非法写法直接判失败。

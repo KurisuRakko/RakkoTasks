@@ -32,6 +32,7 @@ import {
   GLASS,
   GLASS_AERO,
   GLASS_DARK,
+  GLASS_DARK_EDGE,
   GLASS_SHADOW_WHISPER,
   NEUTRAL_DARK,
   NEUTRAL_LIGHT,
@@ -209,6 +210,25 @@ describe('D2 深色玻璃去雾：白层收敛，暗向保留', () => {
     expect(rootVars('light')['--glass-rim']).toBe(GLASS_AERO.light.rim);
     expect(rootVars('light')['--glass-sheen-1']).toBe(GLASS_AERO.light.sheen1);
     expect(rootVars('light')['--glass-bloom']).toBe(GLASS_AERO.light.bloom);
+  });
+});
+
+describe('D9 深色顶边受光：只在深色下发，浅色回退到四边同色', () => {
+  it('深色 :root 下发 --glass-rim-top，取值来自 GLASS_DARK_EDGE', () => {
+    expect(GLASS_DARK_EDGE.rimTop).toBe('rgba(255, 255, 255, 0.26)');
+    expect(rootVars('dark')['--glass-rim-top']).toBe(GLASS_DARK_EDGE.rimTop);
+  });
+
+  it('浅色不下发 --glass-rim-top：配方回退到 --glass-rim，浅色四边仍同色', () => {
+    expect(Object.keys(rootVars('light'))).not.toContain('--glass-rim-top');
+  });
+
+  it('顶边比深色四边亮，但仍弱于浅色 rim（只点亮一条 1px 边，不回到白雾）', () => {
+    const top = alphaOf(GLASS_DARK_EDGE.rimTop);
+    expect(top).toBeGreaterThan(alphaOf(GLASS_AERO.dark.rim));
+    expect(top).toBeLessThan(alphaOf(GLASS_AERO.light.rim));
+    // 受光是白：写成黑或别的颜色就不是高光了
+    expect(GLASS_DARK_EDGE.rimTop).toMatch(/^rgba\(255, 255, 255, /);
   });
 });
 
