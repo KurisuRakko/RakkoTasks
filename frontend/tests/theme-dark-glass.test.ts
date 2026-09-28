@@ -177,8 +177,9 @@ describe('D2 深色玻璃去雾：白层收敛，暗向保留', () => {
     expect(alphaOf(GLASS_AERO.dark.rimInner)).toBeGreaterThan(alphaOf(GLASS_AERO.light.rimInner));
   });
 
-  it('深色 sheen-3 是暗向的黑，不是白', () => {
+  it('深色 sheen-3 是暗向的黑，不是白，钉在 6.5%', () => {
     expect(GLASS_AERO.dark.sheen3).toMatch(/rgba\(0, 0, 0/);
+    expect(GLASS_AERO.dark.sheen3).toBe('rgba(0, 0, 0, 0.065)');
   });
 
   it('深色每个白层都严格弱于浅色同名层（深色只削白，不加白）', () => {
@@ -527,6 +528,14 @@ describe('D8 深色不许压成黑板：壁纸的透出量有下限', () => {
     ] as const) {
       expect(throughPanel(opacity, shadeAlpha), `${name} 档不该压成黑板`).toBeGreaterThanOrEqual(0.3);
     }
+  });
+
+  it('panel 底边（再叠 sheen-3 的暗）透出量同样 >= 0.3：下暗不许把卡片底部压成黑板', () => {
+    // sheen-3 在 100% 处收尾，卡片最底一行是纸底、压暗、sheen-3 三层黑叠在一起的最暗处
+    const bottom = 1 - stack(percentOf(GLASS_DARK.panelOpacity), shadeAlpha, alphaOfLayer(GLASS_AERO.dark.sheen3));
+    expect(bottom).toBeGreaterThanOrEqual(0.3);
+    // 0.4 × 0.88 × 0.935
+    expect(bottom).toBeCloseTo(0.329, 3);
   });
 
   it('两个乘子都被钉在回调后的取值上（改任何一个都会让上面的区间失守）', () => {
