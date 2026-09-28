@@ -392,7 +392,7 @@ describe('玻璃可读性契约', () => {
   });
 
   it('GLASS_AERO 的 light / dark 键集完全一致', () => {
-    // 十二个键一个不少：防止将来加 token 只加一边，两套配方错位。
+    // 十一个键一个不少：防止将来加 token 只加一边，两套配方错位。
     expect(Object.keys(GLASS_AERO.dark)).toEqual(Object.keys(GLASS_AERO.light));
   });
 
