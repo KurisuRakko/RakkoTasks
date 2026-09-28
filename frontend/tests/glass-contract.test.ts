@@ -158,9 +158,10 @@ describe('变量下发守卫', () => {
     // :root 的下发清单，逐字断言，共 24 键：--color-* 四键 + --glass-* 十八键 + --shadow-whisper。
     // 不含 --glass-highlight：镜面高光那一档由 sheen 承担，本文件没有任何规则读它，
     // 下发就是死键（下方动态守卫只看 css 里 var() 真正消费到的变量，本来也扫不到它）。
-    // css 实际消费的非 --rk- 变量为 22 个：--glass-scrim-opacity（主题层 MuiBackdrop
-    // 消费）与 --shadow-whisper（haze 等场景仍用）不在玻璃样式表里，
-    // 故总下发数比 css 消费数多 2。
+    // css 实际消费的非 --rk- 变量为 23 个：这 24 键里除去 --glass-scrim-opacity（主题层
+    // MuiBackdrop 消费）与 --shadow-whisper（haze 等场景仍用）两个不在玻璃样式表里的，
+    // 再加只在深色下发的 --glass-rim-top（浅色靠配方回退，不进这份两主题共有的清单，
+    // 由下方动态守卫覆盖）。
     const providedByTheme = [
       '--color-paper',
       '--color-border',
