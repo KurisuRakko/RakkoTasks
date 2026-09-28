@@ -32,6 +32,7 @@ import {
   GLASS,
   GLASS_AERO,
   GLASS_DARK,
+  GLASS_DARK_EDGE,
   GLASS_SHADOW_WHISPER,
   NEUTRAL_DARK,
   NEUTRAL_LIGHT,
@@ -172,12 +173,13 @@ describe('D2 深色玻璃去雾：白层收敛，暗向保留', () => {
   });
 
   it('深色 rim-inner 比浅色更深（厚度边的暗向那一半）', () => {
-    expect(GLASS_AERO.dark.rimInner).toBe('rgba(0, 0, 0, 0.26)');
+    expect(GLASS_AERO.dark.rimInner).toBe('rgba(0, 0, 0, 0.3)');
     expect(alphaOf(GLASS_AERO.dark.rimInner)).toBeGreaterThan(alphaOf(GLASS_AERO.light.rimInner));
   });
 
-  it('深色 sheen-3 是暗向的黑，不是白', () => {
+  it('深色 sheen-3 是暗向的黑，不是白，钉在 6.5%', () => {
     expect(GLASS_AERO.dark.sheen3).toMatch(/rgba\(0, 0, 0/);
+    expect(GLASS_AERO.dark.sheen3).toBe('rgba(0, 0, 0, 0.065)');
   });
 
   it('深色每个白层都严格弱于浅色同名层（深色只削白，不加白）', () => {
@@ -209,6 +211,25 @@ describe('D2 深色玻璃去雾：白层收敛，暗向保留', () => {
     expect(rootVars('light')['--glass-rim']).toBe(GLASS_AERO.light.rim);
     expect(rootVars('light')['--glass-sheen-1']).toBe(GLASS_AERO.light.sheen1);
     expect(rootVars('light')['--glass-bloom']).toBe(GLASS_AERO.light.bloom);
+  });
+});
+
+describe('D9 深色顶边受光：只在深色下发，浅色回退到四边同色', () => {
+  it('深色 :root 下发 --glass-rim-top，取值来自 GLASS_DARK_EDGE', () => {
+    expect(GLASS_DARK_EDGE.rimTop).toBe('rgba(255, 255, 255, 0.26)');
+    expect(rootVars('dark')['--glass-rim-top']).toBe(GLASS_DARK_EDGE.rimTop);
+  });
+
+  it('浅色不下发 --glass-rim-top：配方回退到 --glass-rim，浅色四边仍同色', () => {
+    expect(Object.keys(rootVars('light'))).not.toContain('--glass-rim-top');
+  });
+
+  it('顶边比深色四边亮，但仍弱于浅色 rim（只点亮一条 1px 边，不回到白雾）', () => {
+    const top = alphaOf(GLASS_DARK_EDGE.rimTop);
+    expect(top).toBeGreaterThan(alphaOf(GLASS_AERO.dark.rim));
+    expect(top).toBeLessThan(alphaOf(GLASS_AERO.light.rim));
+    // 受光是白：写成黑或别的颜色就不是高光了
+    expect(GLASS_DARK_EDGE.rimTop).toMatch(/^rgba\(255, 255, 255, /);
   });
 });
 
@@ -408,7 +429,7 @@ describe('D4 深色壁纸压暗：只有深色叠，浅色一层都不叠', () =
     }
   });
 
-  it('深色压暗层是纯黑、35% 不透明度：不含任何亮色通道，也不是反相白', () => {
+  it('深色压暗层是纯黑、12% 不透明度：不含任何亮色通道，也不是反相白', () => {
     // 压暗层的颜色必须是黑。用 n-10（深色主题下是近白）当压暗色会把壁纸漂白。
     const [r, g, b] = channels('#000000');
     expect([r, g, b]).toEqual([0, 0, 0]);
@@ -507,6 +528,14 @@ describe('D8 深色不许压成黑板：壁纸的透出量有下限', () => {
     ] as const) {
       expect(throughPanel(opacity, shadeAlpha), `${name} 档不该压成黑板`).toBeGreaterThanOrEqual(0.3);
     }
+  });
+
+  it('panel 底边（再叠 sheen-3 的暗）透出量同样 >= 0.3：下暗不许把卡片底部压成黑板', () => {
+    // sheen-3 在 100% 处收尾，卡片最底一行是纸底、压暗、sheen-3 三层黑叠在一起的最暗处
+    const bottom = 1 - stack(percentOf(GLASS_DARK.panelOpacity), shadeAlpha, alphaOfLayer(GLASS_AERO.dark.sheen3));
+    expect(bottom).toBeGreaterThanOrEqual(0.3);
+    // 0.4 × 0.88 × 0.935
+    expect(bottom).toBeCloseTo(0.329, 3);
   });
 
   it('两个乘子都被钉在回调后的取值上（改任何一个都会让上面的区间失守）', () => {

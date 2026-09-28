@@ -257,7 +257,7 @@ export default function AppShell() {
       >
         {/* 明知偏离：契约（bottom-nav.css 的 .rk-bottom-nav__item）的未选中项是
             color: var(--color-neutral-7)，本项目用 text.primary = n9。理由和落点是
-            实测事实，不是口味：底栏整块是 data-glass="chrome"（纸色 45%），n7 压在这块
+            实测事实，不是口味：底栏整块是 data-glass="chrome"（实测时纸色 45%，现为 52%），n7 压在这块
             玻璃亮壁纸浅色主题下实测对比度 1.67，远低于 AA 正文要求的 4.5；提到 n9 才有
             数量级改善。覆盖用 :not(.Mui-selected) 精确排除选中项——选中态是 accent
             （primary.main），与可读性无关，不能被一起盖掉。要改回契约值先改上游

@@ -33,7 +33,7 @@ export const WALLPAPER_LAYER_ID = 'rtk-wallpaper';
 export const SCRIM_COLOR = 'rgb(0 0 0 / var(--glass-scrim-opacity))';
 
 /** 壁纸压暗层的 CSS 变量，由主题层下发到 :root。浅色是 none（浅色壁纸不叠任何层），
- *  深色是一层 35% 纯黑——亮壁纸透过半透明深纸会把黑纸染脏，压暗后玻璃与正文才落在
+ *  深色是一层 12% 纯黑——亮壁纸透过半透明深纸会把黑纸染脏，压暗后玻璃与正文才落在
  *  深色纸上。压在壁纸之上、全部内容与玻璃之下。
  *  取值必须是 <image> 或 none（它是 background-image 的层，见下面的常量说明）。
  *  实现形式必须是**壁纸承载层自己的一条 background 叠层**（见 theme.ts 的

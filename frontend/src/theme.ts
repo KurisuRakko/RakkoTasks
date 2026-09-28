@@ -24,6 +24,7 @@ import {
   GLASS,
   GLASS_AERO,
   GLASS_DARK,
+  GLASS_DARK_EDGE,
   GLASS_SHADOW_WHISPER,
   MOTION,
   NEUTRAL_DARK,
@@ -255,7 +256,7 @@ export function buildThemeOptions(mode: Mode): ThemeOptions {
             '--glass-scrim-opacity': GLASS.scrimOpacity,
             '--glass-haze-opacity': glassOpacity.hazeOpacity,
             '--glass-haze-bleed': GLASS.hazeBleed,
-            // Aero 化新增的十二个材质 token（rakko-glass.css 的厚度边/光泽/文字光晕消费，
+            // Aero 化新增的十一个材质 token（rakko-glass.css 的厚度边/光泽/文字光晕消费，
             // 变量名 rim→--glass-rim、rimInner→--glass-rim-inner … textGlow→--glass-text-glow）。
             // 深浅各自求值：深色是重新定的档位，不是浅色的简单缩放；textGlow 反相是硬约束。
             '--glass-rim': GLASS_AERO[mode].rim,
@@ -269,8 +270,11 @@ export function buildThemeOptions(mode: Mode): ThemeOptions {
             '--glass-sheen-3': GLASS_AERO[mode].sheen3,
             '--glass-lift': GLASS_AERO[mode].lift,
             '--glass-text-glow': GLASS_AERO[mode].textGlow,
+            // 深色专属的顶边受光（见 rakko-tokens 的 GLASS_DARK_EDGE）。浅色不下发，配方回退到
+            // --glass-rim：浅色 :root 的键集与取值都不变。
+            ...(mode === 'dark' ? { '--glass-rim-top': GLASS_DARK_EDGE.rimTop } : {}),
             '--shadow-whisper': GLASS_SHADOW_WHISPER[mode],
-            // 壁纸压暗层：浅色 none，深色是 35% 纯黑的实心渐变（见 lib/glass 的两个常量）。
+            // 壁纸压暗层：浅色 none，深色是 12% 纯黑的实心渐变（见 lib/glass 的两个常量）。
             // 下发在 :root，由下面的壁纸承载层当 background-image 的第一层消费——它不是新
             // 节点也不是伪元素，只往同一个 background 里加一层像，壁纸那一层仍被
             // backdrop-filter 读得到。取值必须是 <image> 或 none：写成 rgba() 色值会让整条
@@ -302,7 +306,7 @@ export function buildThemeOptions(mode: Mode): ThemeOptions {
           // 移除，壁纸显示用户原图）；变量的兜底值是默认壁纸而不是 none——lib/wallpaper
           // 尚未执行时也不该空成纯纸色。
           // backgroundImage 的第一层是深色压暗层（浅色时它是 none，等于这一层不存在）：
-          // 亮壁纸带着半透明深纸透上来会把黑纸染脏，压暗 35% 后玻璃与正文才落在深色纸上。
+          // 亮壁纸带着半透明深纸透上来会把黑纸染脏，压暗 12% 后玻璃与正文才落在深色纸上。
           // 压暗只改本节点 background 的叠层，不新增 DOM 节点或伪元素——新增会改掉这块
           // 壁纸被 backdrop-filter 采样时的合成层结构，玻璃会连壁纸一起读丢。
           // 这一层的取值只能是 <image> 或 none：写成 <color> 会让整条 backgroundImage

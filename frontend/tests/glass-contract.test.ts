@@ -158,9 +158,10 @@ describe('变量下发守卫', () => {
     // :root 的下发清单，逐字断言，共 24 键：--color-* 四键 + --glass-* 十八键 + --shadow-whisper。
     // 不含 --glass-highlight：镜面高光那一档由 sheen 承担，本文件没有任何规则读它，
     // 下发就是死键（下方动态守卫只看 css 里 var() 真正消费到的变量，本来也扫不到它）。
-    // css 实际消费的非 --rk- 变量为 22 个：--glass-scrim-opacity（主题层 MuiBackdrop
-    // 消费）与 --shadow-whisper（haze 等场景仍用）不在玻璃样式表里，
-    // 故总下发数比 css 消费数多 2。
+    // css 实际消费的非 --rk- 变量为 23 个：这 24 键里除去 --glass-scrim-opacity（主题层
+    // MuiBackdrop 消费）与 --shadow-whisper（haze 等场景仍用）两个不在玻璃样式表里的，
+    // 再加只在深色下发的 --glass-rim-top（浅色靠配方回退，不进这份两主题共有的清单，
+    // 由下方动态守卫覆盖）。
     const providedByTheme = [
       '--color-paper',
       '--color-border',
@@ -336,6 +337,24 @@ describe('Aero 玻璃配方契约（新材质接线）', () => {
     // 雾边 = 九团并集 ∩ 分形噪声
     expect(glassCss).toContain('mask-composite: intersect');
   });
+
+  it('5h. 顶边受光只落在 panel 上沿，缺省回退到 --glass-rim（浅色四边同色）', async () => {
+    const glassCss = (await loadFs()).readFileSync('src/rakko-glass.css', 'utf-8');
+    const panel = blockOf(glassCss, "[data-glass='panel'] {");
+    const decl = 'border-top-color: var(--glass-rim-top, var(--glass-rim));';
+    expect(panel).toContain(decl);
+    // 只此一处消费，回退值必须恰好是 --glass-rim：浅色不下发 --glass-rim-top，
+    // 回退值写成别的颜色，浅色顶边就会变
+    expect(glassCss.match(/var\(--glass-rim-top\b/g)).toHaveLength(1);
+    // 顶边声明必须在 border 简写之后，否则会被简写重置回 --glass-rim
+    expect(panel.indexOf(decl)).toBeGreaterThan(panel.indexOf('border: 1px solid var(--glass-rim);'));
+    for (const selector of ["[data-glass='chrome'] {", "[data-glass='inverse'] {", "[data-glass='haze'] {"]) {
+      expect(blockOf(glassCss, selector), `${selector} 不消费顶边受光`).not.toContain('--glass-rim-top');
+    }
+    const { supports, reduce } = degradeRegions(glassCss);
+    expect(supports, '退化块不碰顶边').not.toContain('--glass-rim-top');
+    expect(reduce, 'reduce 块不碰顶边').not.toContain('--glass-rim-top');
+  });
 });
 
 /** rgba(...) 尾部的 alpha：'rgba(255, 255, 255, 0.12)' → 0.12；非法写法直接判失败。
@@ -392,7 +411,7 @@ describe('玻璃可读性契约', () => {
   });
 
   it('GLASS_AERO 的 light / dark 键集完全一致', () => {
-    // 十二个键一个不少：防止将来加 token 只加一边，两套配方错位。
+    // 十一个键一个不少：防止将来加 token 只加一边，两套配方错位。
     expect(Object.keys(GLASS_AERO.dark)).toEqual(Object.keys(GLASS_AERO.light));
   });
 

@@ -12,7 +12,7 @@
    │ token 层是因为上游 tokens.css 仍以它为契约 token。                       │
    └──────────────────────────────────────────────────────────────────────────┘ */
 
-/* 已知偏离记录（两处，与上游合并时不要改回）：
+/* 已知偏离记录（三处，与上游合并时不要改回）：
    其一，光泽用三段线性 sheen，不用镜面高光：chrome / panel 都是
    --glass-sheen-1 → 2 45% → 3 100% 的上亮下暗三段渐变，sheen-3 的语义是「底部的暗」。
    止点必须落在 45% 与 100% 这两个结构边界上，中间不许再出现陡变止点（卡片正中切出硬线
@@ -26,7 +26,10 @@
    为什么保留独立块：它不把正确性押在压缩器行为上。实测（别传成上游有 bug）——本项目用 MUI
    不用 Tailwind，Vite（v7）默认 esbuild 压缩 CSS，esbuild 不会把并列的前缀/无前缀声明当同一
    属性去重（两条都幸存），所以上游的并列写法在本项目当下的构建里也不会出问题；上游写法的表现
-   只在上游自己的使用场景里成立，未经本项目验证。 */
+   只在上游自己的使用场景里成立，未经本项目验证。
+   其三，panel 的上沿边框单独取色：border-top-color 读 --glass-rim-top，缺省回退到 --glass-rim。
+   这个变量只在深色下由 theme.ts 下发（值在 rakko-tokens.ts 的 GLASS_DARK_EDGE，项目扩展，
+   上游没有）；浅色取不到它，四边仍是同一个 --glass-rim，逐像素不变。 */
 
 
 /* 玻璃材质契约（毛玻璃 / 液态玻璃 / Aero 玻璃片）。
@@ -111,6 +114,9 @@
     ),
     color-mix(in srgb, var(--color-paper) var(--glass-panel-opacity), transparent);
   border: 1px solid var(--glass-rim);
+  /* 上沿受光：rim-inner 画在最上层，会盖住 lip 与 side，深色卡片的顶边要靠边框本身亮起来。
+     圆角处顶边色与侧边色在对角线上交接，读作高光在角上收尾。 */
+  border-top-color: var(--glass-rim-top, var(--glass-rim));
   box-shadow:
     inset 0 0 0 1px var(--glass-rim-inner),
     inset 0 1.5px 0 var(--glass-lip),
