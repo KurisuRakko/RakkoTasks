@@ -85,6 +85,7 @@ _COLUMN_ALTERS: dict[str, dict[str, str]] = {
     "users": {
         "calendar_token": "TEXT",
         "caldav_password_hash": "TEXT",
+        "feed_token_hash": "TEXT",
     },
     "accounts": {
         "sent_uidvalidity": "INTEGER",

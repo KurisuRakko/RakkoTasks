@@ -58,6 +58,28 @@ def _dt(s: object) -> str:
     return s.strftime("%Y-%m-%d %H:%M:%S") if s else "-"
 
 
+def _cmd_feed_token(args: argparse.Namespace, settings: Settings) -> None:
+    """生成（并轮换）该用户的内网 feed 令牌：旧令牌立即失效，新令牌只打印这一次。"""
+    from app.caldav.auth import generate_app_password, hash_app_password
+
+    engine = make_engine(settings.database_path)
+    init_db(engine)
+    with make_session_factory(engine)() as session:
+        user = find_user_by_spec(session, args.user)
+        if user is None:
+            print(f"找不到用户：{args.user}", file=sys.stderr)
+            sys.exit(1)
+        if args.revoke:
+            user.feed_token_hash = None
+            session.commit()
+            print("已吊销 feed 令牌")
+            return
+        token = generate_app_password()
+        user.feed_token_hash = hash_app_password(token)
+        session.commit()
+    print(token)
+
+
 def _cmd_users_list(args: argparse.Namespace, settings: Settings) -> None:  # noqa: ARG001
     engine = make_engine(settings.database_path)
     init_db(engine)
@@ -564,6 +586,11 @@ def main() -> None:
     users_sub = users.add_subparsers(dest="action", required=True)
     users_list = users_sub.add_parser("list", help="列出用户")
     users_list.set_defaults(handler=_cmd_users_list)
+
+    feed = sub.add_parser("feed-token", help="生成/轮换内网 feed 令牌（旧令牌立即失效，新令牌只显示一次）")
+    feed.add_argument("--user", required=True, help="用户 sub 或邮箱")
+    feed.add_argument("--revoke", action="store_true", help="只吊销，不生成新令牌")
+    feed.set_defaults(handler=_cmd_feed_token)
 
     reclassify = sub.add_parser(
         "reclassify", help="重分类：删除该用户（或指定账户）邮件的任务并重置 LLM 状态，worker 下轮按最新规则重跑"

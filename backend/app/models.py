@@ -21,6 +21,8 @@ class User(Base):
     calendar_token: Mapped[str | None] = mapped_column(Text, unique=True)  # 日历订阅密钥：链接即凭据，泄露就 rotate
     # CalDAV Basic 鉴权应用密码的 sha256 hex；NULL = 未开通（旧库由 _ensure_columns 就地补列）
     caldav_password_hash: Mapped[str | None] = mapped_column(Text)
+    # 内网 feed 令牌的 sha256 hex；NULL = 未开通（见 app/feed.py）
+    feed_token_hash: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.now, server_default=func.now(), nullable=False
     )

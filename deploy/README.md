@@ -396,6 +396,18 @@ docker compose up -d worker
 若不预建目录，Docker 会以 root 身份自动创建挂载源，容器内 uid 1000 无权写入，日志会
 出现「原件归档失败（…）：PermissionError」，同步本身不受影响。
 
+### 内网 feed（tailnet 专用）
+
+compose 里的 `feed` 服务只绑 `127.0.0.1:8001`，首次部署在宿主机执行一次（tailscale 会记住）：
+
+```bash
+tailscale serve --bg --https=8451 http://127.0.0.1:8001
+docker compose exec web python -m app.cli feed-token --user <sub 或邮箱>   # 打印令牌，只显示一次
+curl -H "Authorization: Bearer <令牌>" https://rakkoserver.tail524041.ts.net:8451/items
+```
+
+用法说明直接 `curl https://rakkoserver.tail524041.ts.net:8451/`。设计见 docs/DESIGN.md 第 12 节。
+
 ## 9. 容器以非 root 运行
 
 镜像内进程以 **uid 1000**（`app` 用户）运行，不以 root 跑业务进程，降低容器

@@ -30,6 +30,28 @@ services:
     ports:
       - "127.0.0.1:8000:8000"
 
+  # 内网 feed：给 tailnet 里的其它服务 / agent 读邮件与待办、写待办（backend/app/feed.py）。
+  # 只绑本机回环 8001，由宿主机 `tailscale serve --bg --https=8451 http://127.0.0.1:8001`
+  # 转到 tailnet；cloudflared 不指向它，公网够不着。表结构迁移归 web，所以排在 web 之后起。
+  feed:
+    image: rakkotasks:latest
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile
+    restart: unless-stopped
+    command: ["uvicorn", "app.feed:create_feed_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
+    depends_on:
+      - web
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - DATABASE_PATH=/data/rakkotasks.db
+    volumes:
+      - ./data:/data
+    ports:
+      - "127.0.0.1:8001:8000"
+
   # 定时同步 worker：与 web 同镜像，仅命令不同
   worker:
     image: rakkotasks:latest

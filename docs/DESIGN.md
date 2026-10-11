@@ -880,3 +880,22 @@ CalDAV 的设备收不到提醒。
   正确副作用，不是 bug。
 - 同步不是实时的：iPhone 按「获取新数据」调度轮询（含手动下拉刷新），网页端改动
   不会立即推送到达手机；手机端到网页端的延迟同理。
+
+## 12. 内网 feed（给 tailnet 里的其它服务 / agent）
+
+需求：家里其它服务（看板、定时 agent、`claude -p` 任务）要读邮件和待办、能新建 / 完成 / 修改待办，
+而且每次调用别吃太多 token。实现在 `backend/app/feed.py`，测试 `backend/tests/test_feed.py`。
+
+- **独立进程、独立端口**：compose 的 `feed` 服务，同一镜像，只绑 `127.0.0.1:8001`；宿主机
+  `tailscale serve --bg --https=8451 http://127.0.0.1:8001` 转到 tailnet
+  （`https://rakkoserver.tail524041.ts.net:8451`）。cloudflared 不指向它，主应用里也没有这些路由，公网够不着。
+- **鉴权**：`Authorization: Bearer <令牌>`，每用户一个，`users.feed_token_hash` 只存 sha256（同 CalDAV 应用密码）。
+  `docker compose exec web python -m app.cli feed-token --user <sub|邮箱>` 生成并轮换（只显示一次），`--revoke` 吊销。
+  `GET /` 是不需鉴权的一页用法说明。
+- **省 token**：默认紧凑纯文本、一行一条、「 | 」分隔（字段里的 `|` 换成全角），`?format=json` 才回 JSON；
+  列表只给摘要（待办摘要截 80 字，详情 / 关联邮件按 id 取）；邮件列表默认隐藏 LLM 判为广告 / 噪声的（`all=1` 才带）；
+  邮件正文默认截 2000 字（`max=0` 最多 50000）；`since=` 增量（待办按 `coalesce(updated_at, created_at)`，邮件按 `fetched_at`）。
+  时间一律按 `LOCAL_TIMEZONE` 显示。
+- **写**：`POST /items`、`PATCH /items/<id>`、`POST /items/<id>/done|open`，复用 `items_service` 的
+  `create_manual_item` / `apply_item_patch`，校验与 REST 完全一致；不开放删除。
+- **迁移归 web**：feed 不跑 `init_db`，避免和 web 同时启动时并发 ALTER TABLE。
